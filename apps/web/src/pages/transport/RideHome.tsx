@@ -11,7 +11,7 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { useConfirm } from '@/lib/confirm';
 import { hapticConfirm } from '@/lib/haptics';
-import { fmtDayHeaderTz, fmtDayShort, fmtMoney, fmtMonthShortYear, fmtRelativeDayTz, fmtTimeTz, fmtWeekdayTz, localInputToUtcIso, mapsUrl, parseYmd, utcToZonedDatetimeInput, zonedDayKey } from '@/lib/format';
+import { fmtDayHeaderTz, fmtDayShort, fmtMoney, fmtRelativeDayTz, fmtTimeTz, fmtWeekdayTz, localInputToUtcIso, parseYmd, utcToZonedDatetimeInput, zonedDayKey } from '@/lib/format';
 import {
   addRidePlace,
   bookRide,
@@ -23,14 +23,11 @@ import {
   sendRideFeedback,
   deleteRidePlace,
   getMyTransport,
-  getMyCrew,
   getMyLiveRide,
   getShiftTrips,
-  NO_SHOW_WAIT_MS,
   signRideAuthorization,
   withdrawRideAuthorization,
   reportTransportIssue,
-  signalDriver,
   type BookRideInput,
   type FeedbackReason,
   type SeriesInput,
@@ -40,18 +37,21 @@ import {
   type RideDirection,
   type RideNotice,
   type RideStatus,
-  type RiderSignal,
   type ShiftTrip,
   type StoreShiftWindow,
   type TransportIssueCategory,
-  vanLookText,
 } from '@/lib/transportApi';
 import { SoundToggle } from '@/components/transport/SoundToggle';
+import { LiveTrip } from './rider/LiveTrip';
+import { OwedCard } from './rider/OwedCard';
+import { ChargesLedger } from './rider/ChargesLedger';
+import { RideViewBar } from './rider/RideViewBar';
+import { fareWords } from './rider/charges';
+import { hasVan, liveTripOwnsGold, tripInProgress } from './rider/tripState';
+import { useTick } from './rider/useTick';
 import { useRiderAlerts } from './useRiderAlerts';
-import { bookShifts, coverageFor, fmtClock, fmtIn, type Shift } from './rideShifts';
+import { bookShifts, coverageFor, type Shift } from './rideShifts';
 import { fmtWindow, shiftTargetIso, windowForShift } from './shiftTrips';
-import { Avatar } from '@/components/ui/Avatar';
-import { personPhotoUrl } from '@/lib/photoUrl';
 import { downloadDocumentUrl } from '@/lib/documentsApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -156,15 +156,24 @@ export function RideHome() {
   const [view, setView] = useUrlParam<RideView>('view', 'upcoming', RIDE_VIEWS, { history: 'push' });
   // The booking form, open — blank, or prefilled from a shift / a past ride.
   const [booking, setBooking] = useState<BookPrefill | null>(null);
-  const [reporting, setReporting] = useState<{ rideId?: string } | null>(null);
+  const [reporting, setReporting] = useState<{ rideId?: string; category?: TransportIssueCategory } | null>(null);
   const data = me.data;
   // Brief 1A-3: booking needs a current signed authorization (`consent` is
   // the older shape of the same fact).
   const authorized = data ? isAuthorized(data) : false;
   const canBook = authorized && (data?.stores.length ?? 0) > 0;
-  useRiderAlerts(data, useMyLiveRide());
+  const live = useMyLiveRide();
+  useRiderAlerts(data, live);
   // With a ride coming the trip leads — the explainer steps aside.
-  const riding = authorized && sortedLive(data!.rides, Date.now()).length > 0;
+  const next = authorized ? sortedLive(data!.rides, Date.now())[0] : undefined;
+  const riding = !!next;
+  // ONE gold button on the screen (the transport upgrade): "I'm outside"
+  // while the van is coming; else one-tap booking for their shifts; else
+  // the empty state's "Request a seat"; else the header's.
+  const liveGold = !!next && liveTripOwnsGold(next, live);
+  const shiftsGold = !liveGold && view === 'upcoming' && !!data && authorized && coverageFor(data).slice(0, 6).some((c) => c.canBook.length > 0);
+  const emptyGold = !liveGold && !shiftsGold && authorized && !next;
+  const headerGold = !liveGold && !shiftsGold && !emptyGold;
   // The transportation director (or anyone who runs the vans) who isn't
   // placed at a store rides nothing: the rider pitch is not their page, the
   // board's Rides tab is (F500 G2).
@@ -185,8 +194,10 @@ export function RideHome() {
           <SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} text={{ on: t('ride.soundsOnShort'), off: t('ride.soundsOffShort') }} />
         }
         primaryAction={
-          canBook ? (
-            <Button onClick={() => setBooking({})}>
+          // With no ride the empty state carries "Request a seat" — not twice on
+          // one screen; while the van is coming the screen is the trip's (map first).
+          canBook && next && !tripInProgress(next, live) ? (
+            <Button variant={headerGold ? 'primary' : 'secondary'} onClick={() => setBooking({})}>
               <Plus className="h-4 w-4" />
               {t('ride.book')}
             </Button>
@@ -209,9 +220,11 @@ export function RideHome() {
         <AuthorizationCard data={data} />
       ) : (
         <>
-          <NextRideHero data={data} onBook={() => setBooking({})} onReport={(rideId) => setReporting({ rideId })} />
-          <RideFeedbackCard />
-          <SegmentedControl
+          <RideFeedbackCard place="top" />
+          <NextRideHero data={data} gold={emptyGold} onBook={() => setBooking({})} onReport={(rideId) => setReporting({ rideId })} />
+          <RideFeedbackCard place="below" />
+          {view !== 'charges' && <OwedCard data={data} onLedger={() => setView('charges')} />}
+          <RideViewBar
             ariaLabel={t('ride.view.label')}
             value={view}
             onChange={setView}
@@ -220,8 +233,8 @@ export function RideHome() {
           />
           {view === 'upcoming' && (
             <div data-testid="ride-view-upcoming">
-              <ShiftRides data={data} onCustom={(shift) => setBooking(prefillFromShift(data, shift))} />
-              <RideCalendar data={data} />
+              <ShiftRides data={data} gold={shiftsGold} onCustom={(shift) => setBooking(prefillFromShift(data, shift))} />
+              <RideCalendar data={data} heroId={next?.id ?? null} />
               <StandingBookings />
             </div>
           )}
@@ -239,7 +252,8 @@ export function RideHome() {
           )}
           {view === 'charges' && (
             <div data-testid="ride-view-charges">
-              <ChargesCard data={data} />
+              <OwedCard data={data} />
+              <ChargesLedger data={data} onQuestion={(rideId) => setReporting({ rideId, category: 'CHARGE_DISPUTE' })} />
               <AuthorizationStatusCard data={data} />
             </div>
           )}
@@ -251,7 +265,8 @@ export function RideHome() {
               <SavedPlaces data={data} />
             </div>
           )}
-          <div className="mt-2 mb-8 flex justify-center">
+          {/* Left, not centred: on a phone Hugo's button floats bottom-right and sat on this link. */}
+          <div className="mb-8 mt-2 border-t border-line-subtle pt-3">
             <Button variant="ghost" size="sm" onClick={() => setReporting({})}>
               <AlertTriangle className="h-4 w-4" />
               {t('ride.report')}
@@ -266,6 +281,7 @@ export function RideHome() {
         <ReportDialog
           rides={data.rides}
           initialRideId={reporting.rideId}
+          initialCategory={reporting.category}
           open={!!reporting}
           onOpenChange={(o) => !o && setReporting(null)}
         />
@@ -477,16 +493,6 @@ function useCancelRide() {
   };
 }
 
-/** Re-render on a tick — countdowns and "Updated 20s ago" move. */
-function useTick(ms: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), ms);
-    return () => window.clearInterval(id);
-  }, [ms]);
-  return now;
-}
-
 const STEPS = ['ride.step.booked', 'ride.step.van', 'ride.step.onWay', 'ride.step.here', 'ride.step.aboard'] as const;
 
 /** Where the ride is, Uber-style: booked → van set → on the way → here → on board. */
@@ -519,23 +525,22 @@ function RideStepper({ step, tone }: { step: number; tone: 'gold' | 'success' })
 
 function NextRideHero({
   data,
+  gold,
   onBook,
   onReport,
 }: {
   data: MyTransport;
+  /** The empty state's "Request a seat" is the screen's one gold button. */
+  gold: boolean;
   onBook: () => void;
   onReport: (rideId: string) => void;
 }) {
   const { t } = useI18n();
   const cancel = useCancelRide();
-  const queryClient = useQueryClient();
-  const [signalling, setSignalling] = useState(false);
-  const [crewOpen, setCrewOpen] = useState(false);
-  const next = sortedLive(data.rides, Date.now())[0];
+  const now = useTick(15_000);
+  const next = sortedLive(data.rides, now)[0];
   const live = useMyLiveRide();
   const liveHere = live && next && live.rideId === next.id ? live : null;
-  const arrivedAt = next?.vanArrivedAt ?? liveHere?.vanArrivedAt ?? null;
-  const now = useTick(arrivedAt ? 1_000 : 15_000);
 
   if (!next) {
     return (
@@ -545,7 +550,7 @@ function NextRideHero({
         description={t('ride.noneBody')}
         action={
           data.stores.length > 0 ? (
-            <Button onClick={onBook}>
+            <Button variant={gold ? 'primary' : 'secondary'} onClick={onBook}>
               <Plus className="h-4 w-4" />
               {t('ride.book')}
             </Button>
@@ -558,273 +563,112 @@ function NextRideHero({
     );
   }
 
+  const cancellable = OPEN.includes(next.status) && next.run?.status !== 'ACTIVE';
+  // A van is on it: the map-first trip (rider/LiveTrip).
+  if (hasVan(next, liveHere)) {
+    return (
+      <LiveTrip
+        data={data}
+        ride={next}
+        live={liveHere}
+        cancellable={cancellable}
+        onCancel={() => void cancel(next)}
+        onReport={() => onReport(next.id)}
+      />
+    );
+  }
+
+  // Still finding a driver (or waiting in line for a seat): the trip on the
+  // map, the one line that says so, and where the ride is in its steps.
   const tz = next.store.timezone;
   const stage = tripStage(next, liveHere);
-  const onVan = stage === 'ON_BOARD';
-  const here = stage === 'HERE' && next.status === 'SCHEDULED';
-  const onTheWay = stage === 'ON_THE_WAY';
   const step = rideStep(next, liveHere);
   const headlineAt = next.pickupAt ?? next.targetAt;
-  const untilPickup = Date.parse(headlineAt) - now;
-  const cancellable = OPEN.includes(next.status) && next.run?.status !== 'ACTIVE';
-  const driverFirst = next.run?.driver.name.split(' ')[0] ?? liveHere?.driver ?? '';
-  const vanName = next.run?.van.name ?? liveHere?.van?.name ?? '';
-  const signal = next.riderSignal?.kind ?? liveHere?.riderSignal ?? null;
+  const shift = next.windowLabel ?? null;
+  const waitlist = next.status === 'REQUESTED' ? (next.waitlist ?? null) : null;
   const targetLine =
     next.direction === 'TO_WORK'
       ? t('ride.arriveBy', { time: fmtTimeTz(next.targetAt, tz) })
       : t('ride.leaveAt', { time: fmtTimeTz(next.targetAt, tz) });
-  const green = onVan || here;
-  const waitLeft = arrivedAt ? Date.parse(arrivedAt) + NO_SHOW_WAIT_MS - now : 0;
-  const shift = next.windowLabel ?? null;
-  const waitlist = next.status === 'REQUESTED' ? (next.waitlist ?? null) : null;
   const tripLine = [
     next.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork'),
     next.store.name,
     ...(shift ? [t('ride.shiftTag', { shift })] : []),
     targetLine,
   ].join(' · ');
-  // The live numbers, once the van is out.
-  const liveOut = liveHere?.runStatus === 'ACTIVE' ? liveHere : null;
-  const eta = liveOut ? (onVan ? liveOut.destination.etaAt : liveOut.pickup.etaAt) : null;
-  const mins = eta ? Math.max(0, Math.round((Date.parse(eta) - now) / 60_000)) : null;
-
-  const tell = async (kind: RiderSignal) => {
-    setSignalling(true);
-    try {
-      await signalDriver(next.id, kind);
-      hapticConfirm();
-      toast.success(kind === 'OUTSIDE' ? t('ride.toldOutside', { driver: driverFirst }) : t('ride.toldLate', { driver: driverFirst }));
-      await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
-    } catch (err) {
-      toast.error(why(err));
-    } finally {
-      setSignalling(false);
-    }
-  };
-
-  // The one line a rider reads first, per stage.
-  const headline =
-    stage === 'FINDING' && waitlist ? (
-      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
-        {t('ride.waitlistTitle', { position: waitlist.position })}
-      </div>
-    ) : stage === 'FINDING' ? (
-      <div className="mt-2 flex items-baseline gap-1 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
-        {t('ride.findingDriver')}
-        <FindingDots />
-      </div>
-    ) : here ? (
-      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">{t('ride.vanHere')}</div>
-    ) : onVan && liveOut ? (
-      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white tabular-nums sm:text-4xl">
-        {eta ? t('ride.liveArriving', { time: fmtTimeTz(eta, tz) }) : t('ride.onVan')}
-      </div>
-    ) : onTheWay && liveOut ? (
-      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white tabular-nums sm:text-4xl">
-        {mins === null ? t('ride.liveOnWay', { van: vanName }) : mins <= 1 ? t('ride.liveHere') : t('ride.liveAway', { min: mins })}
-      </div>
-    ) : (
-      <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
-        {fmtRelativeDayTz(headlineAt, tz, now)}
-        <span className="text-silver/50"> · </span>
-        <span className="tabular-nums">
-          {next.pickupAt ? t('ride.pickupAt', { time: fmtTimeTz(next.pickupAt, tz) }) : fmtTimeTz(next.targetAt, tz)}
-        </span>
-      </div>
-    );
-
-  const subline = here ? (
-    <>
-      <p className="mt-1.5 text-sm text-silver">{t('ride.vanHereBody', { driver: driverFirst, place: pickupPlace(next) })}</p>
-      <WaitRing left={waitLeft} />
-    </>
-  ) : onTheWay && liveOut ? (
-    <LiveLines live={liveOut} vanName={vanName} />
-  ) : onVan && liveOut ? (
-    <>
-      <p className="mt-1.5 text-sm text-silver">
-        {next.direction === 'TO_WORK' ? t('ride.toWork') : t('ride.fromWork')} · {liveOut.destination.label}
-      </p>
-      <TripProgress from={next.boardedAt ?? liveOut.departAt} to={eta} now={now} />
-    </>
-  ) : stage === 'FINDING' ? (
-    <>
-      <p className="mt-1.5 text-sm text-silver">
-        {fmtRelativeDayTz(headlineAt, tz, now)} · {tripLine}
-      </p>
-      {waitlist ? (
-        <p className="mt-1 text-xs text-warning">
-          {t('ride.waitlistBody', { shift: shift ?? '', position: waitlist.position, of: waitlist.of })}
-        </p>
-      ) : (
-        <p className="mt-1 text-xs text-silver/80">
-          {next.seats ? t('ride.seatsWaiting') : t('ride.waitingVanBody')}
-        </p>
-      )}
-    </>
-  ) : (
-    <>
-      <p className="mt-1.5 text-sm text-silver">{tripLine}</p>
-      {next.run && next.run.status === 'PLANNED' && (
-        <p className="mt-0.5 text-xs text-silver/80">
-          {t('ride.liveLeaves', { van: next.run.van.name, time: fmtTimeTz(next.run.departAt, tz) })}
-        </p>
-      )}
-    </>
-  );
-
-  const vanChip = next.run?.van.plate ? (
-    <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-1 font-mono text-xs font-bold tracking-wider text-on-accent">
-      {next.run.van.plate}
-    </span>
-  ) : null;
+  const headline = waitlist ? t('ride.waitlistTitle', { position: waitlist.position }) : t('ride.findingDriver');
 
   return (
     <section
       aria-label={t('ride.nextRide')}
-      className={cn(
-        'relative mb-4 overflow-hidden border-y bg-navy animate-enter -mx-4 sm:mx-0 sm:rounded-xl sm:border',
-        green ? 'border-success/40' : 'border-gold/30',
-      )}
+      className="relative -mx-4 mb-4 overflow-hidden border-b border-line bg-surface animate-enter sm:mx-0 sm:rounded-lg sm:border"
     >
       {liveHere && (
         <TripMap
           stage={stage}
           live={liveHere}
-          vanLabel={vanName}
-          className="h-[42vh] min-h-[15rem] max-h-[26rem]"
+          vanLabel=""
+          className="h-[34vh] min-h-[14rem] max-h-[22rem]"
+          tapToExpand
           overlay={
-            <div className="rounded-xl border border-navy-secondary bg-navy/95 p-4 shadow-2xl backdrop-blur">
-              <div className="text-xs font-medium uppercase tracking-wider text-gold">{t('ride.nextRide')}</div>
-              {headline}
-              {!here && !onTheWay && !onVan && <p className="mt-1 text-sm text-silver">{tripLine}</p>}
-              {(onTheWay || onVan) && liveOut && (
-                <p className="mt-1 text-sm text-silver">
-                  {vanName}
-                  {next.run?.van.plate ? ` · ${next.run.van.plate}` : ''} · {driverFirst}
-                </p>
-              )}
+            <div className="rounded-lg border border-line bg-surface-overlay/95 p-4 elev-3 backdrop-blur">
+              <p className="text-2xl font-bold leading-tight tracking-tight text-ink">{headline}</p>
+              <p className="mt-1 text-sm text-ink-muted">{tripLine}</p>
             </div>
           }
         />
       )}
-      <div
-        className={cn(
-          'relative p-5',
-          liveHere && '-mt-5 rounded-t-2xl border-t border-navy-secondary/80 bg-navy shadow-[0_-12px_30px_rgba(0,0,0,.45)]',
-          green
-            ? 'bg-gradient-to-br from-success/[0.12] via-navy to-navy'
-            : 'bg-gradient-to-br from-gold/[0.12] via-navy to-navy',
-        )}
-      >
+      <div className={cn('relative bg-surface p-5', liveHere && '-mt-4 rounded-t-lg border-t border-line elev-2')}>
+        {liveHere && <div className="mx-auto -mt-2 mb-3 h-1 w-10 rounded-full bg-line-strong/60" aria-hidden="true" />}
         <div className="flex items-center justify-between gap-2">
-          <span className={cn('flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider', green ? 'text-success' : 'text-gold')}>
+          <span className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-[0.18em] text-accent">
             <Bus className="h-3.5 w-3.5" aria-hidden="true" />
-            {here ? t('ride.vanHere') : onVan ? t('ride.onVan') : t('ride.nextRide')}
+            {t('ride.nextRide')}
           </span>
-          {here ? (
-            <span className="relative flex h-2 w-2" aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-            </span>
-          ) : (onTheWay || onVan) && eta ? (
-            <span className="text-xs tabular-nums text-silver/80">{t('ride.etaAt', { time: fmtTimeTz(eta, tz) })}</span>
-          ) : !onVan && !onTheWay && untilPickup > 0 && untilPickup < 24 * H ? (
-            <span className="text-xs tabular-nums text-silver/80">
-              {next.pickupAt ? t('ride.pickupIn', { time: fmtIn(untilPickup) }) : t('ride.leavesIn', { time: fmtIn(untilPickup) })}
-            </span>
-          ) : (
-            <RideBadge ride={next} />
-          )}
+          <RideBadge ride={next} />
         </div>
+        <p aria-live="polite" className="mt-2 flex items-baseline gap-1 text-[1.75rem] font-bold leading-[1.15] tracking-tight text-ink sm:text-4xl">
+          {headline}
+          {!waitlist && <FindingDots />}
+        </p>
+        <p className="mt-1.5 text-base text-ink-muted">
+          {fmtRelativeDayTz(headlineAt, tz, now)} · {tripLine}
+        </p>
+        {waitlist ? (
+          <p className="mt-1 text-sm text-caution-800">{t('ride.waitlistBody', { shift: shift ?? '', position: waitlist.position, of: waitlist.of })}</p>
+        ) : (
+          <p className="mt-1 text-sm text-ink-muted">{next.seats ? t('ride.seatsWaiting') : t('ride.waitingVanBody')}</p>
+        )}
 
-        {headline}
-        {subline}
+        <RideStepper step={step} tone="gold" />
 
-        <RideStepper step={step} tone={green ? 'success' : 'gold'} />
-
-        <div className="mt-4 space-y-2.5 border-t border-navy-secondary/60 pt-3">
-          {next.run ? (
-            <button
-              type="button"
-              onClick={() => setCrewOpen(true)}
-              className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-2.5 rounded-md px-2 py-1 text-left hover:bg-navy-secondary/30"
-              aria-label={t('ride.crewOpen')}
-            >
-              <Avatar
-                src={personPhotoUrl(next.run.driver)}
-                name={next.run.driver.name}
-                email=""
-                size="md"
-              />
-              <div className="min-w-0 flex-1">
-                <div className="text-sm">
-                  <span className="font-medium text-white">{driverFirst}</span>
-                  <span className="text-silver"> · {next.run.van.name}</span>
-                </div>
-                <div className="truncate text-xs text-silver">{vanLookText(next.run.van) || t('ride.driverLabel')}</div>
-              </div>
-              {vanChip}
-            </button>
-          ) : null}
+        <div className="mt-4 space-y-2.5 border-t border-line-subtle pt-3">
           {next.coRiders && next.coRiders.length > 0 && <RidingWith ride={next} />}
-          <div className="flex items-center gap-2 text-sm text-silver">
-            <MapPin className="h-4 w-4 shrink-0 text-silver/70" aria-hidden="true" />
+          <div className="flex items-center gap-2 text-sm text-ink-muted">
+            <MapPin className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">{pickupPlace(next)}</span>
-            {next.direction === 'TO_WORK' && (
-              <a
-                href={mapsUrl(next.pickup.address)}
-                target="_blank"
-                rel="noreferrer"
-                // min-h-9 was a half-measure: 36px is still under the 44px
-                // floor, and this one opens Maps while they're walking out.
-                className="inline-flex shrink-0 items-center text-sm text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-11"
-              >
-                {t('shift.directions')}
-              </a>
-            )}
           </div>
           {next.direction === 'FROM_WORK' && (
-            <div className="flex items-center gap-2 text-sm text-silver">
-              <Home className="h-4 w-4 shrink-0 text-silver/70" aria-hidden="true" />
+            <div className="flex items-center gap-2 text-sm text-ink-muted">
+              <Home className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">{homeEnd(next)}</span>
             </div>
           )}
+          <div className="flex items-start gap-2 text-sm text-ink-muted">
+            <Wallet className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1 tabular-nums">{fareWords(t, next.fareCents, data.charges.nextPayday, next.serviceDate)}</span>
+          </div>
         </div>
 
-        {crewOpen && <CrewDialog rideId={next.id} onClose={() => setCrewOpen(false)} />}
-
-        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-          {(onTheWay || here) &&
-            (signal ? (
-              <span className="inline-flex items-center gap-1 text-sm text-success">
-                <Check className="h-4 w-4" aria-hidden="true" />
-                {signal === 'OUTSIDE' ? t('ride.toldOutside', { driver: driverFirst }) : t('ride.toldLate', { driver: driverFirst })}
-              </span>
-            ) : (
-              <>
-                <Button size="sm" onClick={() => void tell('OUTSIDE')} disabled={signalling}>
-                  <Check className="h-3.5 w-3.5" />
-                  {t('ride.imOutside')}
-                </Button>
-                <Button size="sm" variant="secondary" onClick={() => void tell('LATE')} disabled={signalling}>
-                  {t('ride.runningLate')}
-                </Button>
-              </>
-            ))}
+        <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-2">
           {cancellable && (
             <Button size="sm" variant="secondary" onClick={() => void cancel(next)}>
               {t('ride.cancel')}
             </Button>
           )}
-          <button
-            type="button"
-            onClick={() => onReport(next.id)}
-            className="inline-flex items-center text-sm text-silver hover:text-white coarse:min-h-11"
-          >
+          <Button size="sm" variant="ghost" onClick={() => onReport(next.id)}>
             {t('ride.report')}
-          </button>
+          </Button>
         </div>
       </div>
     </section>
@@ -838,7 +682,7 @@ function FindingDots() {
       {[0, 1, 2].map((i) => (
         <span
           key={i}
-          className="h-1.5 w-1.5 animate-pulse rounded-full bg-gold motion-reduce:animate-none"
+          className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent motion-reduce:animate-none"
           style={{ animationDelay: `${i * 200}ms` }}
         />
       ))}
@@ -846,106 +690,9 @@ function FindingDots() {
   );
 }
 
-/** The time left to get on board, as a ring that runs down. */
-function WaitRing({ left }: { left: number }) {
-  const { t } = useI18n();
-  const frac = Math.max(0, Math.min(1, left / NO_SHOW_WAIT_MS));
-  const r = 16;
-  const c = 2 * Math.PI * r;
-  if (left <= 0) return <p className="mt-2 text-sm font-semibold text-warning">{t('ride.waitOver')}</p>;
-  return (
-    <div className="mt-2 flex items-center gap-2.5">
-      <svg viewBox="0 0 40 40" className="h-9 w-9 shrink-0 -rotate-90" aria-hidden="true">
-        <circle cx="20" cy="20" r={r} fill="none" strokeWidth="4" className="stroke-navy-secondary" />
-        <circle
-          cx="20"
-          cy="20"
-          r={r}
-          fill="none"
-          strokeWidth="4"
-          strokeLinecap="round"
-          strokeDasharray={c}
-          strokeDashoffset={c * (1 - frac)}
-          className="stroke-success transition-[stroke-dashoffset] duration-1000 ease-linear"
-        />
-      </svg>
-      <p className="text-sm font-semibold tabular-nums text-success">{t('ride.waitLeft', { time: fmtClock(left) })}</p>
-    </div>
-  );
-}
-
-/** On board: how far into the trip, by the clock. */
-function TripProgress({ from, to, now }: { from: string | null; to: string | null; now: number }) {
-  if (!from || !to) return null;
-  const a = Date.parse(from);
-  const b = Date.parse(to);
-  if (!(b > a)) return null;
-  const pct = Math.round(Math.max(0.04, Math.min(1, (now - a) / (b - a))) * 100);
-  return (
-    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-navy-secondary" aria-hidden="true">
-      <div className="h-full rounded-full bg-success transition-[width] duration-1000" style={{ width: `${pct}%` }} />
-    </div>
-  );
-}
-
-/** The van to look for and who's driving it — the ride-hailing card. */
-function CrewDialog({ rideId, onClose }: { rideId: string; onClose: () => void }) {
-  const { t } = useI18n();
-  const q = useQuery({ queryKey: ['transport', 'me', 'crew', rideId], queryFn: () => getMyCrew(rideId) });
-  const crew = q.data?.crew;
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle>{t('ride.crewTitle')}</DialogTitle>
-        </DialogHeader>
-        {q.isError ? (
-          <QueryError what="who else is on this ride" query={q} />
-        ) : !crew ? (
-          <Skeleton className="h-40" />
-        ) : (
-          <div className="space-y-4">
-            <div className="rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 text-center">
-              <div className="text-2xs font-medium uppercase tracking-wider text-silver">{t('ride.lookFor')}</div>
-              {crew.van.plate && (
-                <div className="mx-auto mt-2 inline-block rounded-md border-2 border-on-accent bg-white px-4 py-1.5 font-mono text-2xl font-bold tracking-widest text-on-accent">
-                  {crew.van.plate}
-                </div>
-              )}
-              <div className="mt-2 text-lg font-semibold text-white">{crew.van.look || crew.van.name}</div>
-              <div className="text-sm text-silver">
-                {crew.van.name} · {t('ride.crewSeats', { count: crew.van.capacity })}
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <Avatar
-                src={personPhotoUrl(crew.driver)}
-                name={crew.driver.name}
-                email=""
-                size="lg"
-              />
-              <div className="min-w-0">
-                <div className="text-base font-semibold text-white">{crew.driver.name}</div>
-                <div className="text-xs text-silver">
-                  {t('ride.crewSince', {
-                    date: fmtMonthShortYear(crew.driver.since),
-                  })}
-                </div>
-                <div className="mt-0.5 text-xs text-silver">
-                  {t('ride.crewTrips', { count: crew.driver.trips })} · {t('ride.crewRiders', { count: crew.driver.riders })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 /* ----- Rides for your shifts — one tap ------------------------------------- */
 
-export function ShiftRides({ data, onCustom }: { data: MyTransport; onCustom: (shift: Shift) => void }) {
+export function ShiftRides({ data, gold = true, onCustom }: { data: MyTransport; gold?: boolean; onCustom: (shift: Shift) => void }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
@@ -955,6 +702,10 @@ export function ShiftRides({ data, onCustom }: { data: MyTransport; onCustom: (s
   const pickup = data.defaultPickup;
   const open = covers.filter((c) => c.canBook.length > 0);
   const openLegs = open.reduce((n, c) => n + c.canBook.length, 0);
+  // One gold button: "Book all" when there is more than one to book, else
+  // the one row's — and none while the live trip holds the gold.
+  const bookAll = !!pickup && open.length > 1;
+  const goldRow = gold && !bookAll ? open[0] : undefined;
 
   const book = async (key: string, list: typeof covers) => {
     if (!pickup) return onCustom(list[0]!.shift);
@@ -981,8 +732,8 @@ export function ShiftRides({ data, onCustom }: { data: MyTransport; onCustom: (s
               {pickup ? t('ride.forShiftsFrom', { pickup: pickup.label }) : t('ride.forShiftsNoPickup')}
             </p>
           </div>
-          {pickup && open.length > 1 && (
-            <Button size="sm" onClick={() => void book('all', open)} loading={busy === 'all'} disabled={!!busy}>
+          {bookAll && (
+            <Button size="sm" variant={gold ? 'primary' : 'secondary'} className="shrink-0" onClick={() => void book('all', open)} loading={busy === 'all'} disabled={!!busy}>
               {t('ride.bookAll', { amount: cents(openLegs * fare) })}
             </Button>
           )}
@@ -999,13 +750,15 @@ export function ShiftRides({ data, onCustom }: { data: MyTransport; onCustom: (s
                   ? t('ride.addHome', { amount: cents(fare) })
                   : t('ride.addThere', { amount: cents(fare) });
             return (
-              <li key={c.shift.id} className="flex items-center gap-3 py-3">
+              <li key={c.shift.id} className="flex min-h-16 items-center gap-3 py-3">
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-white">
-                    {fmtRelativeDayTz(c.shift.startsAt, tz)} ·{' '}
-                    <span className="tabular-nums">
-                      {fmtTimeTz(c.shift.startsAt, tz)}–{fmtTimeTz(c.shift.endsAt, tz)}
-                    </span>
+                  {/* The day on its own line, the time range whole on the next: at 390px
+                      "Tomorrow · 6:00 AM–2:00 PM" broke in the middle of a time. */}
+                  <div className="text-xs font-medium text-ink-muted" data-testid="shift-day">
+                    {fmtRelativeDayTz(c.shift.startsAt, tz)}
+                  </div>
+                  <div className="whitespace-nowrap text-base font-semibold text-ink tabular-nums" data-testid="shift-time">
+                    {fmtTimeTz(c.shift.startsAt, tz)}–{fmtTimeTz(c.shift.endsAt, tz)}
                   </div>
                   <div className="truncate text-xs text-silver">
                     {store?.name}
@@ -1024,7 +777,7 @@ export function ShiftRides({ data, onCustom }: { data: MyTransport; onCustom: (s
                 ) : (
                   <Button
                     size="sm"
-                    variant={c === open[0] ? 'primary' : 'secondary'}
+                    variant={c === goldRow ? 'primary' : 'secondary'}
                     className="shrink-0"
                     onClick={() => void book(c.shift.id, [c])}
                     loading={busy === c.shift.id}
@@ -1051,7 +804,14 @@ function useMyLiveRide(): MyLiveRide | null {
   const q = useQuery({
     queryKey: ['transport', 'me', 'live'],
     queryFn: getMyLiveRide,
-    refetchInterval: (query) => (query.state.data?.live?.runStatus === 'ACTIVE' ? 15_000 : 60_000),
+    // 15 s while the van is out, and in the half hour before it leaves (so
+    // "Mike is on the way" lands without a pull); a minute otherwise.
+    refetchInterval: (query) => {
+      const l = query.state.data?.live;
+      if (l?.runStatus === 'ACTIVE') return 15_000;
+      if (l?.runStatus === 'PLANNED' && l.departAt && Date.parse(l.departAt) - Date.now() < 30 * 60_000) return 15_000;
+      return 60_000;
+    },
   });
   useEffect(
     () =>
@@ -1061,45 +821,6 @@ function useMyLiveRide(): MyLiveRide | null {
     [queryClient],
   );
   return q.data?.live ?? null;
-}
-
-function useAgo(iso: string | null | undefined): string {
-  const { t } = useI18n();
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 5_000);
-    return () => window.clearInterval(id);
-  }, []);
-  if (!iso) return '';
-  const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
-  return s < 10 ? t('ride.agoNow') : s < 60 ? t('ride.agoSec', { n: s }) : t('ride.agoMin', { n: Math.round(s / 60) });
-}
-
-/** Where the van is, in words: who's coming and the stops before them,
- *  how fresh the position is, and whether it's running late. */
-function LiveLines({ live, vanName }: { live: MyLiveRide; vanName: string }) {
-  const { t } = useI18n();
-  const ago = useAgo(live.position?.at);
-  return (
-    <>
-      <p className="mt-1.5 text-sm text-silver">
-        {t('ride.liveOnWay', { van: vanName })} ·{' '}
-        {live.stopsBefore === 0
-          ? t('ride.liveNextStop')
-          : live.stopsBefore === 1
-            ? t('ride.liveStopsOne')
-            : t('ride.liveStopsMany', { count: live.stopsBefore })}
-      </p>
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 text-xs">
-        {live.position && (
-          <span className={live.stale ? 'text-warning' : 'text-silver/80'}>
-            {live.stale ? t('ride.liveStale', { ago }) : t('ride.liveUpdated', { ago })}
-          </span>
-        )}
-        {live.lateMinutes >= 5 && <span className="font-medium text-warning">{t('ride.liveLate', { min: live.lateMinutes })}</span>}
-      </div>
-    </>
-  );
 }
 
 /* ----- The rest of what's booked ------------------------------------------ */
@@ -1151,11 +872,13 @@ function RideRow({ ride, action }: { ride: Ride; action?: React.ReactNode }) {
  * ride, and the day's rides under it: which shift, the van, where they
  * stand in line, and the faces they ride with.
  */
-function RideCalendar({ data }: { data: MyTransport }) {
+function RideCalendar({ data, heroId }: { data: MyTransport; heroId: string | null }) {
   const { t } = useI18n();
   const cancel = useCancelRide();
   const now = Date.now();
-  const live = sortedLive(data.rides, now);
+  // The next ride is the hero above — listing it here again was the page's
+  // duplicate (audit 2026-10-28). The strip is for the rides after it.
+  const live = sortedLive(data.rides, now).filter((r) => r.id !== heroId);
   const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const dayOf = (r: Ride) => zonedDayKey(r.pickupAt ?? r.targetAt, r.store.timezone);
   const today = zonedDayKey(new Date(now), localTz);
@@ -1225,7 +948,7 @@ function RideCalendar({ data }: { data: MyTransport }) {
                 ride={r}
                 action={
                   OPEN.includes(r.status) && r.run?.status !== 'ACTIVE' ? (
-                    <Button size="icon-sm" variant="ghost" aria-label={t('ride.cancel')} onClick={() => void cancel(r)}>
+                    <Button size="icon" variant="ghost" aria-label={t('ride.cancel')} onClick={() => void cancel(r)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   ) : undefined
@@ -1315,7 +1038,7 @@ function RidingWith({ ride }: { ride: Ride }) {
  * rated. A thumb up sends at once; a thumb down asks why. Never a public
  * score: transportation reads the trend by driver and route.
  */
-export function RideFeedbackCard() {
+export function RideFeedbackCard({ place }: { place?: 'top' | 'below' } = {}) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ['transport', 'me', 'feedback'], queryFn: getPendingFeedback, staleTime: 60_000 });
@@ -1337,18 +1060,40 @@ export function RideFeedbackCard() {
   });
   const ride = q.data?.rides?.[0];
   if (!ride) return null;
+  // Just finished: the trip's last state — "You made it", then the rating —
+  // at the top of the page. Older: a quiet card below the next ride.
+  const done = !!ride.completedAt && Date.now() - Date.parse(ride.completedAt) < 3 * H;
+  if ((place === 'top' && !done) || (place === 'below' && done)) return null;
   const reasons = (q.data?.reasons ?? []).filter((r) => r !== 'GREAT');
   const when = ride.completedAt ? `${fmtRelativeDayTz(ride.completedAt, ride.timezone)} ${fmtTimeTz(ride.completedAt, ride.timezone)}` : ride.store;
   return (
-    <Card className="mb-4">
+    <Card className={cn('mb-4', done && 'border-positive-200')} data-testid="ride-feedback" data-done={done || undefined}>
       <CardContent>
+        {done && (
+          <div className="mb-3">
+            <div className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-[0.18em] text-positive-800">
+              <Check className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('ride.done.eyebrow')}
+            </div>
+            <p className="mt-1 text-[1.75rem] font-bold leading-[1.15] tracking-tight text-ink">
+              {ride.direction === 'FROM_WORK' ? t('ride.done.home') : t('ride.done.title', { place: ride.store })}
+            </p>
+          </div>
+        )}
         <SectionTitle className="mb-0" title={t('ride.fbTitle')} description={t('ride.fbBody', { van: ride.van ?? '', driver: ride.driver ?? '', when })} />
         <div className="mt-3 flex flex-wrap gap-2 coarse:gap-3">
           <Button size="sm" variant="secondary" onClick={() => send.mutate({ rideId: ride.rideId, thumbsUp: true })} disabled={send.isPending}>
             <ThumbsUp className="h-4 w-4" />
             {t('ride.fbUp')}
           </Button>
-          <Button size="sm" variant={down ? 'primary' : 'secondary'} onClick={() => setDown(true)} disabled={send.isPending} aria-pressed={down}>
+          <Button
+            size="sm"
+            variant="secondary"
+            className={cn(down && 'border-accent-300 bg-accent-100 text-accent-800 hover:bg-accent-100')}
+            onClick={() => setDown(true)}
+            disabled={send.isPending}
+            aria-pressed={down}
+          >
             <ThumbsDown className="h-4 w-4" />
             {t('ride.fbDown')}
           </Button>
@@ -1440,44 +1185,6 @@ export function StandingBookings() {
             </li>
           ))}
         </ul>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ChargesCard({ data }: { data: MyTransport }) {
-  const { t } = useI18n();
-  const c = data.charges;
-  const payday = c.nextPayday ? parseYmd(c.nextPayday.payDate) : null;
-  return (
-    <Card className="mb-4">
-      <CardContent className="flex items-center gap-4">
-        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gold/15 text-gold" aria-hidden="true">
-          <Wallet className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium uppercase tracking-wider text-silver">{t('ride.chargesTitle')}</div>
-          {c.pendingCents > 0 ? (
-            <>
-              <div className="mt-0.5 text-lg font-semibold text-white tabular-nums">
-                {t('ride.chargesOwed', { amount: cents(c.pendingCents) })}
-              </div>
-              <div className="text-xs text-silver">
-                {t('ride.chargesDetail', { rides: c.rides, noShows: c.noShows })}
-                {payday && (
-                  <>
-                    {' · '}
-                    {t('ride.nextPayday', {
-                      date: fmtDayShort(payday, { anchored: true }),
-                    })}
-                  </>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="mt-0.5 text-sm text-white">{t('ride.chargesNone')}</div>
-          )}
-        </div>
       </CardContent>
     </Card>
   );
@@ -1903,7 +1610,9 @@ export function BookRideDialog({
       if (inLine && picked) {
         toast.success(t('ride.bookedWaitlist', { position: inLine.position, shift: picked.label }));
       } else {
-        toast.success(legs.length === 2 ? t('ride.bookedBoth') : t('ride.booked'));
+        toast.success(legs.length === 2 ? t('ride.bookedBoth') : t('ride.booked'), {
+          description: fareWords(t, total, data.charges.nextPayday, date),
+        });
       }
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
       await queryClient.invalidateQueries({ queryKey: ['transport', 'trips'] });
@@ -2179,7 +1888,9 @@ export function BookRideDialog({
             taller than a phone: the button sat a whole screen below where
             the sheet opens, and associates could not find it. */}
         <DialogFooter sticky className="flex-row items-center justify-between gap-3 sm:justify-between">
-          <span className="min-w-0 text-sm text-silver tabular-nums">{t('ride.total', { amount: cents(total) })}</span>
+          <span className="min-w-0 text-sm text-silver tabular-nums" data-testid="booking-fare">
+            {fareWords(t, total, data.charges.nextPayday, date)}
+          </span>
           <Button
             className="shrink-0"
             onClick={() => void submit()}
@@ -2306,18 +2017,21 @@ function ShiftPicker({
 function ReportDialog({
   rides,
   initialRideId,
+  initialCategory,
   open,
   onOpenChange,
 }: {
   rides: Ride[];
   initialRideId?: string;
+  /** "Question a charge" opens on CHARGE_DISPUTE. */
+  initialCategory?: TransportIssueCategory;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useI18n();
   const initial = rides.find((r) => r.id === initialRideId);
   const [category, setCategory] = useState<TransportIssueCategory>(
-    initial?.status === 'NO_SHOW' ? 'CHARGE_DISPUTE' : 'LATE_VAN',
+    initialCategory ?? (initial?.status === 'NO_SHOW' ? 'CHARGE_DISPUTE' : 'LATE_VAN'),
   );
   const [rideId, setRideId] = useState(initialRideId ?? '');
   const [body, setBody] = useState('');
@@ -2329,10 +2043,12 @@ function ReportDialog({
     },
     onError: (err) => toast.error(why(err)),
   });
-  const choices = rides
+  const recent = rides
     .filter((r) => r.status !== 'CANCELLED')
     .sort((a, b) => new Date(b.targetAt).getTime() - new Date(a.targetAt).getTime())
     .slice(0, 15);
+  // The ride a charge was questioned on is always one of the choices, however old.
+  const choices = initial && !recent.includes(initial) ? [initial, ...recent] : recent;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">

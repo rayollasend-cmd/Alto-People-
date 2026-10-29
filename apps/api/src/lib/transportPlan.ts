@@ -147,9 +147,25 @@ export async function orderAndTime(
   // To work: start at the pickup farthest from the store, then the road
   // network's shortest way to the store — or nearest-next without it.
   const ordered = await roadOrder(withPoints, store, 'TO_WORK');
+  return timeToWork(ordered, store, first.targetAt);
+}
 
+/**
+ * Pickup times for a to-work load already in order: worked back from the
+ * store, which the van reaches BUFFER_MIN before `firstTargetAt` (the
+ * earliest arrive-by), by the road where routing answers and the live
+ * map's drive-time estimate where it doesn't. Riders at the same stop
+ * share a time. Shared by orderAndTime and moving a rider onto a run
+ * (lib/transportMove), so a moved rider's pickup is timed the way the
+ * planner times everyone's.
+ */
+export async function timeToWork(
+  ordered: Array<{ ride: PlanRide; point: GeoPoint | null }>,
+  store: GeoPoint | null,
+  firstTargetAt: Date,
+): Promise<{ order: Timed[]; departAt: Date; arriveAt: Date | null }> {
   // Work back from the store, by the road where it answers.
-  const arriveAt = new Date(minute(first.targetAt.getTime() - BUFFER_MIN * 60_000));
+  const arriveAt = new Date(minute(firstTargetAt.getTime() - BUFFER_MIN * 60_000));
   const placed = ordered.filter((x) => x.point);
   const legs = store && placed.length > 0 ? await legDurations([...placed.map((x) => x.point!), store]) : null;
   const legOf = new Map<Timed['ride'], number>();

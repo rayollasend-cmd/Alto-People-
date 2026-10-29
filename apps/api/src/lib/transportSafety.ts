@@ -204,9 +204,15 @@ const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64url');
 const unb64 = (s: string) => Buffer.from(s, 'base64url').toString('utf8');
 const sign = (payload: string) => createHmac('sha256', env.JWT_SECRET).update(`transport-share:${payload}`).digest('base64url');
 
-export function shareToken(runId: string, now = new Date()): { token: string; expiresAt: Date } {
-  const expiresAt = new Date(now.getTime() + SHARE_TTL_MS);
-  const payload = `${runId}.${expiresAt.getTime()}`;
+/**
+ * A signed link to a run. The driver's link lasts six hours; a rider's
+ * (transport upgrade 2026-10-28) carries their ride id — the page then
+ * shows only the van and its ETA to THAT rider's stop — and lasts until
+ * two hours after the run's expected end (`expiresAt`).
+ */
+export function shareToken(runId: string, now = new Date(), opts: { rideId?: string; expiresAt?: Date } = {}): { token: string; expiresAt: Date } {
+  const expiresAt = opts.expiresAt ?? new Date(now.getTime() + SHARE_TTL_MS);
+  const payload = `${runId}.${expiresAt.getTime()}${opts.rideId ? `.${opts.rideId}` : ''}`;
   return { token: `${b64(payload)}.${sign(payload)}`, expiresAt };
 }
 
@@ -215,16 +221,16 @@ export function shareToken(runId: string, now = new Date()): { token: string; ex
  * its six hours is 'expired' (410), anything else — a typo, a forged or
  * truncated token — is 'invalid' (404). The page words them differently.
  */
-export function shareTokenState(token: string, now = new Date()): { runId: string } | 'expired' | 'invalid' {
+export function shareTokenState(token: string, now = new Date()): { runId: string; rideId: string | null } | 'expired' | 'invalid' {
   const dot = token.lastIndexOf('.');
   if (dot <= 0) return 'invalid';
   const payload = unb64(token.slice(0, dot));
   const sig = token.slice(dot + 1);
   const expected = sign(payload);
   if (sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return 'invalid';
-  const [runId, exp] = payload.split('.');
+  const [runId, exp, rideId] = payload.split('.');
   if (!runId || !exp) return 'invalid';
-  return Number(exp) < now.getTime() ? 'expired' : { runId };
+  return Number(exp) < now.getTime() ? 'expired' : { runId, rideId: rideId || null };
 }
 
 export function verifyShareToken(token: string, now = new Date()): string | null {
@@ -240,9 +246,10 @@ export function verifyShareToken(token: string, now = new Date()): string | null
 }
 
 /** What a shared link shows: the van, where it is, when it reaches its next stop. Nothing about who rides. */
-export async function publicTrack(runId: string, now = new Date()) {
+export async function publicTrack(runId: string, now = new Date(), rideId: string | null = null) {
   const run = await prisma.rideRun.findUnique({ where: { id: runId }, include: liveRunInclude });
   if (!run || run.status === 'CANCELLED') return null;
+  if (rideId) return riderTrack(run, rideId, now);
   const live = await computeRunLive(run, now);
   const next = live.plan.waypoints.find((w) => w.point);
   const driverFirst = run.driver.associate?.firstName ?? null;
@@ -263,4 +270,49 @@ export async function publicTrack(runId: string, now = new Date()) {
     endedAt: run.endedAt?.toISOString() ?? null,
     generatedAt: now.toISOString(),
   };
+}
+
+/**
+ * A rider's shared link (POST /transport/me/rides/:id/share): the van and
+ * its ETA to the rider's own stop — their pickup until they board, then
+ * where they get off. No driver, no rider, no address; once the rider is
+ * off the van (or the ride is off this run) the van is no longer shown.
+ */
+async function riderTrack(run: LiveRunRow, rideId: string, now: Date) {
+  const ride = run.rides.find((r) => r.id === rideId);
+  if (!ride) return null;
+  const base = { van: { name: run.van.name, plate: run.van.plate }, driver: null, generatedAt: now.toISOString() };
+  if (ride.status === 'COMPLETED' || ride.status === 'NO_SHOW' || run.status === 'COMPLETED') {
+    return { ...base, status: 'COMPLETED' as const, position: null, stale: false, next: null, stopsLeft: 0, endedAt: (run.endedAt ?? now).toISOString() };
+  }
+  const live = await computeRunLive(run, now);
+  const boarded = ride.status === 'BOARDED';
+  // Their stop: the pickup (to work: home; home: the place) until they're on, then the drop.
+  const idx = live.plan.waypoints.findIndex((w) => w.rideIds.includes(rideId) && (boarded ? w.kind !== 'pickup' && !(run.direction === 'FROM_WORK' && w.kind === 'store') : w.kind === 'pickup' || (run.direction === 'FROM_WORK' && w.kind === 'store')));
+  const w = idx >= 0 ? live.plan.waypoints[idx]! : null;
+  return {
+    ...base,
+    status: run.status,
+    position: live.van,
+    stale: live.stale,
+    next: w
+      ? {
+          kind: w.kind,
+          label: w.kind === 'store' ? (live.stores.get(w.locationId!)?.location.name ?? 'the stop') : w.kind === 'pickup' ? 'the pickup' : 'the drop-off',
+          etaAt: w.etaAt?.toISOString() ?? null,
+        }
+      : null,
+    stopsLeft: idx >= 0 ? idx + 1 : 0,
+    endedAt: null,
+  };
+}
+
+/** When a run should be over: its last stop's live ETA, its last scheduled time, or two hours after it leaves — whichever is latest. */
+export async function expectedRunEnd(run: LiveRunRow, now = new Date()): Promise<Date> {
+  let end = Math.max(run.departAt.getTime() + 2 * 3_600_000, ...run.rides.map((r) => Math.max(r.targetAt.getTime(), r.pickupAt?.getTime() ?? 0)));
+  if (run.status === 'ACTIVE') {
+    const live = await computeRunLive(run, now);
+    for (const w of live.plan.waypoints) if (w.etaAt) end = Math.max(end, w.etaAt.getTime());
+  }
+  return new Date(end);
 }

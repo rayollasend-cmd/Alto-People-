@@ -93,6 +93,7 @@ import { startCertificationReminderCron } from './lib/accessCertification.js';
 import { startRetentionCron } from './lib/retention.js';
 import { startVanTrailRetentionCron } from './lib/transportLive.js';
 import { startStuckRunSweepCron } from './lib/transportStuckRuns.js';
+import { startNotRunSweepCron } from './lib/transportNotRun.js';
 import { startRideSeriesCron } from './lib/rideSeries.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
@@ -317,6 +318,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startVanTrailRetentionCron();
   // Daily in effect: a van run left ACTIVE hours past its last stop is closed (lib/transportStuckRuns).
   startStuckRunSweepCron();
+  // Every 15 minutes: a planned run that never left is closed, its riders told and never charged (lib/transportNotRun).
+  startNotRunSweepCron();
   // Hourly: standing ride bookings booked forward a week.
   startRideSeriesCron();
 

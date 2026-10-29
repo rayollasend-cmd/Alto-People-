@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { isNotRun } from './transportConflicts.js';
 import { prisma } from '../db.js';
 import { DEFAULT_TIMEZONE } from './timezone.js';
 import { dateKeyInZone } from './timeAnomalies.js';
@@ -221,6 +222,9 @@ export const rideSelect = {
       id: true,
       status: true,
       departAt: true,
+      // A planned run that never started (the didn't-run sweep): the Rides tab says so.
+      startedAt: true,
+      autoClosedAt: true,
       van: { select: { id: true, name: true, plate: true, make: true, model: true, color: true, year: true } },
       driver: {
         select: {
@@ -292,6 +296,7 @@ export function toRideView(r: RideRow) {
           id: r.run.id,
           status: r.run.status,
           departAt: r.run.departAt.toISOString(),
+          notRun: isNotRun(r.run),
           van: r.run.van,
           driver: {
             userId: r.run.driver.id,
@@ -343,8 +348,11 @@ export function vanLook(v: { make: string | null; model: string | null; color: s
 }
 
 /** How long a driver waits after arriving before a rider can be marked a
- *  no-show — the rider isn't charged for a van that never stopped. */
-export const NO_SHOW_WAIT_MS = 3 * 60_000;
+ *  no-show — the rider isn't charged for a van that never stopped. The one
+ *  number: the driver's no-show gate, the "I'm here" text and the rider's
+ *  "the van waits 3 minutes" (GET /transport/me/live waitMinutes) all read it. */
+export const NO_SHOW_WAIT_MINUTES = 3;
+export const NO_SHOW_WAIT_MS = NO_SHOW_WAIT_MINUTES * 60_000;
 
 /** Rides still waiting on the van or the rider — the ones that can be
  *  cancelled or dispatched. */

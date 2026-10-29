@@ -1,20 +1,15 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, Camera, Check, Clock, Copy, LogIn, LogOut, Phone, Share2, ShieldAlert, Siren, X } from '@/components/ui/icons';
+import { AlertTriangle, Camera, Check, Copy, Phone, Share2, ShieldAlert, Siren, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
-import { fmtDayShort, fmtHours, fmtMoney, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
+import { fmtDayShort } from '@/lib/format';
 import {
-  driverClockIn,
-  driverClockOut,
   driverOk,
   getDriverProfile,
-  getSeatRequests,
-  getDriverTime,
-  getDriverToday,
   getPreTrip,
   navigationUrl,
   raiseSos,
@@ -36,7 +31,6 @@ import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
@@ -46,11 +40,9 @@ import '@/lib/i18n/en/drive';
  * The driver as a worker, and the road's safety net — the pieces DriverHome
  * hands the driver beside their runs:
  *
- *   DriverTodayCard   today's runs → hours → this week's pay; the time
- *                     clock; their driver shifts; their own recent punches
- *                     (a driver who is also a person on file finally sees
- *                     their own pay and time here); a lapsed licence, said
- *                     plainly
+ *   CredentialBanner  a lapsed licence, said plainly (drive mode's banner;
+ *                     the clock and the pay live in driver/DriveHeader and
+ *                     driver/EarningsSheet)
  *   useNavApp / navigate   the next stop, turn by turn, in the app they like
  *   PreTripDialog     the walk around the van before a run leaves
  *   SafetyDialog      911, alert transportation (with where the van is),
@@ -138,134 +130,15 @@ export function CredentialBanner({ credentials }: { credentials: CredentialStatu
   );
 }
 
-/* ----- Today: runs → hours → pay -------------------------------------------- */
-
-export function DriverTodayCard() {
-  const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const today = useQuery({ queryKey: ['transport', 'driver', 'today'], queryFn: getDriverToday, refetchInterval: 60_000 });
-  const time = useQuery({ queryKey: ['transport', 'driver', 'time'], queryFn: getDriverTime, enabled: !!today.data?.associateId });
-  // The van rides in the Today card's header (it sat under "Seat requests").
-  const requests = useQuery({ queryKey: ['transport', 'driver', 'requests'], queryFn: getSeatRequests, refetchInterval: 30_000 });
-  const van = requests.data?.van ?? null;
-  const [busy, setBusy] = useState(false);
-  if (today.isLoading) return <Skeleton className="h-28" />;
-  if (today.isError) return <QueryError what="your day" query={today} />;
-  const d = today.data;
-  // Tolerate a thin answer (an older API, a generic test mock): no card.
-  if (!d?.runs || !d.hours) return null;
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const clock = async () => {
-    setBusy(true);
-    try {
-      if (d.hours.onClock) {
-        await driverClockOut();
-        toast.success(t('drive.clockedOut'));
-      } else {
-        await driverClockIn();
-        toast.success(t('drive.clockedIn'));
-      }
-      hapticConfirm();
-      await queryClient.invalidateQueries({ queryKey: ['transport', 'driver'] });
-    } catch (err) {
-      toast.error(errMsg(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const tiles = [
-    { label: t('drive.statRuns'), value: `${d.runs.done}/${d.runs.total}` },
-    { label: t('drive.todayHours'), value: fmtHours(d.hours.worked) },
-    { label: t('drive.todayPay'), value: d.earnings ? fmtMoney(d.earnings.earnedSoFar) : '—' },
-  ];
-  return (
-    <section aria-label={t('drive.today')} className="space-y-3 rounded-lg border border-navy-secondary bg-navy p-4">
-      <SectionTitle
-        className="mb-0"
-        title={t('drive.today')}
-        trailing={d.associateId ? (
-          <div className="flex items-center gap-2">
-            <Badge size="sm" variant={d.hours.onClock ? 'success' : 'default'}>
-              {d.hours.onClock ? t('drive.todayOnClock') : t('drive.todayOffClock')}
-            </Badge>
-            <Button size={d.hours.onClock ? 'sm' : 'md'} variant={d.hours.onClock ? 'secondary' : 'primary'} onClick={() => void clock()} loading={busy} disabled={busy}>
-              {d.hours.onClock ? <LogOut className="h-3.5 w-3.5" /> : <LogIn className="h-3.5 w-3.5" />}
-              {d.hours.onClock ? t('drive.clockOut') : t('drive.clockIn')}
-            </Button>
-          </div>
-        ) : null}
-      />
-      {van && (
-        <div className="flex items-center gap-2.5 text-sm" data-testid="today-van">
-          <Bus className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">
-            <span className="text-silver">{t('drive.yourVan')} · </span>
-            <span className="font-medium text-ink">{van.name}</span>
-            {van.look && <span className="text-silver"> · {van.look}</span>}
-          </span>
-          {van.plate && (
-            <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-0.5 font-mono text-xs font-bold tracking-wider text-on-accent">
-              {van.plate}
-            </span>
-          )}
-        </div>
-      )}
-      <CredentialBanner credentials={d.credentials} />
-      <div className="grid grid-cols-3 gap-2">
-        {tiles.map((x) => (
-          <div key={x.label} className="rounded-lg border border-navy-secondary bg-navy-secondary/20 px-3 py-2.5">
-            <div className="text-2xs font-medium uppercase tracking-wider text-silver">{x.label}</div>
-            <div className="mt-0.5 text-xl font-bold tabular-nums text-ink">{x.value}</div>
-          </div>
-        ))}
-      </div>
-      {!d.associateId ? (
-        <p className="text-xs text-silver">{t('drive.noAssociate')}</p>
-      ) : (
-        <>
-          {/* Today's driver shift only — the week (shifts and runs, day by day) is the
-              "Your week" calendar below; two schedule views for one driver was one too many. */}
-          {(() => {
-            const todays = d.shifts.filter((sh) => sh.today);
-            return (
-              <p className="flex items-center gap-2 text-sm text-silver" data-testid="today-shift">
-                <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                {todays.length === 0
-                  ? t('drive.noShiftToday')
-                  : todays.map((sh) => `${fmtTimeTz(sh.startsAt, tz)}–${fmtTimeTz(sh.endsAt, tz)}`).join(', ')}
-              </p>
-            );
-          })()}
-          {(time.data?.entries.length ?? 0) > 0 && (
-            <div>
-              <h3 className="text-2xs font-semibold uppercase tracking-wider text-silver">{t('drive.payLink')}</h3>
-              <ul className="mt-1 divide-y divide-navy-secondary/60">
-                {time.data!.entries.slice(0, 5).map((e) => (
-                  <li key={e.id} className="flex items-center justify-between gap-2 py-1.5 text-sm">
-                    <span className="tabular-nums text-ink">
-                      {fmtRelativeDayTz(e.clockInAt, tz)} · {fmtTimeTz(e.clockInAt, tz)}
-                      {e.clockOutAt ? `–${fmtTimeTz(e.clockOutAt, tz)}` : ''}
-                    </span>
-                    <span className="tabular-nums text-silver">{e.hours !== null ? fmtHours(e.hours) : t('drive.todayOnClock')}</span>
-                  </li>
-                ))}
-              </ul>
-              {d.earnings && (
-                <p className="mt-1 text-xs text-silver">
-                  {fmtMoney(d.earnings.hourlyRate)}/h · {fmtHours(d.earnings.workedHours)} · {fmtMoney(d.earnings.projectedWeek)}
-                </p>
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
 /* ----- The pre-trip check ------------------------------------------------------ */
 
-export function PreTripDialog({ run, onPassed, onClose }: { run: RideRun; onPassed: () => void; onClose: () => void }) {
+/**
+ * The walk around the van. `startsRun`: opened because Start was refused
+ * for want of a check — a pass then starts the run ("Done — start the
+ * run"). From drive mode's Pre-trip step it only records the check; Start
+ * run is the next step.
+ */
+export function PreTripDialog({ run, onPassed, onClose, startsRun = true }: { run: RideRun; onPassed: () => void; onClose: () => void; startsRun?: boolean }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ['transport', 'driver', 'pretrip', run.id], queryFn: () => getPreTrip(run.id) });
@@ -277,6 +150,8 @@ export function PreTripDialog({ run, onPassed, onClose }: { run: RideRun; onPass
   const fileRef = useRef<HTMLInputElement>(null);
   const items = q.data?.items ?? [];
   const complete = items.length > 0 && items.every((i) => i.key in answers);
+  // One check per van per day: already passed (on this run or another of the van's today).
+  const alreadyDone = q.data?.done === true;
   const label = (key: string, fallback: string) => {
     const k = `drive.check.${key}` as MessageKey;
     const s = t(k);
@@ -328,6 +203,11 @@ export function PreTripDialog({ run, onPassed, onClose }: { run: RideRun; onPass
           <QueryError what="the checklist" query={q} />
         ) : q.isLoading ? (
           <Skeleton className="h-64" />
+        ) : alreadyDone ? (
+          <p role="status" className="flex items-center gap-2 text-base text-positive-800">
+            <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {t('drive.preTripDoneToday', { van: run.van.name })}
+          </p>
         ) : (
           <div className="space-y-4">
             <ul className="divide-y divide-navy-secondary/60">
@@ -367,9 +247,13 @@ export function PreTripDialog({ run, onPassed, onClose }: { run: RideRun; onPass
           </div>
         )}
         <DialogFooter>
-          <Button onClick={() => void submit()} loading={busy} disabled={busy || !complete}>
-            {t('drive.preTripSubmit')}
-          </Button>
+          {alreadyDone ? (
+            <Button onClick={onPassed}>{startsRun ? t('drive.start') : t('drive.preTripSubmitOnly')}</Button>
+          ) : (
+            <Button onClick={() => void submit()} loading={busy} disabled={busy || !complete}>
+              {startsRun ? t('drive.preTripSubmit') : t('drive.preTripSubmitOnly')}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -497,8 +381,8 @@ export function OkPrompt({ run, onHelp }: { run: RideRun; onHelp: () => void }) 
     }
   };
   return (
-    <div role="alert" className="mt-3 rounded-lg border border-warning/50 bg-warning/10 p-3">
-      <p className="text-sm font-medium text-warning">{t('drive.okPrompt')}</p>
+    <div role="alert" className="mb-3 rounded-lg border border-caution-300 bg-caution-50 p-3">
+      <p className="text-base font-medium text-caution-800">{t('drive.okPrompt')}</p>
       <div className="mt-2 flex flex-wrap gap-2 coarse:gap-3">
         <Button size="sm" onClick={() => void ok()} loading={busy} disabled={busy}>
           <Check className="h-3.5 w-3.5" />

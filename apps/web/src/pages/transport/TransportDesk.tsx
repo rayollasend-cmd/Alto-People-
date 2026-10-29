@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, CalendarClock, Check, Fuel, IdCard, Plus, ShieldAlert, Siren, ThumbsDown, ThumbsUp, Trash2, Wrench } from '@/components/ui/icons';
+import { AlertTriangle, Bus, CalendarClock, Check, Fuel, IdCard, Plus, ThumbsDown, ThumbsUp, Trash2, Wrench } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -9,7 +9,6 @@ import { useConfirm, usePrompt } from '@/lib/confirm';
 import { fmtDate, fmtDateOnlyRange, fmtDateTime, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, ymdLocal } from '@/lib/format';
 import { useChargesRange } from '@/lib/transportRange';
 import {
-  ackSos,
   addVanService,
   createDriverShift,
   deleteDriverShift,
@@ -27,7 +26,6 @@ import {
   updateVanRecord,
   type DeskDriver,
   type NeedsYouItem,
-  type RunMap,
   type TransportIncident,
   type TransportIncidentKind,
   type VanServiceKind,
@@ -56,7 +54,6 @@ import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from
  *
  *   TransportNeedsYou   everything waiting on the desk, counted — the same
  *                       number the Inbox shows
- *   SosBanner           a driver's SOS, with acknowledge
  *   DriversTab          each driver's licence, DOT card, MVR, today's shift;
  *                       the day's driver shifts to set and remove
  *   VanRecordDrawer     the fleet record: papers, VIN, odometer, service log,
@@ -71,20 +68,48 @@ const errMsg = (err: unknown) => (err instanceof ApiError ? err.message : String
 
 /* ===== Needs you ============================================================ */
 
-export function TransportNeedsYou() {
+/**
+ * `exclude` drops the items another surface already carries (the Today tab's
+ * exceptions queue has the SOS, the silent driver, the riders without a van and
+ * the late vans), and `variant="line"` says the rest in one quiet line — the
+ * desk's paperwork, not its emergencies.
+ */
+export function TransportNeedsYou({ exclude = [], variant = 'panel' }: { exclude?: string[]; variant?: 'panel' | 'line' } = {}) {
   const q = useQuery({ queryKey: ['transport', 'needs-you'], queryFn: getTransportNeedsYou, refetchInterval: 30_000 });
   const [, setParams] = useSearchParams();
-  if (q.isError) return <QueryError what="what needs you" query={q} />;
-  if (!q.data?.items || q.data.total === 0) return null;
+  if (q.isError) return variant === 'line' ? null : <QueryError what="what needs you" query={q} />;
+  const items = (q.data?.items ?? []).filter((i) => !exclude.includes(i.key));
+  if (items.length === 0) return null;
   const go = (i: NeedsYouItem) => {
     const tab = new URL(i.path, 'http://x').searchParams.get('tab');
     setParams(tab ? { tab } : {});
   };
+  if (variant === 'line') {
+    return (
+      <nav aria-label="Also waiting on you">
+        <p className="text-sm text-ink-muted">
+          Also waiting on you:{' '}
+          {items.map((i, n) => (
+            <span key={i.key}>
+              {n > 0 && <span aria-hidden="true"> · </span>}
+              <button
+                type="button"
+                onClick={() => go(i)}
+                className="rounded text-ink underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:inline-flex coarse:min-h-11 coarse:items-center"
+              >
+                {i.label}&nbsp;<span className="tabular-nums">{i.count}</span>
+              </button>
+            </span>
+          ))}
+        </p>
+      </nav>
+    );
+  }
   return (
     <section aria-label="Needs you" className="rounded-lg border border-navy-secondary bg-navy">
-      <SectionTitle className="mb-0 px-4 pt-3" title={`Needs you · ${q.data.total}`} />
+      <SectionTitle className="mb-0 px-4 pt-3" title={`Needs you · ${items.reduce((t, i) => t + i.count, 0)}`} />
       <ul className="grid grid-cols-1 gap-px p-2 sm:grid-cols-2 lg:grid-cols-4">
-        {q.data.items.map((i) => (
+        {items.map((i) => (
           <li key={i.key}>
             <button
               type="button"
@@ -103,66 +128,6 @@ export function TransportNeedsYou() {
         ))}
       </ul>
     </section>
-  );
-}
-
-/* ===== SOS ================================================================= */
-
-export function SosBanner({ runs, manage }: { runs: RunMap[]; manage: boolean }) {
-  const queryClient = useQueryClient();
-  const [busy, setBusy] = useState<string | null>(null);
-  const loud = runs.filter((r) => r.safety?.sosAt && !r.safety.sosAckAt);
-  const quiet = runs.filter((r) => r.safety?.escalatedAt && !(r.safety.sosAt && !r.safety.sosAckAt));
-  if (loud.length === 0 && quiet.length === 0) return null;
-  const ack = async (r: RunMap) => {
-    setBusy(r.runId);
-    try {
-      await ackSos(r.runId);
-      toast.success(`${r.driver.name} hears you’re on it`);
-      await queryClient.invalidateQueries({ queryKey: ['transport'] });
-    } catch (err) {
-      toast.error(errMsg(err));
-    } finally {
-      setBusy(null);
-    }
-  };
-  return (
-    <div className="mb-4 space-y-2">
-      {loud.map((r) => (
-        <div key={r.runId} role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-alert/60 bg-alert/10 px-4 py-3">
-          <Siren className="h-5 w-5 shrink-0 text-alert" aria-hidden="true" />
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-alert">
-              SOS — {r.driver.name} in {r.van.name}
-            </div>
-            <div className="text-xs text-silver">
-              {r.safety?.sosAt ? fmtDateTime(r.safety.sosAt) : ''}
-              {r.safety?.sosNote ? ` · “${r.safety.sosNote}”` : ''}
-              {r.position ? ` · ${r.position.lat.toFixed(5)}, ${r.position.lng.toFixed(5)}` : ''}
-            </div>
-          </div>
-          {r.position && (
-            <Button size="sm" variant="secondary" asChild>
-              <a href={`https://www.google.com/maps?q=${r.position.lat},${r.position.lng}`} target="_blank" rel="noreferrer">
-                Open in Maps
-              </a>
-            </Button>
-          )}
-          {manage && (
-            <Button size="sm" variant="destructive" onClick={() => void ack(r)} loading={busy === r.runId} disabled={busy !== null}>
-              <Check className="h-3.5 w-3.5" />
-              Acknowledge
-            </Button>
-          )}
-        </div>
-      ))}
-      {quiet.map((r) => (
-        <div key={r.runId} role="status" className="flex items-center gap-3 rounded-lg border border-warning/50 bg-warning/10 px-4 py-2.5 text-sm text-warning">
-          <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
-          {r.driver.name} hasn’t answered “everything OK?” — {r.van.name} sat still or went off its way. Call them.
-        </div>
-      ))}
-    </div>
   );
 }
 

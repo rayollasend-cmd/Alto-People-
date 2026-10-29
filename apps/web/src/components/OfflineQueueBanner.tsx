@@ -24,13 +24,17 @@ export function OfflineQueueBanner() {
       disarm();
     };
   }, []);
-  if (queue.length === 0) return null;
+  // A driver's taps (lib/offlineTransport, kind 'transport-tap') have their own
+  // "N taps waiting to send" line on the drive sheet; listing them here too
+  // said it twice. They still replay with the rest (armOfflineQueueReplay above).
+  const shown = queue.filter((q) => q.kind !== 'transport-tap');
+  if (shown.length === 0) return null;
   return (
     <div role="status" className="flex flex-wrap items-center gap-3 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-ink">
       <CloudOff className="h-4 w-4 text-warning" aria-hidden="true" />
       <span className="min-w-0 flex-1">
-        {queue.length === 1 ? '1 change' : `${queue.length} changes`} saved offline — {queue[0]!.label}
-        {queue.length > 1 ? ` and ${queue.length - 1} more` : ''}. They send when the signal is back.
+        {shown.length === 1 ? '1 change' : `${shown.length} changes`} saved offline — {shown[0]!.label}
+        {shown.length > 1 ? ` and ${shown.length - 1} more` : ''}. They send when the signal is back.
       </span>
       <Button
         size="sm"

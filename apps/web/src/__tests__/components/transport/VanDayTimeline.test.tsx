@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { VanDayTimeline, firstFreeVan, groupWaitingRides, timelineBars } from '@/components/transport/VanDayTimeline';
+import { VanDayTimeline, conflictWords, firstFreeVan, groupWaitingRides, runConflicts, timelineBars } from '@/components/transport/VanDayTimeline';
 import { resolveTransportKey } from '@/lib/transportKeyboard';
 import type { Ride, RideRun, TransportBoard } from '@/lib/transportApi';
 
@@ -49,6 +49,35 @@ const vans: TransportBoard['vans'] = [
   { id: 'v1', name: 'Van 1', plate: null, capacity: 12, driverUserId: 'mike' },
   { id: 'v2', name: 'Van 2', plate: null, capacity: 12, driverUserId: null },
 ];
+
+describe('runConflicts + conflictWords — the clash in words', () => {
+  const named = (r: RideRun, driver: string) => ({ ...r, driver: { userId: r.driver.userId, name: driver } });
+  it('the same driver on another van: who, which van, when, how long', () => {
+    const a = named(run('a', 'v1', 'mike', 0), 'Mike Chen');
+    const b = named(run('b', 'v2', 'mike', 30), 'Mike Chen');
+    const [c] = runConflicts(a, [a, b]);
+    // a holds its van -15..+120 min, b +15..+150: 105 minutes together.
+    expect(c).toEqual({ kind: 'driver', runId: 'b', overlapMinutes: 105 });
+    expect(conflictWords(a, c!, b, tz)).toBe('Mike is also on Van 2 at 5:30 AM — 1h 45m overlap');
+  });
+
+  it('the same van with another driver names that driver’s run; both at once is one line', () => {
+    const a = named(run('a', 'v1', 'mike', 0), 'Mike Chen');
+    const b = named(run('b', 'v1', 'tasha', 60), 'Tasha Grant');
+    expect(conflictWords(a, runConflicts(a, [a, b])[0]!, b, tz)).toBe('Van 1 is also on Tasha’s 6:00 AM run — 1h 15m overlap');
+    const c = named(run('c', 'v1', 'mike', 100), 'Mike Chen');
+    const both = runConflicts(a, [a, c]);
+    expect(both).toEqual([{ kind: 'both', runId: 'c', overlapMinutes: 35 }]);
+    expect(conflictWords(a, both[0]!, c, tz)).toBe('Mike and Van 1 are also on the 6:40 AM run — 35 min overlap');
+  });
+
+  it('takes the server’s conflicts when it sends them, and none for a run alone', () => {
+    const a = { ...run('a', 'v1', 'mike', 0), conflicts: [{ kind: 'van' as const, runId: 'z', overlapMinutes: 12 }] };
+    expect(runConflicts(a, [a])).toEqual([{ kind: 'van', runId: 'z', overlapMinutes: 12 }]);
+    const lone = run('l', 'v1', 'mike', 0);
+    expect(runConflicts(lone, [lone])).toEqual([]);
+  });
+});
 
 describe('timelineBars', () => {
   it('flags two runs that overlap on the same van, or with the same driver', () => {

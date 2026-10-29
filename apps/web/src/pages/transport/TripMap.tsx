@@ -88,6 +88,7 @@ export function TripMap({
   vanLabel,
   className,
   overlay,
+  tapToExpand = false,
 }: {
   stage: TripStage;
   live: MyLiveRide;
@@ -95,12 +96,16 @@ export function TripMap({
   className?: string;
   /** What rides along at the foot of the full-screen map. */
   overlay?: React.ReactNode;
+  /** A tap on the map (a finger) or on a marker opens it full screen. */
+  tapToExpand?: boolean;
 }) {
   const { t } = useI18n();
   const [full, setFull] = useState(false);
   const [recenter, setRecenter] = useState(0);
   const geo = useMemo(() => tripGeometry(stage, live, vanLabel), [stage, live, vanLabel]);
   const fresh = !!live.position && !live.stale && (stage === 'ON_THE_WAY' || stage === 'ON_BOARD' || stage === 'HERE');
+  // A finger's tap on the inline map opens it; a mouse keeps its cursor (onPick draws a crosshair).
+  const [coarse] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches);
   if (geo.markers.length === 0) return null;
 
   const chip = fresh ? (
@@ -156,6 +161,8 @@ export function TripMap({
           // map below keeps one-finger panning — it owns the screen, so
           // there is nothing behind it to scroll to.
           cooperativeGestures
+          onPick={tapToExpand && coarse ? () => setFull(true) : undefined}
+          onMarkerClick={tapToExpand ? () => setFull(true) : undefined}
         />
         <div className="pointer-events-none absolute left-3 top-3">{chip}</div>
         <div className="absolute right-3 top-3">{buttons(false)}</div>

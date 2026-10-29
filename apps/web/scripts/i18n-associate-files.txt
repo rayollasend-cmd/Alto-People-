@@ -92,3 +92,9 @@ src/components/assistant/HugoTaskOffer.tsx
 src/components/assistant/HugoBadge.tsx
 src/components/assistant/hugoWorkText.ts
 src/components/settings/HugoNotesCard.tsx
+src/pages/transport/rider/LiveTrip.tsx
+src/pages/transport/rider/OwedCard.tsx
+src/pages/transport/rider/ChargesLedger.tsx
+src/pages/transport/rider/CrewDialog.tsx
+src/pages/transport/rider/charges.ts
+src/pages/transport/TrackPage.tsx

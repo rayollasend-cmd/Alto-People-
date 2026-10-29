@@ -20,17 +20,22 @@ import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
 import { actsAsAny } from '../lib/roleScope.js';
 import { geocode } from '../lib/geocode.js';
 import { computeAssociateEarnings } from '../lib/associateEarnings.js';
+import { nextPaydayFor } from '../lib/associatePayday.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
-import { haversineM } from '../lib/transportLive.js';
 import { TRANSPORT_PHOTO_NAME, bookableStores, transportPhotoUrl } from '../lib/transport.js';
 import { storeShiftWindows } from '../lib/transportSeats.js';
+import { driverHourlyRates, runDriverCents } from '../lib/transportCosts.js';
+import { computeOpsBoard } from '../lib/transportOpsBoard.js';
+import { computeReadiness, tomorrowKey } from '../lib/transportReadiness.js';
 import { generateSeries, seriesTargetAt } from '../lib/rideSeries.js';
-import { ackSos, driverOk, publicTrack, raiseSos, shareToken, shareTokenState } from '../lib/transportSafety.js';
+import { ackSos, driverOk, expectedRunEnd, publicTrack, raiseSos, shareToken, shareTokenState } from '../lib/transportSafety.js';
+import { haversineM, liveRunInclude } from '../lib/transportLive.js';
 import {
   DRIVER_POSITION,
   PRE_TRIP_ITEMS,
   assertShiftWithinHos,
   dayBounds,
+  dayRunCounts,
   driverCredentialStatus,
   driverShiftSelect,
   driverShiftsBetween,
@@ -39,6 +44,8 @@ import {
   preTripLabel,
   syncDriverQualifications,
   transportExpirations,
+  vanDayKey,
+  vanDayPreTrips,
 } from '../lib/transportDrivers.js';
 
 /**
@@ -156,7 +163,7 @@ transportOpsRouter.get('/driver/today', DRIVE, async (req, res) => {
   const { from, to } = dayBounds(date);
   const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: { associateId: true } });
   const associateId = user?.associateId ?? null;
-  const [runs, profile, shifts, entries, earnings, settings] = await Promise.all([
+  const [runs, profile, shifts, entries, earnings, settings, dispatch, payday] = await Promise.all([
     prisma.rideRun.findMany({ where: { driverUserId: req.user!.id, serviceDate: date, status: { not: 'CANCELLED' } }, select: { status: true, startedAt: true, endedAt: true } }),
     prisma.driverProfile.findUnique({ where: { userId: req.user!.id } }),
     associateId
@@ -175,13 +182,18 @@ transportOpsRouter.get('/driver/today', DRIVE, async (req, res) => {
       : Promise.resolve([]),
     associateId ? computeAssociateEarnings(prisma, associateId, now).catch(() => null) : Promise.resolve(null),
     hosSettings(),
+    prisma.transportSettings.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { dispatchPhone: true } }),
+    // The payday the driver's pay sheet counts down to: the same schedule
+    // membership as /payroll/me/next-payday (drivers can't call it).
+    associateId ? nextPaydayFor(associateId, now).catch(() => null) : Promise.resolve(null),
   ]);
   const workedMs = entries.reduce((t, e) => t + ((e.clockOutAt ?? now).getTime() - e.clockInAt.getTime()), 0);
   const drivenMs = runs.reduce((t, r) => (r.startedAt ? t + ((r.endedAt ?? now).getTime() - r.startedAt.getTime()) : t), 0);
   res.json({
     date,
     associateId,
-    runs: { total: runs.length, done: runs.filter((r) => r.status === 'COMPLETED').length, active: runs.filter((r) => r.status === 'ACTIVE').length },
+    // "Runs today", one definition (lib/transportDrivers dayRunCounts) — GET /driver/runs' counts are the same.
+    runs: dayRunCounts(runs),
     hours: { worked: Math.round((workedMs / 3_600_000) * 100) / 100, driven: Math.round((drivenMs / 3_600_000) * 100) / 100, onClock: entries.some((e) => e.status === 'ACTIVE') },
     shifts: shifts.map((s) => ({ id: s.id, startsAt: iso(s.startsAt), endsAt: iso(s.endsAt), status: s.status, today: s.startsAt < to && s.endsAt > from })),
     earnings: earnings
@@ -194,8 +206,19 @@ transportOpsRouter.get('/driver/today', DRIVE, async (req, res) => {
           onClock: earnings.onClock,
           weekStart: earnings.weekStart,
           weekEnd: earnings.weekEnd,
+          // The pay sheet (transport upgrade 2026-10-28): the engine's own
+          // shapes, as GET /time/me/earnings returns them.
+          days: earnings.days,
+          overtime: earnings.overtime,
+          currentRatePerHour: earnings.currentRatePerHour,
+          takeHome: earnings.takeHome,
+          rateSource: earnings.rateSource,
         }
       : null,
+    /** Null when the driver is on no pay schedule (or has no person record). */
+    nextPayday: payday ? { payDate: payday.payDate, periodStart: payday.periodStart, periodEnd: payday.periodEnd } : null,
+    /** The dispatch line — the driver's "Call dispatch". */
+    dispatchPhone: dispatch?.dispatchPhone ?? null,
     // Only once the desk keeps a record for this driver: a fleet that
     // tracks no licences is not told "not on file" on every phone.
     credentials: profile ? driverCredentialStatus(profile) : null,
@@ -356,8 +379,24 @@ function checkView(c: { id: string; passed: boolean; items: unknown; odometerMil
 
 transportOpsRouter.get('/driver/runs/:id/pre-trip', DRIVE, async (req, res) => {
   const run = await ownRun(req, z.string().uuid().parse(req.params.id));
-  const [check, settings] = await Promise.all([prisma.preTripCheck.findUnique({ where: { runId: run.id } }), hosSettings()]);
-  res.json({ required: settings.preTripRequired, items: PRE_TRIP_ITEMS, check: check ? checkView(check) : null });
+  // One walk-around per van per day: the van's latest check on any of the
+  // day's runs answers for this run too (lib/transportDrivers vanDayPreTrips).
+  const [own, day, settings] = await Promise.all([
+    prisma.preTripCheck.findUnique({ where: { runId: run.id } }),
+    vanDayPreTrips([{ vanId: run.vanId, serviceDate: run.serviceDate }]),
+    hosSettings(),
+  ]);
+  const latest = day.get(vanDayKey(run.vanId, run.serviceDate)) ?? null;
+  const check = latest && latest.checkId !== own?.id ? await prisma.preTripCheck.findUnique({ where: { id: latest.checkId } }) : own;
+  res.json({
+    required: settings.preTripRequired,
+    items: PRE_TRIP_ITEMS,
+    check: check ? checkView(check) : null,
+    /** The van passed its walk-around today on this or another run — nothing to do before leaving. */
+    done: !!latest?.passed,
+    /** The check that answers was done for another of the van's runs today. */
+    fromOtherRun: !!check && check.runId !== run.id,
+  });
 });
 
 transportOpsRouter.post('/driver/runs/:id/pre-trip', DRIVE, async (req, res) => {
@@ -431,6 +470,30 @@ transportOpsRouter.get('/driver/runs/:id/share', DRIVE, async (req, res) => {
   res.json({ url: `${env.APP_BASE_URL}/track/${token}`, token, expiresAt: expiresAt.toISOString() });
 });
 
+/**
+ * The rider's share (transport upgrade 2026-10-28): a link they can text
+ * someone waiting on them — the van and its ETA to their stop, nothing
+ * else (lib/transportSafety riderTrack). Their own ride only; it has to be
+ * on a van; it lasts until two hours after the run should be over.
+ */
+transportOpsRouter.post('/me/rides/:id/share', RIDE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const associateId = req.user!.associateId;
+  const ride = associateId
+    ? await prisma.ride.findFirst({ where: { id, associateId }, select: { id: true, status: true, runId: true } })
+    : null;
+  if (!ride) throw new HttpError(404, 'not_found', 'Ride not found.');
+  if (!ride.runId) throw new HttpError(409, 'no_run', "Your ride isn't on a van yet — you can share it once a van is set.");
+  if (!['SCHEDULED', 'BOARDED'].includes(ride.status)) throw new HttpError(409, 'ride_over', 'This ride is over — there is nothing to share.');
+  const run = await prisma.rideRun.findUnique({ where: { id: ride.runId }, include: liveRunInclude });
+  if (!run || run.status === 'CANCELLED' || run.status === 'COMPLETED') throw new HttpError(409, 'ride_over', 'This ride is over — there is nothing to share.');
+  const now = new Date();
+  const expiresAt = new Date((await expectedRunEnd(run, now)).getTime() + 2 * 3_600_000);
+  const { token } = shareToken(run.id, now, { rideId: ride.id, expiresAt });
+  enqueueAudit({ actorUserId: req.user!.id, action: 'transport.ride_shared', entityType: 'Ride', entityId: ride.id, metadata: { runId: run.id, expiresAt: expiresAt.toISOString() } }, 'transportOps');
+  res.json({ url: `${env.APP_BASE_URL}/track/${token}`, expiresAt: expiresAt.toISOString() });
+});
+
 transportOpsRouter.post('/runs/:id/sos/ack', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const run = await prisma.rideRun.findUnique({ where: { id }, select: { id: true, sosAt: true } });
@@ -446,7 +509,7 @@ transportOpsRouter.get('/track/:token', async (req, res) => {
   const state = shareTokenState(String(req.params.token));
   if (state === 'invalid') throw new HttpError(404, 'not_found', 'This link is not valid.');
   if (state === 'expired') throw new HttpError(410, 'link_expired', 'This shared trip has expired.');
-  const view = await publicTrack(state.runId);
+  const view = await publicTrack(state.runId, new Date(), state.rideId);
   if (!view) throw new HttpError(410, 'link_expired', 'This trip is no longer shared.');
   res.setHeader('Cache-Control', 'no-store');
   res.json({ trip: view });
@@ -1262,18 +1325,8 @@ transportOpsRouter.get('/costs', VIEW, async (req, res) => {
     hosSettings(),
   ]);
   void settings;
-  // Driver rates, once each.
-  const driverIds = [...new Set(runs.map((r) => r.driverUserId))];
-  const drivers = driverIds.length
-    ? await prisma.user.findMany({ where: { id: { in: driverIds } }, select: { id: true, associateId: true } })
-    : [];
-  const rateOf = new Map<string, number>();
-  for (const d of drivers) {
-    const comp = d.associateId
-      ? await prisma.compensationRecord.findFirst({ where: { associateId: d.associateId, payType: 'HOURLY', effectiveTo: null }, orderBy: { effectiveFrom: 'desc' }, select: { amount: true } })
-      : null;
-    rateOf.set(d.id, comp ? Number(comp.amount) : env.DEFAULT_ASSOCIATE_PAY_RATE);
-  }
+  // Driver rates, in one read (lib/transportCosts — the same reckoning as /trends and the ops board).
+  const rateOf = await driverHourlyRates(runs.map((r) => r.driverUserId));
   const vanCost = new Map<string, { fuel: number; maintenance: number }>();
   for (const s of service) {
     const v = vanCost.get(s.vanId) ?? { fuel: 0, maintenance: 0 };
@@ -1293,8 +1346,7 @@ transportOpsRouter.get('/costs', VIEW, async (req, res) => {
     return r;
   };
   for (const r of runs) {
-    const hours = r.startedAt && r.endedAt ? (r.endedAt.getTime() - r.startedAt.getTime()) / 3_600_000 : 2;
-    const driverCents = Math.round(hours * (rateOf.get(r.driverUserId) ?? env.DEFAULT_ASSOCIATE_PAY_RATE) * 100);
+    const driverCents = runDriverCents(r, rateOf);
     const perRun = vanCost.get(r.vanId);
     const share = runsPerVan.get(r.vanId) ?? 1;
     const fuelCents = perRun ? Math.round(perRun.fuel / share) : 0;
@@ -1389,16 +1441,8 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
       select: { serviceDate: true },
     }),
   ]);
-  // Driver rates, in one read.
-  const driverIds = [...new Set(runs.map((r) => r.driverUserId))];
-  const drivers = driverIds.length ? await prisma.user.findMany({ where: { id: { in: driverIds } }, select: { id: true, associateId: true } }) : [];
-  const assocIds = drivers.map((d) => d.associateId).filter((x): x is string => !!x);
-  const comps = assocIds.length
-    ? await prisma.compensationRecord.findMany({ where: { associateId: { in: assocIds }, payType: 'HOURLY', effectiveTo: null }, orderBy: { effectiveFrom: 'desc' }, select: { associateId: true, amount: true } })
-    : [];
-  const rateByAssoc = new Map<string, number>();
-  for (const c of comps) if (!rateByAssoc.has(c.associateId)) rateByAssoc.set(c.associateId, Number(c.amount));
-  const rateOf = new Map(drivers.map((d) => [d.id, (d.associateId && rateByAssoc.get(d.associateId)) || env.DEFAULT_ASSOCIATE_PAY_RATE]));
+  // Driver rates, in one read (lib/transportCosts).
+  const rateOf = await driverHourlyRates(runs.map((r) => r.driverUserId));
 
   const buckets = new Map(starts.map((s) => [s, { riders: 0, noShows: 0, timed: 0, onTime: 0, revenueCents: 0, costCents: 0 }]));
   for (const r of rides) {
@@ -1418,8 +1462,7 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
   for (const run of runs) {
     const b = buckets.get(orgWeekStartOf(run.serviceDate));
     if (!b) continue;
-    const hours = run.startedAt && run.endedAt ? (run.endedAt.getTime() - run.startedAt.getTime()) / 3_600_000 : 2;
-    b.costCents += Math.round(hours * (rateOf.get(run.driverUserId) ?? env.DEFAULT_ASSOCIATE_PAY_RATE) * 100);
+    b.costCents += runDriverCents(run, rateOf);
   }
   for (const s of service) {
     const b = buckets.get(orgWeekStartOf(s.occurredAt.toISOString().slice(0, 10)));
@@ -1443,4 +1486,23 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
     lastRideDate: lastRide?.serviceDate ?? null,
     note: 'On time: the van arrived (or the rider boarded) within 5 minutes of the planned pickup. Revenue is fares and no-show fees charged on runs that ended, less waivers — the same terms as Costs. Cost is run hours at each driver’s rate plus fuel and upkeep from the service log.',
   });
+});
+
+/* ===== Live operations and tomorrow's readiness (transport upgrade 2026-10-28) ===== */
+
+/**
+ * The dispatcher's live operations: every van and what it is doing, the
+ * exceptions worst first, the four KPIs, where the map opens
+ * (lib/transportOpsBoard; TransportOpsBoard in packages/shared transportOps).
+ */
+transportOpsRouter.get('/ops', VIEW, async (req, res) => {
+  const { date } = z.object({ date: dateOnly.optional() }).parse(req.query);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(await computeOpsBoard(date ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE)));
+});
+
+/** Is the day ready? Six checks, tomorrow unless ?date= says otherwise (lib/transportReadiness). */
+transportOpsRouter.get('/readiness', VIEW, async (req, res) => {
+  const { date } = z.object({ date: dateOnly.optional() }).parse(req.query);
+  res.json(await computeReadiness(date ?? tomorrowKey()));
 });

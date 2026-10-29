@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { zonedDayKey } from '@/lib/format';
 import { renderAs } from '../hrPack/harness';
 
 /**
- * The driver's home on a phone (F500 G5): one header action in view
- * (Report a problem) with the rest — Safety, Log fuel and a LABELLED sound
- * switch — in "More"; the week as seven fluid days carrying the driver's
- * own shifts; "Clients I drive for" only when it narrows the runs.
+ * The driver's home (F500 G5, drive mode 2026-10-28): the header's actions
+ * are one list with no gold in it — Safety and Report a problem in view,
+ * Log fuel and a LABELLED sound switch in "More"; the week as seven fluid
+ * days carrying the driver's own shifts; "Clients I drive for" only when it
+ * narrows the runs.
  */
 
 vi.mock('@/lib/api', async (orig) => ({ ...(await orig<typeof import('@/lib/api')>()), apiFetch: vi.fn() }));
@@ -40,25 +42,28 @@ beforeEach(() => {
 });
 
 describe('the driver home', () => {
-  it('puts the header actions in the one PageHeader list: Report a problem the primary, and a labelled sound switch', async () => {
+  it('puts the header actions in the one PageHeader list, none of them gold — the run’s button is the one', async () => {
     route(ALL);
     renderAs('DRIVER', <DriverHome />);
-    const report = await screen.findByRole('button', { name: /Report a problem/ });
-    const row = report.parentElement!;
-    // Desktop: the primary and two beside it (a phone keeps only the primary and
-    // opens the rest in one sheet — PageHeader's own test holds that).
-    expect(within(row).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Safety', expect.stringMatching(/^Sounds (on|off)$/), 'Report a problem']);
+    const safety = await screen.findByRole('button', { name: 'Safety' });
+    const row = safety.parentElement!;
+    // Desktop: two beside each other and the rest (fuel, the labelled sound switch) in More.
+    expect(within(row).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Safety', 'Report a problem', 'More']);
+    expect(within(row).queryAllByRole('button').filter((b) => b.className.includes('btn-gold'))).toHaveLength(0);
+    await userEvent.click(within(row).getByRole('button', { name: 'More actions' }));
+    expect(await screen.findByRole('menuitem', { name: /^Sounds (on|off)/ })).toBeInTheDocument();
     // The unlabelled speaker icon is gone: the switch says what it does.
     expect(screen.queryByRole('button', { name: /tap to/ })).toBeNull();
   });
 
-  it('draws the week as seven fluid days, with the driver’s own shift on its day', async () => {
+  it('draws the week as seven fluid days, open on tomorrow, with the driver’s own shift on its day', async () => {
     route(ALL);
     renderAs('DRIVER', <DriverHome />);
     const strip = await screen.findByRole('tablist', { name: 'Your week' });
     expect(strip).toHaveClass('grid-cols-7');
     expect(within(strip).getAllByRole('tab')).toHaveLength(7);
-    within(strip).getAllByRole('tab')[1]!.click();
+    // Today is NOW and "Later today" above; the week opens on tomorrow.
+    expect(within(strip).getAllByRole('tab')[1]).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByTestId('week-shift')).toHaveTextContent('Your driver shift');
   });
 

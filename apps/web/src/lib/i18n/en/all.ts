@@ -27,6 +27,7 @@ import './earned';
 import './emergency';
 import './ewa';
 import './execPortal';
+import './fleetOps';
 import './filters';
 import './fin';
 import './floor';

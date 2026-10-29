@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { cn } from '@/lib/cn';
-import { fmtTimeTz } from '@/lib/format';
+import { fmtMinutes, fmtTimeTz } from '@/lib/format';
 import type { Ride, RideRun, TransportBoard } from '@/lib/transportApi';
 
 /**
@@ -84,6 +84,57 @@ export function timelineBars(runs: RideRun[]): TimelineBar[] {
   return bars;
 }
 
+/** One overlap of a run with another: the same driver, the same van, or both. */
+export interface RunConflict {
+  kind: 'driver' | 'van' | 'both';
+  runId: string;
+  overlapMinutes: number;
+}
+
+/**
+ * A run's double-bookings — the server's `conflicts` when it sends them,
+ * otherwise the same rule the bars draw red by (one van or one driver on two
+ * runs whose windows overlap). A driver AND van clash with one run is one line.
+ */
+export function runConflicts(run: RideRun, runs: RideRun[]): RunConflict[] {
+  const merged = new Map<string, RunConflict>();
+  const add = (kind: 'driver' | 'van', runId: string, overlapMinutes: number) => {
+    const had = merged.get(runId);
+    merged.set(runId, had ? { kind: had.kind === kind ? kind : 'both', runId, overlapMinutes: Math.max(had.overlapMinutes, overlapMinutes) } : { kind, runId, overlapMinutes });
+  };
+  if (run.conflicts) {
+    for (const c of run.conflicts) add(c.kind, c.runId, c.overlapMinutes);
+    return [...merged.values()];
+  }
+  const bars = timelineBars(runs);
+  const me = bars.find((b) => b.runId === run.id);
+  if (!me) return [];
+  for (const b of bars) {
+    if (b.runId === me.runId) continue;
+    const overlap = Math.min(me.to, b.to) - Math.max(me.from, b.from);
+    if (overlap <= 0) continue;
+    const minutes = Math.max(1, Math.round(overlap / 60_000));
+    if (b.driverUserId === me.driverUserId) add('driver', b.runId, minutes);
+    if (b.vanId === me.vanId) add('van', b.runId, minutes);
+  }
+  return [...merged.values()];
+}
+
+const firstName = (name: string) => name.split(' ')[0] ?? name;
+
+/**
+ * The clash in words, naming the other run by its van and time:
+ * "Mike is also on Van 1 at 2:10 PM — 25 min overlap".
+ */
+export function conflictWords(run: Pick<RideRun, 'van' | 'driver'>, c: RunConflict, other: Pick<RideRun, 'van' | 'driver' | 'departAt'> | undefined, tz?: string): string {
+  const at = other ? fmtTimeTz(other.departAt, tz) : null;
+  const overlap = `${fmtMinutes(c.overlapMinutes)} overlap`;
+  const driver = firstName(run.driver.name);
+  if (c.kind === 'both') return `${driver} and ${run.van.name} are also on the ${at ?? 'other'} run — ${overlap}`;
+  if (c.kind === 'driver') return `${driver} is also on ${other ? `${other.van.name} at ${at}` : 'another run'} — ${overlap}`;
+  return `${run.van.name} is also on ${other ? `${firstName(other.driver.name)}’s ${at} run` : 'another run'} — ${overlap}`;
+}
+
 /** The first van free at `at` for `riders` seats, in the board's order. */
 export function firstFreeVan(vans: TransportBoard['vans'], bars: TimelineBar[], at: number, riders: number): string | null {
   const window = { from: at - RUN_SPAN_MS - BUSY_LEAD_MS, to: at + BUSY_LEAD_MS };
@@ -164,13 +215,15 @@ export function VanDayTimeline({
                 ))}
                 {mine.map((b) => {
                   const run = runById.get(b.runId);
+                  // The same words the run's card carries: who else, when, how long.
+                  const clash = b.conflict && run ? runConflicts(run, board.runs).map((c) => conflictWords(run, c, runById.get(c.runId), tz)).join('; ') : '';
                   return (
                     <button
                       key={b.runId}
                       type="button"
                       onClick={() => run && onRun?.(run)}
-                      title={`${row.name} · leaves ${run ? fmtTimeTz(run.departAt, tz) : ''} · ${b.label} seats${b.conflict ? ' · double-booked' : ''}`}
-                      aria-label={`${row.name} run leaving ${run ? fmtTimeTz(run.departAt, tz) : ''}, ${b.label} seats${b.conflict ? ', double-booked' : ''}`}
+                      title={`${row.name} · leaves ${run ? fmtTimeTz(run.departAt, tz) : ''} · ${b.label} seats${b.conflict ? ` · double-booked: ${clash || 'overlaps another run'}` : ''}`}
+                      aria-label={`${row.name} run leaving ${run ? fmtTimeTz(run.departAt, tz) : ''}, ${b.label} seats${b.conflict ? `, double-booked: ${clash || 'overlaps another run'}` : ''}`}
                       className={cn(
                         'absolute inset-y-0.5 flex items-center overflow-hidden rounded px-1.5 text-2xs font-semibold tabular-nums',
                         // Fills paired with their own ink tokens: 11px labels need 4.5:1 in both themes.

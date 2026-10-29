@@ -9,7 +9,10 @@ import { actsAs, actsAsAny } from '../lib/roleScope.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyAssociate, notifyClientSupervisors, notifyUser, trackNotificationWork } from '../lib/notify.js';
-import { assertDriverFit, assertVanDriverFree, credentialsEnforced, driverCredentialStatus, hosSettings } from '../lib/transportDrivers.js';
+import { assertDriverFit, assertVanDriverFree, credentialsEnforced, driverCredentialStatus, dayRunCounts, hosSettings, vanDayKey, vanDayPreTrips } from '../lib/transportDrivers.js';
+import { isNotRun, runConflicts } from '../lib/transportConflicts.js';
+import { liveRideAdditions } from '../lib/transportRider.js';
+import { planMove } from '../lib/transportMove.js';
 import { isRunStuck } from '../lib/transportStuckRuns.js';
 import { send as sendOnChannel } from '../lib/notifications.js';
 import { SmsBadNumberError, SmsNotConfiguredError, SmsOptedOutError } from '../lib/sms.js';
@@ -59,6 +62,7 @@ import {
   type RunLive,
 } from '../lib/transportLive.js';
 import {
+  NO_SHOW_WAIT_MINUTES,
   NO_SHOW_WAIT_MS,
   OPEN_RIDE_STATUSES,
   bookableStores,
@@ -260,6 +264,16 @@ transportRouter.get('/me', RIDE, async (req, res) => {
     tripStates(open.map((r) => ({ ...r, locationId: r.location.id }))),
     coRiders(open.filter((r) => r.run).map((r) => ({ rideId: r.id, runId: r.run!.id }))),
   ]);
+  // Charged rides' payroll runs: the date that pay went out (null until disbursed).
+  const chargedRunIds = [...new Set(rides.map((r) => r.chargedRunId).filter((id): id is string => !!id))];
+  const chargedPaid = new Map(
+    chargedRunIds.length
+      ? (await prisma.payrollRun.findMany({ where: { id: { in: chargedRunIds } }, select: { id: true, disbursedAt: true } })).map((p) => [
+          p.id,
+          p.disbursedAt ? p.disbursedAt.toISOString().slice(0, 10) : null,
+        ])
+      : [],
+  );
   res.json({
     settings,
     // Brief 1A-3: `consent` is kept for older clients and means "a current
@@ -299,6 +313,9 @@ transportRouter.get('/me', RIDE, async (req, res) => {
       ...toRideView(r),
       ...seatView(r, trips.stateOf({ ...r, locationId: r.location.id })),
       coRiders: crew.get(r.id) ?? [],
+      // The rider's ledger: when it was taken and the day that pay went out.
+      chargedAt: r.chargedAt?.toISOString() ?? null,
+      chargedPayDate: (r.chargedRunId && chargedPaid.get(r.chargedRunId)) || null,
     })),
     defaultPickup,
     defaultStoreId,
@@ -1052,22 +1069,55 @@ async function ownRun(req: Request, runId: string) {
   return run;
 }
 
+/** What a run's double-booking check reads (lib/transportConflicts). */
+const conflictSelect = { id: true, vanId: true, driverUserId: true, status: true, departAt: true, startedAt: true, endedAt: true } satisfies Prisma.RideRunSelect;
+
 transportRouter.get('/driver/runs', DRIVE, async (req, res) => {
+  const me = req.user!.id;
   const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
   const from = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
   const to = new Date(Date.parse(`${today}T00:00:00Z`) + 2 * 86_400_000).toISOString().slice(0, 10);
   const runs = await prisma.rideRun.findMany({
-    where: { driverUserId: req.user!.id, serviceDate: { gte: from, lte: to }, status: { not: 'CANCELLED' } },
+    where: {
+      driverUserId: me,
+      OR: [
+        { serviceDate: { gte: from, lte: to }, status: { not: 'CANCELLED' } },
+        // Yesterday's and today's runs the sweep closed because they never
+        // left stay on the list ("Didn't run"); any other cancelled run doesn't.
+        { serviceDate: { gte: from, lte: today }, status: 'CANCELLED', autoClosedAt: { not: null }, startedAt: null },
+      ],
+    },
     orderBy: { departAt: 'asc' },
     include: runInclude,
   });
-  // The driver sees, before boarding, who has no current signed authorization (their ride won't be charged).
-  const unsigned = await ridesNeedingSignature(prisma, runs.flatMap((r) => r.rides.map((x) => ({ id: x.id, associateId: x.associate.id, fareCents: x.fareCents, noShowFeeCents: x.noShowFeeCents, status: x.status }))));
+  // The board's double-booking rule: this driver's runs against each other,
+  // and against anyone else's run on the same vans.
+  const [unsigned, others, preTrips] = await Promise.all([
+    // The driver sees, before boarding, who has no current signed authorization (their ride won't be charged).
+    ridesNeedingSignature(prisma, runs.flatMap((r) => r.rides.map((x) => ({ id: x.id, associateId: x.associate.id, fareCents: x.fareCents, noShowFeeCents: x.noShowFeeCents, status: x.status })))),
+    runs.length
+      ? prisma.rideRun.findMany({
+          where: { serviceDate: { gte: from, lte: to }, status: { not: 'CANCELLED' }, vanId: { in: [...new Set(runs.map((r) => r.vanId))] }, driverUserId: { not: me } },
+          select: conflictSelect,
+        })
+      : Promise.resolve([]),
+    vanDayPreTrips(runs.map((r) => ({ vanId: r.vanId, serviceDate: r.serviceDate }))),
+  ]);
+  const conflicts = runConflicts([...runs, ...others]);
   res.json({
     today,
+    /** "Runs today" — the same count the Today card shows (GET /driver/today). */
+    counts: dayRunCounts(runs.filter((r) => r.serviceDate === today)),
     runs: runs.map((r) => {
       const v = toRunView(r);
-      return { ...v, rides: v.rides.map((x) => ({ ...x, signatureNeeded: unsigned.get(x.id) ?? null })) };
+      return {
+        ...v,
+        rides: v.rides.map((x) => ({ ...x, signatureNeeded: unsigned.get(x.id) ?? null })),
+        notRun: isNotRun(r),
+        conflicts: conflicts.get(r.id) ?? [],
+        /** A passed walk-around covers every run of this van today (one check per van per day). */
+        preTripDone: preTrips.get(vanDayKey(r.vanId, r.serviceDate))?.passed ?? false,
+      };
     }),
   });
 });
@@ -1078,12 +1128,15 @@ transportRouter.get('/driver/runs', DRIVE, async (req, res) => {
  * check off. Marking the first rider starts the run too, so this guards
  * both doors.
  */
-async function assertPreTrip(runId: string, vanId: string): Promise<void> {
-  const [settings, check, van] = await Promise.all([
+async function assertPreTrip(vanId: string, serviceDate: string): Promise<void> {
+  // One walk-around per van per day: the van's latest check on any of the
+  // day's runs decides (lib/transportDrivers vanDayPreTrips).
+  const [settings, checks, van] = await Promise.all([
     hosSettings(),
-    prisma.preTripCheck.findUnique({ where: { runId }, select: { passed: true } }),
+    vanDayPreTrips([{ vanId, serviceDate }]),
     prisma.van.findUnique({ where: { id: vanId }, select: { name: true, outOfServiceAt: true, outOfServiceReason: true } }),
   ]);
+  const check = checks.get(vanDayKey(vanId, serviceDate)) ?? null;
   // A parked van never leaves, check or no check.
   if (van?.outOfServiceAt) {
     throw new HttpError(409, 'van_out_of_service', `${van.name} is out of service${van.outOfServiceReason ? ` — ${van.outOfServiceReason}` : ''}. Transportation has to put it back or move this run to another van.`);
@@ -1095,8 +1148,8 @@ async function assertPreTrip(runId: string, vanId: string): Promise<void> {
 }
 
 async function startRun(runId: string, actorId: string) {
-  const planned = await prisma.rideRun.findUnique({ where: { id: runId }, select: { vanId: true, status: true } });
-  if (planned?.status === 'PLANNED') await assertPreTrip(runId, planned.vanId);
+  const planned = await prisma.rideRun.findUnique({ where: { id: runId }, select: { vanId: true, status: true, serviceDate: true } });
+  if (planned?.status === 'PLANNED') await assertPreTrip(planned.vanId, planned.serviceDate);
   const run = await prisma.rideRun.update({
     where: { id: runId },
     data: { status: 'ACTIVE', startedAt: new Date() },
@@ -1311,7 +1364,7 @@ transportRouter.post('/driver/runs/:id/arrived', DRIVE, async (req, res) => {
           subject: `Your van is here`,
           body:
             `${run.van.name}${run.van.plate ? ` (${run.van.plate})` : ''} is at ${where}. ` +
-            `${personName(run.driver).split(' ')[0]} will wait ${Math.round(NO_SHOW_WAIT_MS / 60_000)} minutes.`,
+            `${personName(run.driver).split(' ')[0]} will wait ${NO_SHOW_WAIT_MINUTES} minutes.`,
           category: 'transport',
           linkUrl: '/rides',
         }),
@@ -1395,7 +1448,7 @@ transportRouter.post('/driver/rides/:id/text-here', DRIVE, async (req, res) => {
   if (ride.status !== 'SCHEDULED') throw new HttpError(409, 'not_scheduled', 'This rider is already marked.');
   const rider = await prisma.user.findFirst({ where: { associateId: ride.associate.id, deletedAt: null }, select: { id: true, language: true, email: true } });
   const where = ride.direction === 'TO_WORK' ? (ride.stop ? ride.stop.name : (ride.address ?? 'your pickup')) : ride.location.name;
-  const body = hereText(toWaLang(rider?.language), personName(run.driver).split(' ')[0] ?? 'Your driver', run.van.name, where, Math.round(NO_SHOW_WAIT_MS / 60_000));
+  const body = hereText(toWaLang(rider?.language), personName(run.driver).split(' ')[0] ?? 'Your driver', run.van.name, where, NO_SHOW_WAIT_MINUTES);
   const phone = ride.associate.phone;
   const smsHref = phone ? `sms:${phone.replace(/[^+\d]/g, '')}?&body=${encodeURIComponent(body)}` : null;
   if (!phone) {
@@ -1721,11 +1774,12 @@ transportRouter.get('/me/live', RIDE, async (req, res) => {
     (next.run.status === 'ACTIVE' ||
       (next.run.status === 'PLANNED' && next.run.departAt.getTime() <= now.getTime() + 3 * 3_600_000));
   if (!onTheRoad) {
-    res.json({ live: await tripAhead(next.id) });
+    const [ahead, extras] = await Promise.all([tripAhead(next.id), liveExtras(req, next.id, now)]);
+    res.json({ live: { ...ahead, ...extras } });
     return;
   }
   const run = (await prisma.rideRun.findUnique({ where: { id: next.runId! }, include: liveRunInclude }))!;
-  const live = await computeRunLive(run, now);
+  const [live, extras] = await Promise.all([computeRunLive(run, now), liveExtras(req, next.id, now)]);
   const r = run.rides.find((x) => x.id === next.id)!;
   const home = live.homes.get(r.id) ?? null;
   const store = live.stores.get(r.location.id)!;
@@ -1759,9 +1813,44 @@ transportRouter.get('/me/live', RIDE, async (req, res) => {
       lateMinutes: toWork ? (live.plan.lateMinutes.get(r.location.id) ?? 0) : 0,
       vanArrivedAt: iso(r.vanArrivedAt),
       riderSignal: r.riderSignal,
+      ...extras,
     },
   });
 });
+
+/**
+ * The live card's extras (MyLiveRideAdditions, lib/transportRider): the
+ * driver's first name, how the van looks, where to wait, how long the van
+ * waits, the dispatch line, and the fare with the payday it comes out on.
+ */
+async function liveExtras(req: Request, rideId: string, now: Date) {
+  const [ride, settings] = await Promise.all([
+    prisma.ride.findUniqueOrThrow({
+      where: { id: rideId },
+      select: {
+        associateId: true,
+        status: true,
+        direction: true,
+        serviceDate: true,
+        fareCents: true,
+        chargeCents: true,
+        waivedAt: true,
+        stop: { select: { notes: true } },
+        run: {
+          select: {
+            van: { select: { color: true, make: true, model: true, year: true } },
+            driver: { select: { associate: { select: { firstName: true } } } },
+          },
+        },
+      },
+    }),
+    prisma.transportSettings.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { dispatchPhone: true } }),
+  ]);
+  return liveRideAdditions(
+    { associateId: ride.associateId, language: req.user!.language, ride, run: ride.run, dispatchPhone: settings?.dispatchPhone ?? null },
+    now,
+  );
+}
 
 /** A ride that isn't on the road yet — still finding a driver, or on a
  *  van that leaves later: its two ends, so the rider sees the trip. */
@@ -2619,10 +2708,14 @@ transportRouter.get('/board', VIEW, async (req, res) => {
   const count = (s: string) => rides.filter((r) => r.status === s).length;
   // Transport walk 8: the "Unsigned" chip on a run's rows too — a rider on
   // a van who can't be charged is worth a nudge before the van leaves.
-  const unsignedOnRuns = await ridesNeedingSignature(
-    prisma,
-    runs.flatMap((r) => r.rides.map((x) => ({ id: x.id, associateId: x.associate.id, fareCents: x.fareCents, noShowFeeCents: x.noShowFeeCents, status: x.status }))),
-  );
+  const [unsignedOnRuns, preTrips] = await Promise.all([
+    ridesNeedingSignature(
+      prisma,
+      runs.flatMap((r) => r.rides.map((x) => ({ id: x.id, associateId: x.associate.id, fareCents: x.fareCents, noShowFeeCents: x.noShowFeeCents, status: x.status }))),
+    ),
+    vanDayPreTrips(runs.map((r) => ({ vanId: r.vanId, serviceDate: r.serviceDate }))),
+  ]);
+  const conflicts = runConflicts(runs);
   res.json({
     date,
     settings,
@@ -2641,7 +2734,15 @@ transportRouter.get('/board', VIEW, async (req, res) => {
     rides: await withSeats(rides),
     runs: runs.map((r) => {
       const v = toRunView(r);
-      return { ...v, rides: v.rides.map((x) => ({ ...x, signatureNeeded: unsignedOnRuns.get(x.id) ?? null })) };
+      return {
+        ...v,
+        rides: v.rides.map((x) => ({ ...x, signatureNeeded: unsignedOnRuns.get(x.id) ?? null })),
+        /** The "didn't run" sweep closed it (lib/transportNotRun). */
+        notRun: isNotRun(r),
+        /** Overlapping runs of the same driver or van — the Gantt's red bar (lib/transportConflicts). */
+        conflicts: conflicts.get(r.id) ?? [],
+        preTripDone: preTrips.get(vanDayKey(r.vanId, r.serviceDate))?.passed ?? false,
+      };
     }),
     vans: vans.map((v) => ({ id: v.id, name: v.name, plate: v.plate, capacity: v.capacity, driverUserId: v.driverUserId })),
     /** Once any driver has a profile, a driver without one can't be dispatched (transport walk 2). */
@@ -3269,6 +3370,83 @@ transportRouter.post('/runs/:id/cancel', MANAGE, async (req, res) => {
     notifyUser(run.driver.id, { subject: `Run cancelled: ${run.van.name}`, body: reason, category: 'transport', linkUrl: '/' }),
   );
   res.json({ ok: true });
+});
+
+/**
+ * Move one rider (transport upgrade 2026-10-28): onto another run of the
+ * same day and way, or off every run back to "needs a van" (toRunId null).
+ * lib/transportMove decides the order and the times the planner's way;
+ * here it is written in one transaction (the ride must still be where it
+ * was found, and the van must still have the seat), audited, and every
+ * rider whose pickup changed hears it — the moved rider always.
+ */
+const MoveInput = z.object({
+  toRunId: z.string().uuid().nullable(),
+  pickupOrder: z.number().int().min(1).max(60).optional(),
+});
+
+transportRouter.post('/rides/:id/move', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const input = MoveInput.parse(req.body);
+  const plan = await planMove(id, input);
+  const actorId = req.user!.id;
+  const warnings = [...plan.warnings];
+  if (plan.fromRunId && plan.fromRunId !== plan.toRunId && plan.leftBehind.length === 0) {
+    warnings.push(`${plan.fromVan}'s run has no riders left — cancel it if it isn't needed.`);
+  }
+  // Already waiting and sent back to waiting: nothing to do.
+  if (!plan.fromRunId && !plan.toRunId) {
+    res.json({ rideId: id, fromRunId: null, toRunId: null, seats: null, warnings: [] });
+    return;
+  }
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    // Still where we found it — a driver's accept or another desk's move in between refuses this one.
+    const still = await tx.ride.updateMany({
+      where: { id, runId: plan.fromRunId, status: { in: [...OPEN_RIDE_STATUSES] } },
+      data: plan.toRunId ? { runId: plan.toRunId, status: 'SCHEDULED' } : { runId: null, pickupOrder: null, pickupAt: null, status: 'REQUESTED' },
+    });
+    if (still.count === 0) throw new HttpError(409, 'ride_changed', `${plan.ride.riderName}'s ride changed while you were moving it — refresh and try again.`);
+    for (const [i, x] of plan.order.entries()) {
+      await tx.ride.update({
+        where: { id: x.rideId },
+        data: {
+          runId: plan.toRunId,
+          pickupOrder: i + 1,
+          pickupAt: x.pickupAt,
+          status: 'SCHEDULED',
+          // Placing a waiting rider is the desk's acceptance (it overrides drivers).
+          ...(x.rideId === id && plan.wasWaiting ? { acceptedAt: now, acceptedById: actorId } : {}),
+        },
+      });
+    }
+    for (const x of plan.leftBehind) await tx.ride.update({ where: { id: x.rideId }, data: { pickupOrder: x.pickupOrder } });
+    if (plan.toRunId && plan.seats) {
+      const seated = await tx.ride.count({ where: { runId: plan.toRunId, status: { in: ['SCHEDULED', 'BOARDED'] } } });
+      if (seated > plan.seats.capacity) throw new HttpError(409, 'over_capacity', `${plan.toVan} filled up while you were moving ${plan.ride.riderName} — there's no seat left.`);
+    }
+  });
+  enqueueAudit(
+    { actorUserId: actorId, action: 'transport.ride_moved', entityType: 'Ride', entityId: id, metadata: { fromRunId: plan.fromRunId, toRunId: plan.toRunId, pickupOrder: input.pickupOrder ?? null } },
+    'transport',
+  );
+  if (plan.toRunId) {
+    // The moved rider, and anyone whose pickup shifted by two minutes or more.
+    const changed = plan.order
+      .filter((x) => x.rideId === id || !x.was || Math.abs(x.was.getTime() - x.pickupAt.getTime()) >= 2 * 60_000)
+      .map((x) => x.rideId);
+    await tellRidersTheyreScheduled(plan.toRunId, changed);
+  } else {
+    void trackNotificationWork(
+      notifyAssociate(plan.associateId, {
+        subject: 'Your van changed',
+        body: `You're off ${plan.fromVan} for ${fmtWhen(plan.ride.targetAt, plan.ride.timezone)} — transportation will confirm a new pickup soon.`,
+        category: 'transport',
+        linkUrl: '/rides',
+      }),
+    );
+  }
+  res.json({ rideId: id, fromRunId: plan.fromRunId, toRunId: plan.toRunId, seats: plan.seats, warnings });
 });
 
 /**

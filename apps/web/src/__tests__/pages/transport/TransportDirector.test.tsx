@@ -162,18 +162,21 @@ beforeEach(() => {
 });
 
 describe('<TransportHome> — what needs attention, first', () => {
-  it('puts the late van, the riders without one, and a one-tap fix for each on top', async () => {
+  it('the late van says so on its own card, with Message riders one tap away; the riders without one are the section’s count', async () => {
     routes((path, init) => {
       if (path.startsWith('/transport/board')) return board();
       if (path.startsWith('/transport/live')) return { date: '', generatedAt: '', runs: [liveRun()] };
       if (path === '/transport/runs/run1/message' && init?.method === 'POST') return { sent: 2 };
     });
     renderAs('TRANSPORTATION_DIRECTOR');
-    const panel = await screen.findByRole('region', { name: 'Needs attention' });
-    expect(await within(panel).findByText('Van 1 is running about 12 min late')).toBeInTheDocument();
-    expect(within(panel).getByText('2 seat requests are waiting for a driver')).toBeInTheDocument();
+    const runs = await screen.findByRole('region', { name: 'Runs' });
+    expect(await within(runs).findByText('~12 min late')).toBeInTheDocument();
+    const waiting = screen.getByRole('region', { name: 'Needs a van' });
+    expect(within(waiting).getByText('2')).toBeInTheDocument();
+    // The old "Needs attention" box is gone: the exceptions queue is the one list.
+    expect(screen.queryByRole('region', { name: 'Needs attention' })).toBeNull();
 
-    await userEvent.click(within(panel).getByRole('button', { name: 'Message riders' }));
+    await userEvent.click(within(runs).getByRole('button', { name: 'Message riders' }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.type(within(dialog).getByRole('textbox'), 'About 12 late — on our way');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Send' }));
@@ -182,13 +185,16 @@ describe('<TransportHome> — what needs attention, first', () => {
     );
   });
 
-  it('says all clear when nothing needs attention', async () => {
+  it('reads the day in one quiet line — no tiles, no coloured zeros', async () => {
     routes((path) => {
       if (path.startsWith('/transport/board')) return board({ rides: [], kpis: { ...board().kpis, needsVan: 0 } });
       if (path.startsWith('/transport/live')) return { date: '', generatedAt: '', runs: [liveRun({ late: [] })] };
     });
     renderAs('TRANSPORTATION_DIRECTOR');
-    expect(await screen.findByText(/All clear/)).toBeInTheDocument();
+    const line = await screen.findByTestId('transport-day-line');
+    expect(line).toHaveTextContent(/3 booked · 1 of 1 van out · 0 on board · 0 done$/);
+    expect(screen.queryByText(/All clear/)).toBeNull();
+    expect(screen.queryByTestId('transport-kpis')).toBeNull();
   });
 
   it('shows each run as it happens — on time or late, the next stop, a rider who’s outside — with the driver a call away', async () => {

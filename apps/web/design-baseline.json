@@ -1,9 +1,9 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1223,
-    "raw-heading": 82,
-    "pill": 34,
+    "brand-text": 1181,
+    "raw-heading": 78,
+    "pill": 32,
     "empty-text": 5
   },
   "files": {
@@ -669,28 +669,23 @@
       "brand-text": 1
     },
     "src/pages/transport/DriverHome.tsx": {
-      "brand-text": 30,
-      "pill": 4,
-      "raw-heading": 2
+      "brand-text": 10,
+      "pill": 3,
+      "raw-heading": 1
     },
     "src/pages/transport/PickupPicker.tsx": {
       "brand-text": 6
     },
     "src/pages/transport/RideHome.tsx": {
-      "brand-text": 25,
+      "brand-text": 12,
       "raw-heading": 5
-    },
-    "src/pages/transport/RideStrip.tsx": {
-      "brand-text": 3,
-      "pill": 1
     },
     "src/pages/transport/ShiftMap.tsx": {
       "brand-text": 4
     },
     "src/pages/transport/TransportHome.tsx": {
-      "brand-text": 26,
-      "pill": 2,
-      "raw-heading": 3
+      "brand-text": 20,
+      "pill": 2
     },
     "src/pages/transport/TripMap.tsx": {
       "brand-text": 2

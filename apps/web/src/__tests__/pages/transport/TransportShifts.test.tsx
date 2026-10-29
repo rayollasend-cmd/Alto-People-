@@ -245,8 +245,8 @@ describe('where you stand, and who you ride with', () => {
     expect(within(hero).getByText('On the waitlist · #2')).toBeInTheDocument();
     expect(within(hero).getByText(/You’re #2 of 3 — the first seat that opens is yours automatically/)).toBeInTheDocument();
     expect(within(hero).getByText(/Morning shift/)).toBeInTheDocument();
-    const calendar = screen.getByRole('tablist', { name: 'Your rides' });
-    expect(within(calendar).getAllByRole('tab').length).toBeGreaterThanOrEqual(7);
+    // The next ride is the hero — not listed a second time in the calendar (the transport upgrade).
+    expect(screen.queryByRole('tablist', { name: 'Your rides' })).not.toBeInTheDocument();
     expect(screen.getAllByText('Waitlist #2').length).toBeGreaterThan(0);
   });
 
@@ -316,12 +316,15 @@ describe('the driver’s week', () => {
       if (path.startsWith('/transport/driver/schedule?')) return week;
     });
     renderAs('DRIVER', <DriverHome />);
-    await screen.findByRole('tablist', { name: 'Your week' });
+    const strip = await screen.findByRole('tablist', { name: 'Your week' });
+    // The week opens on tomorrow (today is NOW above it): pick today.
+    await userEvent.click(within(strip).getAllByRole('tab')[0]!);
     expect(screen.getAllByText(/Morning shift/).length).toBeGreaterThan(0);
     expect(screen.getByText('2/12 seats')).toBeInTheDocument();
-    const names = screen.getAllByRole('button', { name: /Ann Lee|Bo Ray/ }).map((b) => b.textContent);
-    expect(names[0]).toContain('Ann Lee');
-    expect(names[1]).toContain('Bo Ray');
+    // Riders in pickup order, first names (and an initial) — a driver's view of a rider.
+    const names = screen.getAllByRole('button', { name: /Ann L\.|Bo R\./ }).map((b) => b.textContent);
+    expect(names[0]).toContain('Ann L.');
+    expect(names[1]).toContain('Bo R.');
     expect(screen.getByText(/3 asking/)).toBeInTheDocument();
   });
 

@@ -30,5 +30,14 @@ src/components/floor/IncidentReportDialog.tsx
 # The driver
 src/pages/transport/DriverHome.tsx
 src/pages/transport/DriverTools.tsx
+src/pages/transport/driver/DriveHeader.tsx
+src/pages/transport/driver/DriveMap.tsx
+src/pages/transport/driver/DriveNow.tsx
+src/pages/transport/driver/EarningsSheet.tsx
+src/pages/transport/driver/HoldButton.tsx
+src/pages/transport/driver/LaterToday.tsx
+src/pages/transport/driver/WeekStrip.tsx
+src/pages/transport/driver/driveKit.tsx
+src/pages/transport/driver/vanLocation.tsx
 # Availability, read by every associate (owned with the scheduling work)
 src/pages/scheduling/AvailabilityEditor.tsx

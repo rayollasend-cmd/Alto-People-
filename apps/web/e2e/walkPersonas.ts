@@ -82,7 +82,7 @@ export const WALK_PERSONAS: WalkPersona[] = [
   { key: 'workforce-manager', email: 'workforce@altohr.com', pass: 'workforce-dev-2026!', routes: [['/', 'home'], ['/relay', 'relay'], ['/ops', 'store-ops'], ['/scheduling', 'scheduling']] },
   { key: 'finance', email: 'finance@altohr.com', pass: 'finance-dev-2026!', routes: [['/', 'home'], ['/payroll', 'payroll'], ['/labor-costs', 'labor-costs'], ['/reimbursements', 'reimbursements'], ['/clients', 'clients']] },
   { key: 'recruiter', email: 'recruiter@altohr.com', pass: 'recruiter-dev-2026!', routes: [['/', 'home'], ['/recruiting', 'recruiting'], ['/onboarding', 'onboarding']] },
-  { key: 'transport-director', email: 'transport@altohr.com', pass: 'transport-dev-2026!', routes: [['/', 'home'], ['/transport', 'transport']] },
+  { key: 'transport-director', email: 'transport@altohr.com', pass: 'transport-dev-2026!', routes: [['/', 'home'], ['/transport', 'transport'], ['/transport?tab=live', 'live-ops'], ['/transport?tab=rides', 'rides']] },
   { key: 'supervisor', email: 'dana.reyes@altohr.com', pass: 'supervisor-dev-2026!', routes: [['/', 'home'], ['/scheduling', 'scheduling'], ['/time-attendance', 'time'], ['/ops', 'store-ops'], ['/approvals', 'approvals']] },
   { key: 'portal-store', email: 'portal@coastalresort.example', pass: 'portal-dev-2026!', routes: [['/portal', 'home'], ['/portal/today', 'today'], ['/portal/schedule', 'schedule'], ['/portal/requests', 'requests'], ['/portal/ops', 'ops'], ['/portal/history', 'history']] },
   { key: 'portal-region', email: 'region@coastalresort.example', pass: 'portal-dev-2026!', routes: [['/region', 'command-center']] },
@@ -111,7 +111,8 @@ export const ASSOCIATE: WalkPersona = {
   ],
 };
 
-export const DRIVER: WalkPersona = { key: 'driver', email: 'driver@altohr.com', pass: 'driver-dev-2026!', routes: [['/', 'home'], ['/transport', 'runs']] };
+// The driver's runs are their home; /transport is the desk's and redirects a driver home (2026-10-28).
+export const DRIVER: WalkPersona = { key: 'driver', email: 'driver@altohr.com', pass: 'driver-dev-2026!', routes: [['/', 'home'], ['/messages', 'messages']] };
 
 export const PUBLIC_ROUTES: Array<[string, string]> = [
   ['/login', 'login'],

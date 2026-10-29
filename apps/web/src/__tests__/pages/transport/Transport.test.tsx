@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
+import { ROLE_CAPABILITIES, type Capability, type Role, type TransportOpsBoard } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 import { ConfirmProvider } from '@/lib/confirm';
 import { zonedDayKey } from '@/lib/format';
@@ -222,8 +222,9 @@ describe('<RideHome> — the associate’s Ride tab', () => {
     expect(within(hero).getByText('Mike')).toBeInTheDocument();
     expect(within(hero).getByText('ALT 101')).toBeInTheDocument();
     expect(within(hero).getByText('Seaside Housing')).toBeInTheDocument();
-    expect(within(hero).getByRole('list', { name: 'Accepted' })).toBeInTheDocument();
-    expect(within(hero).getByText(/Pickup in 1[89]h/)).toBeInTheDocument();
+    // Before the van leaves, the trip says when it leaves, in big type (the transport upgrade).
+    expect(within(hero).getByText(/^Van 1 leaves at \d/)).toBeInTheDocument();
+    expect(within(hero).getByText(/Van leaves in 1[89]h/)).toBeInTheDocument();
     await userEvent.click(within(hero).getByRole('button', { name: 'Cancel ride' }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel ride' }));
@@ -319,46 +320,59 @@ describe('<DriverHome> — driver mode, stop by stop', () => {
     });
     renderAs('DRIVER', <DriverHome />);
     const card = await screen.findByRole('region', { name: /Van 1/ });
-    expect(within(card).getByText(/Leaves in 4[5-9]m/)).toBeInTheDocument();
-    const stops = within(card).getAllByRole('listitem');
+    expect(within(card).getByText('Leaves in')).toBeInTheDocument();
+    expect(within(card).getByTestId('drive-countdown')).toHaveTextContent(/^4[5-9] min$/);
+    const stops = within(within(card).getByRole('list', { name: 'The route' })).getAllByRole('listitem');
     // Two riders at the housing complex are ONE stop.
     expect(stops[0]).toHaveTextContent('Seaside Housing');
-    expect(stops[0]).toHaveTextContent('Maria Lopez, Ben Ray');
+    expect(stops[0]).toHaveTextContent('Maria L., Ben R.');
     expect(stops[1]).toHaveTextContent('12 Palm St');
     await userEvent.click(within(card).getByRole('button', { name: 'Start run' }));
     expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/start', { method: 'POST' });
   });
 
-  it('on the road: the stop you’re driving to — Arrived tells the riders, All on board in one tap, no-show only after 3 minutes', async () => {
+  it('on the road: Navigate to the stop leads, and Arrived tells the riders there', async () => {
     Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true });
     routes((path, init) => {
       if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [run()] };
       if (path === '/transport/driver/runs/run1/live') return { run: null };
       if (path === '/transport/driver/runs/run1/arrived' && init?.method === 'POST') return { run: run(), evidence: null };
-      if (path === '/transport/driver/runs/run1/board-all' && init?.method === 'POST') return { run: run(), boarded: ['r1', 'r2'], already: [] };
-      if (path.startsWith('/transport/driver/rides/') && init?.method === 'POST') return { ride: ride({ id: 'x' }) };
     });
     renderAs('DRIVER', <DriverHome />);
-    const stop = (await screen.findByText(/Next stop · Stop 1 of 2/)).closest('div.rounded-lg') as HTMLElement;
-    expect(within(stop).getByText('Seaside Housing')).toBeInTheDocument();
-    expect(within(stop).getByText('Maria Lopez')).toBeInTheDocument();
-    expect(within(stop).getByText('Ben Ray')).toBeInTheDocument();
-    // Not arrived: no-show can't be marked yet.
-    for (const b of within(stop).getAllByRole('button', { name: 'No-show' })) expect(b).toBeDisabled();
-
-    await userEvent.click(within(stop).getByRole('button', { name: 'Arrived' }));
+    const card = await screen.findByRole('region', { name: /Van 1/ });
+    expect(within(card).getByText('Stop 1 of 2', { exact: false })).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: 'Navigate to stop 1' })).toBeInTheDocument();
+    // Nobody can be marked a no-show before the van is there.
+    expect(within(card).queryByRole('button', { name: /No-show/ })).toBeNull();
+    await userEvent.click(within(card).getByRole('button', { name: 'Already here? Arrived' }));
     // Every tap carries an idempotency key (and the phone's position, when it has one).
     await waitFor(() =>
       expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/arrived', { method: 'POST', body: expect.objectContaining({ rideIds: ['r1', 'r2'], idempotencyKey: expect.any(String) }) }),
     );
+    // The next stop is still to come.
+    expect(within(card).getByRole('list', { name: 'Later stops' })).toHaveTextContent('12 Palm St');
+  });
 
+  it('at the stop: All on board in one tap; no-show only after 3 minutes', async () => {
+    Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true });
+    const now = new Date().toISOString();
+    const rides = [
+      ride({ id: 'r1', status: 'SCHEDULED', pickupOrder: 1, vanArrivedAt: now }),
+      ride({ id: 'r2', status: 'SCHEDULED', pickupOrder: 2, vanArrivedAt: now, rider: { associateId: 'a2', name: 'Ben Ray', phone: null } }),
+    ];
+    routes((path, init) => {
+      if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [run({}, rides)] };
+      if (path === '/transport/driver/runs/run1/live') return { run: null };
+      if (path === '/transport/driver/runs/run1/board-all' && init?.method === 'POST') return { run: run(), boarded: ['r1', 'r2'], already: [] };
+    });
+    renderAs('DRIVER', <DriverHome />);
+    const card = await screen.findByRole('region', { name: /Van 1/ });
+    for (const b of within(card).getAllByRole('button', { name: /^No-show:/ })) expect(b).toBeDisabled();
     // All on board is one request for the whole stop (floor walk 18).
-    await userEvent.click(within(stop).getByRole('button', { name: 'All on board' }));
+    await userEvent.click(within(card).getByRole('button', { name: 'All on board · 2' }));
     await waitFor(() =>
       expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/board-all', { method: 'POST', body: expect.objectContaining({ rideIds: ['r1', 'r2'] }) }),
     );
-    // The next stop is still to come.
-    expect(screen.getByText('Later stops')).toBeInTheDocument();
   });
 
   it('arrived 4 minutes ago: the no-show opens; a rider’s “running late” shows on their row', async () => {
@@ -381,10 +395,10 @@ describe('<DriverHome> — driver mode, stop by stop', () => {
       if (path.startsWith('/transport/driver/rides/') && init?.method === 'POST') return { ride: ride({ id: 'x' }) };
     });
     renderAs('DRIVER', <DriverHome />);
-    const stop = (await screen.findByText(/Next stop · Stop 1 of 1/)).closest('div.rounded-lg') as HTMLElement;
-    expect(within(stop).getByText(/Arrived/)).toBeInTheDocument();
-    expect(within(stop).getByText('Running late')).toBeInTheDocument();
-    await userEvent.click(within(stop).getByRole('button', { name: 'No-show' }));
+    const card = await screen.findByRole('region', { name: /Van 1/ });
+    expect(within(card).getByText(/Arrived/)).toBeInTheDocument();
+    expect(within(card).getByText('Running late')).toBeInTheDocument();
+    await userEvent.click(within(card).getByRole('button', { name: 'No-show: Ben Ray' }));
     const confirm = await screen.findByRole('dialog');
     expect(confirm).toHaveTextContent('Mark Ben Ray a no-show?');
     expect(confirm).toHaveTextContent('$1.00 no-show fee');
@@ -392,7 +406,7 @@ describe('<DriverHome> — driver mode, stop by stop', () => {
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/driver/rides/r2/no-show', { method: 'POST', body: expect.objectContaining({ idempotencyKey: expect.any(String) }) }));
   });
 
-  it('everyone picked up: the drop-off, and Finish', async () => {
+  it('everyone picked up: the drop-off, and Complete run — asked first, never on a stray tap', async () => {
     Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true });
     const rides = [ride({ id: 'r1', status: 'BOARDED', pickupOrder: 1 })];
     routes((path, init) => {
@@ -401,9 +415,11 @@ describe('<DriverHome> — driver mode, stop by stop', () => {
       if (path === '/transport/driver/runs/run1/complete' && init?.method === 'POST') return { run: run({ status: 'COMPLETED' }, rides) };
     });
     renderAs('DRIVER', <DriverHome />);
-    expect(await screen.findByText('Everyone’s picked up')).toBeInTheDocument();
+    expect(await screen.findByText('Everyone’s picked up', { exact: false })).toBeInTheDocument();
     expect(screen.getByText('Drop off at Front Beach 218')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /Finish run/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Hold to complete run/ }));
+    const ask = await screen.findByRole('dialog');
+    await userEvent.click(within(ask).getByRole('button', { name: 'Complete run' }));
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/complete', { method: 'POST', body: expect.objectContaining({ idempotencyKey: expect.any(String) }) }));
   });
 });
@@ -465,14 +481,15 @@ describe('<TransportHome> — the command center', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['Date'] });
     vi.setSystemTime(noon);
     try {
-      // A day with bookings: the five tiles, and "Needs a van" only as the section.
+      // A day with bookings: the counts as one quiet line (no tiles, no
+      // coloured zeros), and "Needs a van" only as the section.
       routes((path) => (path.startsWith('/transport/board') ? board() : undefined));
       const first = renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-      const kpis = await screen.findByTestId('transport-kpis');
-      expect(within(kpis).getByText('Booked')).toBeTruthy();
-      expect(within(kpis).queryByText('Needs a van')).toBeNull();
-      // No run planned yet: "Vans out" says so instead of "0 of 0".
-      expect(within(kpis).getByText('No runs yet')).toBeTruthy();
+      const line = await screen.findByTestId('transport-day-line');
+      // No run planned yet: it says so instead of "0 of 0 vans out".
+      expect(line).toHaveTextContent(/2 booked · no runs yet · 0 on board · 0 done$/);
+      expect(within(line).queryByText(/Needs a van/)).toBeNull();
+      expect(screen.queryByTestId('transport-kpis')).toBeNull();
       first.unmount();
 
       // Nothing booked, nothing planned: one quiet state — no zero tiles, no
@@ -486,7 +503,7 @@ describe('<TransportHome> — the command center', () => {
       });
       renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
       expect(await screen.findByText(/^No rides booked for /)).toBeInTheDocument();
-      expect(screen.queryByTestId('transport-kpis')).toBeNull();
+      expect(screen.queryByTestId('transport-day-line')).toBeNull();
       expect(screen.queryByTestId('needs-van-none')).toBeNull();
       expect(screen.queryByTestId('runs-none')).toBeNull();
       expect(screen.queryByText(/All clear/)).toBeNull();
@@ -594,8 +611,8 @@ describe('the vans live', () => {
       if (path === '/transport/me/live') return { live };
     });
     renderAs('ASSOCIATE', <RideHome />);
-    expect(await screen.findByText(/About [78] min away/)).toBeInTheDocument();
-    expect(screen.getByText(/Van 1 is on its way · 1 stop before you/)).toBeInTheDocument();
+    expect(await screen.findByText(/Mike is [78] min away/)).toBeInTheDocument();
+    expect(screen.getByText(/1 stop before you/)).toBeInTheDocument();
     expect(screen.getByText('Updated just now')).toBeInTheDocument();
     const map = screen.getByRole('list', { name: 'Map of your van' });
     expect(within(map).getByText('Van 1')).toBeInTheDocument();
@@ -755,18 +772,57 @@ describe('the vans live', () => {
       late: [{ locationId: 'l1', store: 'Front Beach 218', minutes: 12 }],
       riders: [{ rideId: 'r1', name: 'Kim Rider', status: 'SCHEDULED', pickupAt: null, point: null, pickupEtaAt: minutesFromNow(6), dropEtaAt: minutesFromNow(25) }],
     };
+    // The fleet's state comes from GET /transport/ops; the route's stops from /transport/live.
+    const ops: TransportOpsBoard = {
+      date: run.serviceDate,
+      timezone: tz,
+      generatedAt: new Date().toISOString(),
+      vans: [
+        {
+          vanId: 'v1',
+          name: 'Van 1',
+          plate: 'ALT 101',
+          capacity: 12,
+          state: 'on_road',
+          position: { lat: 30.3, lng: -85.95, heading: 90, at: new Date().toISOString() },
+          positionAgeMinutes: 0,
+          run: {
+            runId: 'run1',
+            direction: 'TO_WORK',
+            departAt: run.departAt,
+            driverUserId: 'd1',
+            driverName: 'Mike Chen',
+            driverPhone: '555-0101',
+            onBoard: 0,
+            toPickUp: 1,
+            nextStop: { label: 'Kim Rider', scheduledAt: minutesFromNow(-6), etaAt: minutesFromNow(6) },
+            lateMinutes: 12,
+          },
+          nextRun: null,
+        },
+      ],
+      exceptions: [],
+      kpis: [],
+      center: null,
+    };
     routes((path) => {
       if (path.startsWith('/transport/board')) return { ...board0(), rides: [] };
+      if (path.startsWith('/transport/ops')) return ops;
       if (path.startsWith('/transport/live')) return { date: run.serviceDate, generatedAt: new Date().toISOString(), runs: [run] };
+      if (path.startsWith('/transport/readiness')) return { date: run.serviceDate, ready: true, items: [], riders: 0, runs: 0 };
     });
     renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
     await userEvent.click(await screen.findByRole('tab', { name: /Live map/ }));
-    const row = await screen.findByRole('button', { name: /Van 1/ });
-    expect(row).toHaveTextContent('~12 min late');
-    expect(row).toHaveTextContent(/Next: Kim Rider · about [56] min/);
+    const panel = await screen.findByRole('complementary', { name: 'The fleet right now' });
+    const row = within(panel).getByRole('button', { name: /^Van 1/ });
+    expect(row).toHaveTextContent('12 min late');
+    expect(row).toHaveTextContent(/Next: Kim Rider · ETA \d{1,2}:\d{2}/);
+    expect(row).toHaveTextContent('1 to pick up');
     expect(row).toHaveTextContent('Updated just now');
     const map = screen.getByRole('list', { name: 'Live map of the vans' });
-    expect(within(map).getByText('Van 1 · Mike Chen')).toBeInTheDocument();
+    expect(within(map).getByText('Van 1 · Mike Chen · 12 min late')).toBeInTheDocument();
+    // Picking the van draws its stops.
+    await userEvent.click(row);
     expect(within(map).getByText('Kim Rider')).toBeInTheDocument();
   });
 
@@ -845,10 +901,10 @@ describe('the Ride tab, one tap at a time', () => {
     });
     renderAs('ASSOCIATE', <RideHome />);
     const hero = await screen.findByRole('region', { name: 'Your next ride' });
-    expect(within(hero).getAllByText('Your van is here').length).toBeGreaterThan(0);
-    expect(within(hero).getByText('Mike is waiting at Seaside Housing.')).toBeInTheDocument();
+    expect(within(hero).getByText('Mike is here')).toBeInTheDocument();
+    expect(within(hero).getByText('Look for Van 1, ALT 101')).toBeInTheDocument();
     expect(within(hero).getByText(/2:[0-3]\d to get on board/)).toBeInTheDocument();
-    expect(within(hero).getByRole('list', { name: 'Here' })).toBeInTheDocument();
+    expect(within(hero).getByText('Mike waits 3 minutes')).toBeInTheDocument();
     await userEvent.click(within(hero).getByRole('button', { name: 'I’m outside' }));
     expect(apiFetch).toHaveBeenCalledWith('/transport/me/rides/r1/signal', { method: 'POST', body: { kind: 'OUTSIDE' } });
   });
@@ -971,7 +1027,7 @@ describe('<RideStrip> — the van on Home', () => {
     renderAs('ASSOCIATE', <RideStrip />);
     const link = await screen.findByRole('link', { name: /Your ride/ });
     expect(link).toHaveAttribute('href', '/rides');
-    await waitFor(() => expect(link).toHaveTextContent(/About [78] min away/));
+    await waitFor(() => expect(link).toHaveTextContent(/Mike is [78] min away/));
     expect(link).toHaveTextContent('Van 1 · To work');
     // The van, moving, right on Home.
     const map = within(link).getByRole('list', { name: 'Map of your van' });

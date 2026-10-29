@@ -144,24 +144,38 @@ afterEach(() => {
 
 describe('floor walk 5 — a tap with no signal is kept', () => {
   it('On board with no signal: nothing sent, the row says it is on its way, and the pill counts it', async () => {
-    routes();
+    // At the kerb: both riders at Seaside Housing, the van arrived a minute ago.
+    const here = at(-1 / 60);
+    routes((path) =>
+      path === '/transport/driver/runs'
+        ? { today: new Date().toISOString().slice(0, 10), runs: [{ ...activeRun(), rides: [ride({ id: 'r1', vanArrivedAt: here }), ride({ id: 'r2', pickupOrder: 2, vanArrivedAt: here, rider: { associateId: 'a-r2', name: 'Ben Ray', phone: null } })] }] }
+        : undefined,
+    );
     renderDriver();
     const card = await screen.findByRole('region', { name: /Van 2/ });
     Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
-    const maria = within(card).getAllByRole('listitem').find((li) => li.textContent?.includes('Maria Lopez'))!;
-    await userEvent.click(within(maria).getByRole('button', { name: 'On board' }));
+    await userEvent.click(within(card).getByRole('button', { name: 'On board: Maria Lopez' }));
     expect(await within(card).findByText('On board (sending)')).toBeInTheDocument();
     expect(screen.getByText('1 tap waiting to send')).toBeInTheDocument();
     expect(postsTo('/transport/driver/rides/r1/board')).toHaveLength(0);
     expect(listQueuedWrites()).toEqual([expect.objectContaining({ path: '/transport/driver/rides/r1/board', body: expect.objectContaining({ replay: true }) })]);
-    // One tap locks its own row, never the card: the stop's Arrived still works.
-    expect(within(card).getByRole('button', { name: 'Arrived' })).toBeEnabled();
+    // One tap locks its own row, never the card: Ben can still be marked, and the stop's button counts only him.
+    expect(within(card).getByRole('button', { name: 'On board: Ben Ray' })).toBeEnabled();
+    expect(within(card).getByRole('button', { name: 'On board · Ben R.' })).toBeEnabled();
   });
 });
 
 describe('floor walk 18 — rider texts and stop details', () => {
   it('"I’m here" is one tap per rider with a phone; a later stop shows its address and directions', async () => {
-    routes((path, init) => (path === '/transport/driver/rides/r1/text-here' && init?.method === 'POST' ? { sent: true, reason: null, body: 'Dana is outside', smsHref: null } : undefined));
+    const here = at(-1 / 60);
+    routes((path, init) => {
+      if (path === '/transport/driver/rides/r1/text-here' && init?.method === 'POST') return { sent: true, reason: null, body: 'Dana is outside', smsHref: null };
+      if (path === '/transport/driver/runs') {
+        const run = activeRun();
+        return { today: new Date().toISOString().slice(0, 10), runs: [{ ...run, rides: [ride({ id: 'r1', vanArrivedAt: here }), run.rides[1]!] }] };
+      }
+      return undefined;
+    });
     renderDriver();
     const card = await screen.findByRole('region', { name: /Van 2/ });
     await userEvent.click(within(card).getByRole('button', { name: 'Text “I\'m here”: Maria Lopez' }));
@@ -169,7 +183,7 @@ describe('floor walk 18 — rider texts and stop details', () => {
     // Ben has no phone: no text button for him.
     expect(within(card).queryByRole('button', { name: /Text .*Ben Ray/ })).toBeNull();
     // The stop after this one: its address and Navigate.
-    expect(within(card).getByText('Later stops')).toBeInTheDocument();
+    expect(within(card).getByRole('list', { name: 'Later stops' })).toHaveTextContent('12 Palm St');
     expect(within(card).getByRole('link', { name: 'Navigate: 12 Palm St' })).toBeInTheDocument();
   });
 });
@@ -196,7 +210,9 @@ describe('transport walk 9 — fuel at the pump', () => {
     );
     renderDriver();
     await screen.findByRole('region', { name: /Van 2/ });
-    await userEvent.click(screen.getByRole('button', { name: 'Log fuel' }));
+    // With a run under way, Log fuel sits at the foot of the run's sheet (its button is the one in view).
+    const card = screen.getByRole('region', { name: /Van 2/ });
+    await userEvent.click(within(card).getByRole('button', { name: 'Log fuel' }));
     const dialog = await screen.findByRole('dialog', { name: 'Fuel — Van 2' });
     await userEvent.type(within(dialog).getByLabelText(/Total/), '62.12');
     await userEvent.type(within(dialog).getByLabelText('Gallons'), '18.4');

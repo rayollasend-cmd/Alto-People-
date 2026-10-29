@@ -6,7 +6,10 @@ import { LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, setWorkerU
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { cn } from '@/lib/cn';
-import { tokenColor, tokenVar } from '@/lib/tokenColor';
+import { tokenColor } from '@/lib/tokenColor';
+import { lineSource, markerElement, paintMarker as paint, routeColorExpression, routesSource, type MapMarker, type MapRoute } from './liveMapMarkers';
+
+export type { MapMarker, MapRoute, MarkerTone } from './liveMapMarkers';
 
 /**
  * The vans' map. MapLibre (open source) on OpenFreeMap tiles — no API key.
@@ -32,24 +35,6 @@ const STYLE = {
   light: 'https://tiles.openfreemap.org/styles/positron',
   dark: 'https://tiles.openfreemap.org/styles/dark',
 };
-
-export interface MapMarker {
-  id: string;
-  lat: number;
-  lng: number;
-  kind: 'van' | 'home' | 'store' | 'stop';
-  label?: string;
-  /** Degrees, for the van's arrow. */
-  heading?: number | null;
-  /** The van's position is old — shown faded. */
-  stale?: boolean;
-  /** A numbered stop (the desk's and the driver's view). */
-  order?: number;
-  /** Draw attention (the selected van, the rider's own pickup). */
-  highlight?: boolean;
-  /** Radar rings — a pickup still waiting on a driver. */
-  pulse?: boolean;
-}
 
 export interface LiveMapProps {
   markers: MapMarker[];
@@ -89,92 +74,18 @@ export interface LiveMapProps {
   onPick?: (point: { lat: number; lng: number }) => void;
   /** Set: tapping a marker reports its id — the dispatch map reorders pickups this way. */
   onMarkerClick?: (id: string) => void;
-}
-
-const BUS_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6v6"/><path d="M15 6v6"/><path d="M2 12h19.6"/><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/></svg>';
-const HOME_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
-const STORE_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/></svg>';
-
-// MapLibre positions a marker by writing its root element's transform, so
-// the look lives on an inner element — repainting it on every refresh must
-// never touch the root's style (that snapped markers to the corner).
-function markerElement(m: MapMarker): HTMLElement {
-  const root = document.createElement('div');
-  root.setAttribute('role', 'img');
-  root.appendChild(document.createElement('div'));
-  paint(root, m);
-  return root;
-}
-
-// Radar rings for a pickup still waiting on a driver — injected once.
-let radarCss = false;
-function ensureRadarCss() {
-  if (radarCss || typeof document === 'undefined') return;
-  radarCss = true;
-  const st = document.createElement('style');
-  st.textContent =
-    '@keyframes alto-radar{0%{transform:scale(.7);opacity:.75}100%{transform:scale(2.6);opacity:0}}' +
-    `.alto-radar{position:absolute;inset:0;border-radius:9999px;border:2px solid ${tokenVar('gold-fill')};animation:alto-radar 2.4s cubic-bezier(0,0,.2,1) infinite;pointer-events:none}` +
-    '@media (prefers-reduced-motion: reduce){.alto-radar{display:none}}';
-  document.head.appendChild(st);
-}
-const RINGS = '<span class="alto-radar"></span><span class="alto-radar" style="animation-delay:1.2s"></span>';
-
-function paint(root: HTMLElement, m: MapMarker) {
-  if (m.label) {
-    root.title = m.label;
-    root.setAttribute('aria-label', m.label);
-  }
-  const el = root.firstElementChild as HTMLElement;
-  // Theme-stable tokens: a marker sits on map tiles, not on the page, so
-  // its fills keep the same ink in both themes (gold fill + on-accent ink,
-  // a dark store tile + on-solid white).
-  const gold = tokenVar('gold-fill');
-  const ink = tokenVar('on-accent');
-  const white = tokenVar('on-solid');
-  const ring = m.highlight ? `box-shadow:0 0 0 4px ${tokenVar('gold-fill', 0.35)};` : '';
-  if (m.kind === 'van') {
-    // Built once, then only updated — so the heading arrow turns smoothly
-    // and the pulse doesn't restart on every refresh.
-    if (el.dataset.kind !== 'van') {
-      el.dataset.kind = 'van';
-      el.innerHTML = `<span data-pulse style="position:absolute;inset:-6px;border-radius:9999px;background:${tokenVar('gold-fill', 0.35)}" class="animate-ping motion-reduce:hidden"></span><span style="position:relative;display:grid;place-items:center">${BUS_SVG}</span><span data-arrow style="position:absolute;top:-9px;left:50%;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid ${gold};transform-origin:50% 26px;transition:transform .9s ease"></span>`;
-    }
-    el.style.cssText = `position:relative;width:34px;height:34px;border-radius:9999px;display:grid;place-items:center;background:${gold};color:${ink};border:2px solid ${white};box-shadow:0 2px 8px rgba(0,0,0,.35);${ring}opacity:${m.stale ? 0.55 : 1};transition:opacity .3s`;
-    const pulse = el.querySelector<HTMLElement>('[data-pulse]');
-    if (pulse) pulse.style.display = m.stale ? 'none' : '';
-    const arrow = el.querySelector<HTMLElement>('[data-arrow]');
-    if (arrow) {
-      const has = m.heading !== null && m.heading !== undefined;
-      arrow.style.display = has ? '' : 'none';
-      if (has) arrow.style.transform = `translateX(-50%) rotate(${m.heading}deg)`;
-    }
-  } else if (m.kind === 'store' || m.kind === 'home') {
-    const store = m.kind === 'store';
-    const look = `position:relative;width:28px;height:28px;border-radius:${store ? '8px' : '9999px'};display:grid;place-items:center;background:${store ? ink : tokenVar('chart-2')};color:${white};border:2px solid ${white};box-shadow:0 2px 6px rgba(0,0,0,.3);${ring}`;
-    const key = `${m.kind}:${m.pulse ? 1 : 0}`;
-    el.style.cssText = look;
-    // Rebuilt only when it changes, so the rings don't restart each refresh.
-    if (el.dataset.kind !== key) {
-      el.dataset.kind = key;
-      if (m.pulse) ensureRadarCss();
-      el.innerHTML = `${m.pulse ? RINGS : ''}<span style="position:relative;display:grid;place-items:center">${store ? STORE_SVG : HOME_SVG}</span>`;
-    }
-  } else {
-    el.style.cssText = `min-width:22px;height:22px;padding:0 5px;border-radius:9999px;display:grid;place-items:center;background:${white};color:${ink};border:2px solid ${ink};font:600 11px/1 system-ui,sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.25);${ring}`;
-    el.textContent = m.order !== undefined ? String(m.order) : '•';
-  }
-}
-
-function lineSource(coords: Array<[number, number]>) {
-  return {
-    type: 'Feature' as const,
-    properties: {},
-    geometry: { type: 'LineString' as const, coordinates: coords },
-  };
+  /** Several runs' routes at once — the desk's fleet map (one line per van on the road). */
+  routes?: MapRoute[];
+  /** Where the map opens while there is no marker to fit (the depot, the first store). */
+  center?: { lat: number; lng: number } | null;
+  /** Pan to this point whenever `key` changes — the van just picked from a list. */
+  focus?: { lat: number; lng: number; key: string | number } | null;
+  /**
+   * Fit only the first set of markers (and again when `fitKey` changes),
+   * not every time the set changes — for a map whose stops come and go
+   * with a selection, so picking a van doesn't throw the view around.
+   */
+  fitOnce?: boolean;
 }
 
 /** The flowing dash on the leg being driven — MapLibre can't offset a
@@ -222,6 +133,10 @@ export default function LiveMap({
   footInset = 0,
   onPick,
   onMarkerClick,
+  routes,
+  center,
+  focus,
+  fitOnce = false,
 }: LiveMapProps) {
   const markerClick = useRef(onMarkerClick);
   markerClick.current = onMarkerClick;
@@ -263,8 +178,8 @@ export default function LiveMap({
       m = new MapLibreMap({
         container: box.current,
         style: dark ? STYLE.dark : STYLE.light,
-        center: [-85.8, 30.2],
-        zoom: 10,
+        center: center ? [center.lng, center.lat] : [-85.8, 30.2],
+        zoom: center ? 11 : 10,
         attributionControl: { compact: true },
         interactive,
         cooperativeGestures,
@@ -294,6 +209,25 @@ export default function LiveMap({
     if (credit && footInset) credit.style.marginBottom = `${footInset}px`;
     m.on('load', () => {
       box.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
+      // The fleet's routes sit under every other line: thin dashes for the
+      // vans not picked, solid and bold for the one that is.
+      m.addSource('fleet', { type: 'geojson', data: routesSource([]) });
+      m.addLayer({
+        id: 'fleet-routes',
+        type: 'line',
+        source: 'fleet',
+        filter: ['==', ['get', 'strong'], 0],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': routeColorExpression() as never, 'line-width': 2.5, 'line-dasharray': [1.5, 1.5], 'line-opacity': 0.7 },
+      });
+      m.addLayer({
+        id: 'fleet-routes-strong',
+        type: 'line',
+        source: 'fleet',
+        filter: ['==', ['get', 'strong'], 1],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': routeColorExpression() as never, 'line-width': 5, 'line-opacity': 0.95 },
+      });
       m.addSource('trail', { type: 'geojson', data: lineSource([]) });
       // MapLibre parses paint colours itself: the tokens, resolved now.
       const gold = tokenColor('gold-fill');
@@ -365,6 +299,7 @@ export default function LiveMap({
       if (have && have.kind === mk.kind) {
         if (mk.kind === 'van') glide(m, mk.id, have.marker, { lat: mk.lat, lng: mk.lng });
         else have.marker.setLngLat([mk.lng, mk.lat]);
+        have.marker.setOffset(mk.offset ?? [0, 0]);
         paint(have.el, mk);
       } else {
         have?.marker.remove();
@@ -375,7 +310,7 @@ export default function LiveMap({
           markerClick.current(mk.id);
         });
         if (markerClick.current) el.style.cursor = 'pointer';
-        const marker = new Marker({ element: el }).setLngLat([mk.lng, mk.lat]).addTo(m);
+        const marker = new Marker({ element: el, offset: mk.offset ?? [0, 0] }).setLngLat([mk.lng, mk.lat]).addTo(m);
         pins.current.set(mk.id, { marker, el, kind: mk.kind });
       }
     }
@@ -386,11 +321,12 @@ export default function LiveMap({
       }
     }
     // Fit once per set of markers (and again when asked to).
-    const key =
-      markers
-        .map((x) => x.id)
-        .sort()
-        .join('|') + `#${fitKey ?? ''}`;
+    const key = fitOnce
+      ? `#${fitKey ?? ''}`
+      : markers
+          .map((x) => x.id)
+          .sort()
+          .join('|') + `#${fitKey ?? ''}`;
     if (markers.length > 0 && key !== fittedFor.current) {
       const first = !fittedFor.current;
       fittedFor.current = key;
@@ -414,6 +350,7 @@ export default function LiveMap({
         for (const x of markers) b.extend([x.lng, x.lat]);
         // A planned trip's arc bulges past its two ends — keep it in view.
         for (const c of route ?? []) b.extend(c);
+        for (const r of routes ?? []) for (const c of r.coords) b.extend(c);
         m.fitBounds(b, { padding, maxZoom, duration: first ? 0 : 700 });
       }
     }
@@ -429,6 +366,38 @@ export default function LiveMap({
     (m.getSource('trail') as { setData?: (d: unknown) => void } | undefined)?.setData?.(lineSource(trail ?? []));
     (m.getSource('path') as { setData?: (d: unknown) => void } | undefined)?.setData?.(lineSource(path ?? []));
   }, [route, trail, path, ready]);
+
+  // The fleet's routes — their colours resolved again on each change, so a
+  // theme switch reaches the lines by the next refresh.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    (m.getSource('fleet') as { setData?: (d: unknown) => void } | undefined)?.setData?.(routesSource(routes ?? []));
+    if (routes?.length) {
+      for (const id of ['fleet-routes', 'fleet-routes-strong']) if (m.getLayer(id)) m.setPaintProperty(id, 'line-color', routeColorExpression() as never);
+    }
+  }, [routes, ready]);
+
+  // No marker to fit: open where the work is.
+  const centerKey = center ? `${center.lat},${center.lng}` : '';
+  const noMarkers = markers.length === 0;
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready || !center || !noMarkers) return;
+    m.jumpTo({ center: [center.lng, center.lat], zoom: Math.max(m.getZoom(), 11) });
+    // Only when the place itself changes (or the map becomes ready).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [centerKey, ready, noMarkers]);
+
+  // A van picked from a list: glide the view to it, closer if needed.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready || !focus) return;
+    const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    m.easeTo({ center: [focus.lng, focus.lat], zoom: Math.max(m.getZoom(), 13), duration: reduced ? 0 : 700 });
+    // Keyed on the ask, not the van's every move.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.key, ready]);
 
   // Dropping a pin: a tap on the map is the spot. The handler lives in a
   // ref so changing it never re-binds (or re-creates) the map.

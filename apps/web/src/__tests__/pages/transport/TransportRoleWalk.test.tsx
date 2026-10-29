@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
+import { ROLE_CAPABILITIES, type Capability, type Role, type TransportOpsBoard } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 import { ConfirmProvider } from '@/lib/confirm';
 import { zonedDayKey } from '@/lib/format';
@@ -292,9 +292,9 @@ describe('walk 8 — unsigned riders, visible and askable', () => {
       if (path === '/transport/authorizations/remind' && init?.method === 'POST') return { sent: 2, skipped: 0 };
     });
     renderAs('TRANSPORTATION_DIRECTOR');
-    const attention = await screen.findByRole('region', { name: 'Needs attention' });
-    expect(within(attention).getByText(/2 riders .* won’t be charged — not signed/)).toBeInTheDocument();
-    await userEvent.click(within(attention).getByRole('button', { name: 'Ask all 2 to sign' }));
+    const unsigned = await screen.findByRole('region', { name: 'Unsigned riders' });
+    expect(within(unsigned).getByText(/2 riders .* won’t be charged — not signed/)).toBeInTheDocument();
+    await userEvent.click(within(unsigned).getByRole('button', { name: 'Ask all 2 to sign' }));
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/authorizations/remind', { method: 'POST', body: { associateIds: ['a-r1', 'a9'] } }));
     const waiting = screen.getByRole('region', { name: 'Needs a van' });
     expect(within(waiting).getAllByText('Unsigned')).toHaveLength(1);
@@ -356,21 +356,56 @@ describe('walk 7 — the rider’s record, one click from a name', () => {
 });
 
 describe('walk 4 — a run nobody closed', () => {
-  it('reads "Not closed" with Close run on the live map, and is one alert on the board, not two', async () => {
+  it('is one alert on its card, not two: Not closed with Close run — not "late", not "no signal"', async () => {
+    const stuckRun: RideRun = { ...plannedRun(), id: 'old', status: 'ACTIVE', departAt: at(-32 * 24), startedAt: at(-32 * 24), serviceDate: zonedDayKey(new Date(), tz) };
     routes((path) => {
-      if (path.startsWith('/transport/board')) return board({ runs: [] });
+      if (path.startsWith('/transport/board')) return board({ runs: [stuckRun] });
       if (path.startsWith('/transport/live')) return { date: '', generatedAt: '', runs: [liveRun()] };
     });
     renderAs('TRANSPORTATION_DIRECTOR');
-    const attention = await screen.findByRole('region', { name: 'Needs attention' });
-    await waitFor(() => expect(within(attention).getByText(/Van 1 has been out for .* — still open/)).toBeInTheDocument());
-    expect(within(attention).queryByText(/no signal/)).toBeNull();
-    await userEvent.click(screen.getByRole('tab', { name: 'Live map' }));
-    const runs = await screen.findByRole('region', { name: 'Runs' });
-    expect(within(runs).getByText('Not closed')).toBeInTheDocument();
-    expect(within(runs).getByRole('button', { name: 'Close run' })).toBeInTheDocument();
-    expect(within(runs).queryByText(/late/)).toBeNull();
-    expect(within(runs).queryByText(/Next: /)).toBeNull();
+    const card = await screen.findByRole('group', { name: /^Van 1, leaves/ });
+    await waitFor(() => expect(within(card).getByText('Not closed')).toBeInTheDocument());
+    expect(within(card).getByRole('button', { name: 'Close run' })).toBeInTheDocument();
+    expect(within(card).queryByText(/no signal/)).toBeNull();
+    expect(within(card).queryByText(/late/)).toBeNull();
+  });
+
+  it('reads "Not closed" with Close run on the live map — not "late", no next stop', async () => {
+    // The Live map reads the fleet from GET /transport/ops; the live board says the run is stuck.
+    const ops: TransportOpsBoard = {
+      date: zonedDayKey(new Date(), tz),
+      timezone: tz,
+      generatedAt: new Date().toISOString(),
+      vans: [
+        {
+          vanId: 'v1',
+          name: 'Van 1',
+          plate: 'ALT 101',
+          capacity: 12,
+          state: 'no_signal',
+          position: { lat: 30.3, lng: -85.95, heading: 90, at: at(-32 * 24) },
+          positionAgeMinutes: 32 * 24 * 60,
+          run: { runId: 'old', direction: 'TO_WORK', departAt: at(-32 * 24), driverUserId: 'mike', driverName: 'Mike Chen', driverPhone: null, onBoard: 0, toPickUp: 1, nextStop: { label: 'Kim Nguyen', scheduledAt: null, etaAt: at(0.1) }, lateMinutes: 46_000 },
+          nextRun: null,
+        },
+      ],
+      exceptions: [],
+      kpis: [],
+      center: null,
+    };
+    routes((path) => {
+      if (path.startsWith('/transport/board')) return board({ runs: [] });
+      if (path.startsWith('/transport/ops')) return ops;
+      if (path.startsWith('/transport/live')) return { date: '', generatedAt: '', runs: [liveRun()] };
+      if (path.startsWith('/transport/readiness')) return { date: '', ready: true, items: [], riders: 0, runs: 0 };
+    });
+    renderAs('TRANSPORTATION_DIRECTOR', '/transport?tab=live');
+    const panel = await screen.findByRole('complementary', { name: 'The fleet right now' });
+    const row = within(panel).getByRole('button', { name: /^Van 1/ }).closest('li')!;
+    expect(within(row).getByText('Not closed')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Close run' })).toBeInTheDocument();
+    expect(row).not.toHaveTextContent(/late/);
+    expect(row).not.toHaveTextContent(/Next:/);
   });
 });
 
@@ -430,11 +465,11 @@ describe('walk 11 — the header on a phone', () => {
     window.matchMedia = original;
   });
 
-  it('keeps the four daily tabs and Setup (no More menu), a Today/Tomorrow control, and the attention list as one line', async () => {
+  it('keeps the four daily tabs and Setup (no More menu) and a Today/Tomorrow control', async () => {
     window.matchMedia = ((query: string) => ({ ...original(query), matches: false })) as typeof window.matchMedia;
     routes((path) => (path.startsWith('/transport/board') ? board() : undefined));
     renderAs('TRANSPORTATION_DIRECTOR');
-    expect(await screen.findByRole('button', { name: /need you/ })).toBeInTheDocument();
+    expect(await screen.findByTestId('transport-day-line')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).toBeNull();
     // F500 G2: the day's four tabs, then one Setup tab for the fleet, drivers, stops, fares and charges.
     expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual(['Today', 'Live map', 'Rides', 'Issues', 'Setup']);
@@ -446,8 +481,6 @@ describe('walk 11 — the header on a phone', () => {
     expect(within(row).getByLabelText('Day')).toBeInTheDocument();
     expect(within(row).getByRole('button', { name: /Sounds (on|off)/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /More actions/i })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: /need you/ }));
-    expect(screen.getByRole('region', { name: 'Needs attention' })).toBeInTheDocument();
   });
 });
 

@@ -73,6 +73,47 @@ export function evaluatePreTrip(items: PreTripAnswer[]): { passed: boolean; fail
 
 export const preTripLabel = (key: string): string => PRE_TRIP_ITEMS.find((i) => i.key === key)?.label ?? key;
 
+export interface VanDayCheck {
+  checkId: string;
+  runId: string;
+  passed: boolean;
+  at: Date;
+  /** The items that failed (keys), for the desk's "Brakes failed". */
+  failed: string[];
+}
+
+export const vanDayKey = (vanId: string, serviceDate: string) => `${vanId}|${serviceDate}`;
+
+/**
+ * One walk-around per van per day (transport upgrade 2026-10-28): the
+ * van's LATEST check on any of that service day's runs decides for every
+ * run of the van that day. A passed check covers the afternoon run too; a
+ * failed one after it parks the van again until another passes. Keyed by
+ * vanDayKey(vanId, serviceDate).
+ */
+export async function vanDayPreTrips(pairs: Array<{ vanId: string; serviceDate: string }>, db: Db = prisma): Promise<Map<string, VanDayCheck>> {
+  const out = new Map<string, VanDayCheck>();
+  if (pairs.length === 0) return out;
+  const vanIds = [...new Set(pairs.map((p) => p.vanId))];
+  const dates = [...new Set(pairs.map((p) => p.serviceDate))];
+  const checks = await db.preTripCheck.findMany({
+    where: { vanId: { in: vanIds }, run: { serviceDate: { in: dates } } },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, vanId: true, runId: true, passed: true, items: true, createdAt: true, run: { select: { serviceDate: true } } },
+  });
+  for (const c of checks) {
+    const items = (Array.isArray(c.items) ? c.items : []) as Array<{ key: string; ok: boolean }>;
+    out.set(vanDayKey(c.vanId, c.run.serviceDate), {
+      checkId: c.id,
+      runId: c.runId,
+      passed: c.passed,
+      at: c.createdAt,
+      failed: items.filter((i) => i && i.ok === false).map((i) => i.key),
+    });
+  }
+  return out;
+}
+
 /* ----- Credentials ---------------------------------------------------------- */
 
 export type CredentialKey = 'licence' | 'dot' | 'training' | 'mvr';
@@ -282,6 +323,16 @@ export async function plannedHoursOn(driverUserId: string, date: string, db: Db 
 /** Credentials are judged once the desk has recorded at least one driver profile. */
 export async function credentialsEnforced(db: Db = prisma): Promise<boolean> {
   return (await db.driverProfile.count()) > 0;
+}
+
+/**
+ * "Runs today", one definition for every count the driver sees (the Today
+ * card, the home's tiles): the day's runs that aren't cancelled; done =
+ * COMPLETED; active = on the road now. Pass the day's runs.
+ */
+export function dayRunCounts(runs: Array<{ status: string }>): { total: number; done: number; active: number } {
+  const live = runs.filter((r) => r.status !== 'CANCELLED');
+  return { total: live.length, done: live.filter((r) => r.status === 'COMPLETED').length, active: live.filter((r) => r.status === 'ACTIVE').length };
 }
 
 /** The window a run keeps its van and driver busy: 15 minutes before it leaves until it ends (or RUN_SPAN_MS after leaving). */

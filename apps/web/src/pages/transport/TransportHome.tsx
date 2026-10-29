@@ -10,8 +10,8 @@ import {
   ChevronRight,
   Download,
   Check,
-  ChevronDown,
   Home,
+  GripVertical,
   MapPin,
   MapPinOff,
   MessageSquare,
@@ -86,10 +86,9 @@ import { onLiveEvent } from '@/lib/liveEvents';
 import { dispatchBatch, messageRun, planDay, routeRides, type BatchRefusal, type RunProposal } from '@/lib/transportDispatchApi';
 import { rideAlert, useNewKeys } from '@/lib/rideAlerts';
 import { SoundToggle } from '@/components/transport/SoundToggle';
-import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 import { DispatchMap } from '@/components/transport/DispatchMap';
 import { RiderDrawer } from '@/components/transport/RiderDrawer';
-import { VanDayTimeline, firstFreeVan, timelineBars } from '@/components/transport/VanDayTimeline';
+import { VanDayTimeline, conflictWords, firstFreeVan, runConflicts, timelineBars } from '@/components/transport/VanDayTimeline';
 import { Avatar } from '@/components/ui/Avatar';
 import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
 import { Badge } from '@/components/ui/Badge';
@@ -109,8 +108,20 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { LiveOpsTab } from './live/LiveOpsTab';
+import { ExceptionsQueue } from './live/ExceptionsQueue';
+import { TransportKpiRow } from './live/TransportKpiRow';
+import { useTransportOps } from '@/lib/transportOpsApi';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { DayLine } from './desk/DayLine';
+import { ReadinessStrip, needsPlan, useReadiness, type ReadinessAction } from './desk/ReadinessStrip';
+import { MoveMenu } from './desk/MoveMenu';
+import { NEEDS_VAN, canMoveRide, checkMove, checkMoveToRun, seatsText, type MoveCheck, type MovingRide } from './desk/moves';
+import { runIdOfTarget, runTarget, useDragDispatch } from './desk/dragDispatch';
+import { useRideMoves } from './desk/useRideMoves';
+import { STATUS_WORDS, canCancelRide, rideStatusWords, runNotStarted } from './desk/rideWords';
 import { ListTemplate } from '@/components/templates';
-import { CostsSection, DriversTab, FeedbackSection, IncidentsSection, ReceiptThumb, SosBanner, TransportNeedsYou, VanRecordDrawer } from './TransportDesk';
+import { CostsSection, DriversTab, FeedbackSection, IncidentsSection, ReceiptThumb, TransportNeedsYou, VanRecordDrawer } from './TransportDesk';
 import { TransportTrends } from './TransportTrends';
 import {
   Dialog,
@@ -160,15 +171,6 @@ const TAB_LABEL: Record<Tab, string> = {
   settings: 'Fares',
 };
 
-const STATUS_LABEL: Record<RideStatus, string> = {
-  REQUESTED: 'Needs a van',
-  SCHEDULED: 'On a van',
-  BOARDED: 'On board',
-  COMPLETED: 'Done',
-  NO_SHOW: 'No-show',
-  CANCELLED: 'Cancelled',
-};
-
 const ISSUE_LABEL: Record<string, string> = {
   LATE_VAN: 'Late van',
   MISSED_PICKUP: 'Missed pickup',
@@ -181,18 +183,6 @@ const ISSUE_LABEL: Record<string, string> = {
 
 const cents = (n: number) => fmtMoney(n / 100);
 const errMsg = (err: unknown) => (err instanceof ApiError ? err.message : String(err));
-
-function statusVariant(s: RideStatus): 'accent' | 'success' | 'pending' | 'destructive' | 'default' {
-  return s === 'REQUESTED'
-    ? 'pending'
-    : s === 'SCHEDULED'
-      ? 'accent'
-      : s === 'BOARDED' || s === 'COMPLETED'
-        ? 'success'
-        : s === 'NO_SHOW'
-          ? 'destructive'
-          : 'default';
-}
 
 function homeEnd(r: Ride): string {
   return r.pickup.kind === 'stop' ? r.pickup.name : r.pickup.address;
@@ -309,12 +299,31 @@ export function TransportHome() {
   };
   const today = ymdLocal();
   const tomorrow = shiftDay(today, 1);
+  // A readiness fix or an exception can point at another day's board: land there.
+  const [boardFocus, setBoardFocus] = useState<BoardFocus | null>(null);
+  const focusBoard = (f: BoardFocus | null) => {
+    setBoardFocus(f);
+    if (f && f.date !== date) setDate(f.date);
+  };
   const board = useQuery({
     queryKey: ['transport', 'board', date],
     queryFn: () => getTransportBoard(date),
     refetchInterval: 30_000,
   });
   const openIssues = board.data?.kpis.openIssues ?? 0;
+  // "Assign a van" on the live map: the dispatch for those riders opens over
+  // the map — the dispatcher stays where they are. Riders not on this day's
+  // board (or already on a van) are the Today tab's to find.
+  const [liveDispatch, setLiveDispatch] = useState<Ride[] | null>(null);
+  const openRidesFromLive = (rideIds: string[]) => {
+    const ids = new Set(rideIds);
+    const hit = (board.data?.rides ?? []).filter((r) => ids.has(r.id) && r.status === 'REQUESTED' && !r.run);
+    if (hit.length > 0 && manage) setLiveDispatch(hit.filter((r) => r.direction === hit[0]!.direction));
+    else {
+      setTab('today');
+      setBoardFocus({ date, target: NEEDS_VAN });
+    }
+  };
   useEffect(() => {
     if (linkedDay || autoDay || !board.data || board.data.date !== today) return;
     setAutoDay(eveningBoardDay(board.data, today));
@@ -391,20 +400,22 @@ export function TransportHome() {
             <QueryError what="today's board" query={board} />
           ) : board.data ? (
             <div className="space-y-5">
-              <TransportNeedsYou />
               <TodayBoard
                 board={board.data}
                 manage={manage}
                 compact={!wide}
                 onRider={setRider}
                 nav={{ prev: () => setDate(shiftDay(date, -1)), next: () => setDate(shiftDay(date, 1)), today: () => setDate(today), tomorrow: () => setDate(tomorrow) }}
+                onSetup={(section) => setTab(section)}
+                focus={boardFocus}
+                onFocus={focusBoard}
               />
               <TransportTrends />
             </div>
           ) : null}
         </TabsContent>
         <TabsContent value="live">
-          <LiveTab />
+          <LiveOpsTab onOpenRide={openRidesFromLive} />
         </TabsContent>
         <TabsContent value="rides">
           <RidesTab manage={manage} onRider={setRider} />
@@ -438,6 +449,7 @@ export function TransportHome() {
         </TabsContent>
       </Tabs>
       <RiderDrawer associateId={riderId} manage={manage} onClose={() => setRider(null)} onIssues={() => { setRider(null); setTab('issues'); }} />
+      {liveDispatch && board.data && <DispatchDialog board={board.data} initial={{ rides: liveDispatch }} onClose={() => setLiveDispatch(null)} />}
     </ListTemplate>
   );
 }
@@ -567,110 +579,7 @@ function groupWaiting(rides: Ride[]): RideGroup[] {
   return [...groups.values()].sort((a, b) => a.at.localeCompare(b.at));
 }
 
-/* ----- Needs attention: what to act on, first ------------------------------ */
-
-interface Attention {
-  key: string;
-  tone: 'alert' | 'warning' | 'info';
-  title: string;
-  body?: string;
-  actions: Array<{ label: string; onClick?: () => void; href?: string }>;
-}
-
-function NeedsAttention({ items, compact = false, active = true }: { items: Attention[]; compact?: boolean; active?: boolean }) {
-  // Transport walk 11: on a phone the list is one line — "4 need you" —
-  // until it's opened; four cards filled the first screen.
-  const [open, setOpen] = useState(false);
-  if (compact && items.length > 0 && !open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-expanded={false}
-        className="flex w-full items-center gap-2 rounded-lg border border-warning/40 bg-warning/[0.05] px-4 py-3 text-left text-sm text-ink"
-      >
-        <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate">
-          <span className="font-semibold">{items.length}</span> need you · {items[0]!.title}
-        </span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
-      </button>
-    );
-  }
-  if (items.length === 0) {
-    // A pass only when something was checked: an empty day says nothing here
-    // (the board's one empty state speaks for it).
-    if (!active) return null;
-    return (
-      <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/[0.06] px-4 py-3 text-sm text-success">
-        <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
-        All clear — every booking has a van and every van on the road is on time.
-      </div>
-    );
-  }
-  return (
-    <section aria-label="Needs attention" className="rounded-lg border border-warning/40 bg-warning/[0.05]">
-      <h2 className="flex items-center gap-2 px-4 pt-3 text-sm font-medium text-ink">
-        <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
-        Needs attention <span className="tabular-nums text-ink-muted">{items.length}</span>
-      </h2>
-      <ul className="divide-y divide-navy-secondary/60 px-4">
-        {items.map((a) => (
-          <li key={a.key} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
-            <span
-              className={cn(
-                'h-2 w-2 shrink-0 rounded-full',
-                a.tone === 'alert' ? 'bg-alert' : a.tone === 'warning' ? 'bg-warning' : 'bg-info',
-              )}
-              aria-hidden="true"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-ink">{a.title}</div>
-              {a.body && <div className="text-xs text-ink-muted">{a.body}</div>}
-            </div>
-            {/* The first action here writes something — close a run, message
-                a van's riders, re-offer a seat — and the one beside it just
-                navigates. Same-size neighbours on touch, so they get the
-                wider gap there. Outline, not gold: one primary per screen
-                (Plan runs / Dispatch below), and a list of six items was six
-                gold buttons. */}
-            <div className="flex flex-wrap gap-2 coarse:gap-3">
-              {a.actions.map((x, i) =>
-                x.href ? (
-                  <Button key={x.label} size="xs" variant={i === 0 ? 'outline' : 'ghost'} asChild>
-                    <a href={x.href}>{x.label}</a>
-                  </Button>
-                ) : (
-                  <Button key={x.label} size="xs" variant={i === 0 ? 'outline' : 'ghost'} onClick={x.onClick}>
-                    {x.label}
-                  </Button>
-                ),
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function KpiStrip({ k }: { k: TransportBoard['kpis'] }) {
-  // "Needs a van" is the section header's own count below (it was a tile too — F500 G5).
-  // The kit's tiles (values in ink; a zero never coloured), three a row
-  // below xl so five never strand "No-shows" alone: 3 + 2 (the last spans
-  // two), then all five in one row from xl.
-  return (
-    <div data-testid="transport-kpis">
-      <MetricStrip label="The day at a glance" className="grid-cols-3">
-        <MetricCard label="Booked" value={k.booked} />
-        <MetricCard label="Vans out" value={`${k.vansOut} of ${k.runs}`} nothing={k.runs === 0 ? 'No runs yet' : undefined} />
-        <MetricCard label="On board" value={k.onBoard} />
-        <MetricCard label="Done" value={k.completed} />
-        <MetricCard label="No-shows" value={k.noShows} tone="warning" />
-      </MetricStrip>
-    </div>
-  );
-}
+/* ----- The day's own actions ------------------------------------------------ */
 
 /**
  * Closing an abandoned run is a write with money implications for people
@@ -726,12 +635,42 @@ function useMessageRun() {
   };
 }
 
+/** Where a link from elsewhere on the page wants the board to land once that day loads. */
+export interface BoardFocus {
+  date: string;
+  /** NEEDS_VAN, or a run id. */
+  target: string | null;
+}
+
+type DragDispatch = ReturnType<typeof useDragDispatch>;
+
+/** Plan a day that isn't the one on screen (tomorrow, from today's readiness strip). */
+function PlanForDay({ date, onClose }: { date: string; onClose: () => void }) {
+  const day = useQuery({ queryKey: ['transport', 'board', date], queryFn: () => getTransportBoard(date) });
+  if (day.isError) {
+    return (
+      <Dialog open onOpenChange={(o) => !o && onClose()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Plan runs</DialogTitle>
+          </DialogHeader>
+          <QueryError what="the vans and drivers for that day" query={day} />
+        </DialogContent>
+      </Dialog>
+    );
+  }
+  return day.data ? <PlanDialog board={day.data} onClose={onClose} /> : null;
+}
+
 function TodayBoard({
   board,
   manage,
   compact = false,
   onRider,
   nav,
+  onSetup,
+  focus,
+  onFocus,
 }: {
   board: TransportBoard;
   manage: boolean;
@@ -739,11 +678,18 @@ function TodayBoard({
   onRider?: (associateId: string) => void;
   /** The day controls, for the keyboard (transport walk 12). */
   nav?: { prev: () => void; next: () => void; today: () => void; tomorrow: () => void };
+  /** Open a Setup section (a readiness fix: drivers' papers, vans). */
+  onSetup?: (section: 'drivers' | 'vans') => void;
+  /** A run or the riders without a van to land on, once the focus names this board’s day. */
+  focus?: BoardFocus | null;
+  /** Go to another day and land on something there (null: done landing). */
+  onFocus?: (f: BoardFocus | null) => void;
 }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [dispatch, setDispatch] = useState<{ rides: Ride[]; vanId?: string | null } | { run: RideRun } | null>(null);
-  const [planning, setPlanning] = useState(false);
-  const [, setParams] = useSearchParams();
+  // The day being planned: this board's (Plan runs), or the next (the readiness strip).
+  const [planFor, setPlanFor] = useState<string | null>(null);
+  const planning = planFor !== null;
   const actions = useRideActions();
   const prompt = usePrompt();
   const message = useMessageRun();
@@ -762,6 +708,8 @@ function TodayBoard({
     () => onLiveEvent('transport', () => void queryClient.invalidateQueries({ queryKey: ['transport'] })),
     [queryClient],
   );
+  const today = ymdLocal();
+  const tz = board.rides[0]?.store.timezone ?? board.runs.find((r) => r.rides[0])?.rides[0]?.store.timezone;
   const liveById = new Map((live.data?.runs ?? []).map((r) => [r.runId, r]));
   const waiting = board.rides.filter((r) => r.status === 'REQUESTED');
   const groups = groupWaiting(waiting);
@@ -769,6 +717,22 @@ function TodayBoard({
   const mixed = new Set(pickedRides.map((r) => r.direction)).size > 1;
   const now = Date.now();
   const cursorAt = cursor ? groups.findIndex((g) => g.key === cursor) : -1;
+
+  // Is the next day ready? On today's board: tomorrow. On a day ahead: that day.
+  const readinessDate = board.date === today ? shiftDay(today, 1) : board.date > today ? board.date : null;
+  const readinessDay = readinessDate === shiftDay(today, 1) ? 'tomorrow' : readinessDate ? fmtDateOnly(readinessDate, { weekday: true, year: 'auto' }) : '';
+  const readiness = useReadiness(readinessDate);
+  // One primary button on the screen: "Plan tomorrow" while riders have no van.
+  const planIsPrimary = manage && needsPlan(readiness.data);
+
+  // Something new needs the desk: buzz, chime (the queue below lists it).
+  const ops = useTransportOps(board.date);
+  useNewKeys(
+    // The queue chimes for an SOS itself; this is everything else that matters.
+    ops.data ? ops.data.exceptions.filter((e) => e.severity !== 'low' && e.kind !== 'sos').map((e) => e.id) : null,
+    () => rideAlert('attention'),
+  );
+
   useTransportKeyboard(
     {
       prevDay: () => nav?.prev(),
@@ -787,7 +751,7 @@ function TodayBoard({
         if (manage && pickedRides.length > 0 && !mixed) setDispatch({ rides: pickedRides });
       },
       plan: () => {
-        if (manage && waiting.length > 0) setPlanning(true);
+        if (manage && waiting.length > 0) setPlanFor(board.date);
       },
     },
     !dispatch && !planning,
@@ -822,155 +786,176 @@ function TodayBoard({
     }
   };
 
-  // On the road first, then by departure.
+  // On the road first, then by departure; a run that didn't run last, muted.
   const liveRuns = board.runs
-    .filter((r) => r.status !== 'CANCELLED')
-    .sort((a, b) => (a.status === 'ACTIVE' ? 0 : 1) - (b.status === 'ACTIVE' ? 0 : 1) || a.departAt.localeCompare(b.departAt));
+    .filter((r) => r.status !== 'CANCELLED' || r.notRun)
+    .sort(
+      (a, b) =>
+        (a.notRun ? 1 : 0) - (b.notRun ? 1 : 0) ||
+        (a.status === 'ACTIVE' ? 0 : 1) - (b.status === 'ACTIVE' ? 0 : 1) ||
+        a.departAt.localeCompare(b.departAt),
+    );
   const driverPhone = (userId: string) => board.drivers.find((d) => d.userId === userId)?.phone ?? null;
 
-  // What to act on, most urgent first.
-  const attention: Attention[] = [];
-  for (const r of live.data?.runs ?? []) {
-    if (r.status !== 'ACTIVE') continue;
-    const late = Math.max(0, ...r.late.map((l) => l.minutes));
-    // Past STUCK_RUN_MINUTES this isn't a delay, it's a run nobody closed
-    // — runs only end when a driver taps Complete, so a forgotten one sits
-    // ACTIVE for ever and reports itself as "late" in ever-growing
-    // numbers, burying the runs that are genuinely a few minutes behind.
-    // Different problem, different words, different action: you don't
-    // apologise to riders who went home hours ago, you close the run.
-    // The server's own stuck flag (lib/transportStuckRuns) is the same rule.
-    const stuck = r.stuck || late >= STUCK_RUN_MINUTES;
-    if (stuck) {
-      attention.push({
-        key: `stuck-${r.runId}`,
-        tone: 'warning',
-        title: `${r.van.name} has been out for ${fmtMinutes(late)} — still open`,
-        body: `${r.driver.name} · the run was never completed, so it still counts as on the road`,
-        actions: [
-          ...(manage ? [{ label: 'Close this run', onClick: () => void closeRun(r.runId, r.van.name) }] : []),
-          { label: 'Live map', onClick: () => setParams({ tab: 'live' }) },
-        ],
-      });
-    } else if (late >= 5) {
-      attention.push({
-        key: `late-${r.runId}`,
-        tone: 'alert',
-        title: `${r.van.name} is running about ${fmtMinutes(late)} late`,
-        body: r.late.map((l) => `${l.store} · ${fmtMinutes(l.minutes)}`).join(' · '),
-        actions: [
-          ...(manage ? [{ label: 'Message riders', onClick: () => void message({ id: r.runId, van: r.van }, `Running about ${fmtMinutes(late)} late — sorry, we’re on our way.`) }] : []),
-          { label: 'Live map', onClick: () => setParams({ tab: 'live' }) },
-        ],
-      });
+  /* ----- Landing on a run or the riders without a van -------------------- */
+  const runCards = useRef(new Map<string, HTMLElement>());
+  const needsVanRef = useRef<HTMLElement | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
+  const land = (key: string, el: HTMLElement | null | undefined) => {
+    el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    setFlash(key);
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 2600);
+  };
+  const [params, setParams] = useSearchParams();
+  /** Scroll to the run's card and light it; a run on another day opens on the live map (the queue's own default). */
+  const openRun = (runId: string) => {
+    const card = runCards.current.get(runId);
+    if (card) return land(runId, card);
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p);
+        next.set('tab', 'live');
+        next.set('run', runId);
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  const openNeedsVan = () => land(NEEDS_VAN, needsVanRef.current);
+  /** An exception's riders: the dispatch for those still waiting, else the run they're on, else the rider. */
+  const openRide = (rideIds: string[]) => {
+    const ids = new Set(rideIds);
+    const hit = waiting.filter((r) => ids.has(r.id));
+    if (hit.length > 0 && manage) {
+      setDispatch({ rides: hit.filter((r) => r.direction === hit[0]!.direction) });
+      return;
     }
-    // A stuck run's phone went quiet hours ago — that's the same problem,
-    // not a second alert (transport walk 4).
-    if (r.stale && !stuck) {
-      const phone = driverPhone(r.driver.userId);
-      attention.push({
-        key: `stale-${r.runId}`,
-        tone: 'warning',
-        title: `${r.van.name} — no signal ${r.position ? `since ${ago(r.position.at, now)}` : 'from the driver’s phone yet'}`,
-        body: `${r.driver.name} · riders can’t see the van`,
-        actions: [...(phone ? [{ label: `Call ${r.driver.name.split(' ')[0]}`, href: `tel:${phone}` }] : []), { label: 'Live map', onClick: () => setParams({ tab: 'live' }) }],
-      });
+    const run = board.runs.find((r) => r.rides.some((x) => ids.has(x.id)));
+    if (run) return openRun(run.id);
+    const one = board.rides.find((r) => ids.has(r.id));
+    if (one) onRider?.(one.rider.associateId);
+  };
+  useEffect(() => {
+    if (!focus || focus.date !== board.date) return;
+    // After this day's cards have drawn.
+    const t = window.setTimeout(() => {
+      if (focus.target === NEEDS_VAN) openNeedsVan();
+      else if (focus.target) openRun(focus.target);
+      onFocus?.(null);
+    }, 50);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus, board.date]);
+  // ?run=<id> — the live map's "Open run" for a run it doesn't show: land on its card, once.
+  const runParam = params.get('run');
+  useEffect(() => {
+    if (!runParam) return;
+    const t = window.setTimeout(() => {
+      const card = runCards.current.get(runParam);
+      if (card) land(runParam, card);
+      else toast.info(`That run isn’t on ${dayName(board.date)}’s board.`);
+      setParams(
+        (p) => {
+          const next = new URLSearchParams(p);
+          next.delete('run');
+          return next;
+        },
+        { replace: true },
+      );
+    }, 50);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runParam, board.date]);
+  const onReadinessAction = (a: ReadinessAction, date: string) => {
+    if (a.kind === 'plan') setPlanFor(date);
+    else if (a.kind === 'open_setup_drivers') onSetup?.('drivers');
+    else if (a.kind === 'open_setup_vans') onSetup?.('vans');
+    else {
+      const target = a.kind === 'open_needs_van' ? NEEDS_VAN : (a.target ?? null);
+      if (date !== board.date) onFocus?.({ date, target });
+      else if (target === NEEDS_VAN) openNeedsVan();
+      else if (target) openRun(target);
     }
-  }
-  // A shift whose vans are full, with riders in line: add a van and they ride.
-  const lines = new Map<string, typeof waiting>();
-  for (const r of waiting.filter((x) => x.waitlist && x.windowLabel)) {
-    const k = `${r.store.id}|${r.direction}|${r.windowLabel}|${r.targetAt}`;
-    lines.set(k, [...(lines.get(k) ?? []), r]);
-  }
-  for (const [k, riders] of lines) {
-    const r = riders[0]!;
-    attention.push({
-      key: `line-${k}`,
-      tone: 'warning',
-      title: `${r.windowLabel} ${r.direction === 'TO_WORK' ? 'to' : 'home from'} ${r.store.name} is full — ${riders.length} on the waitlist`,
-      body: `${fmtTimeTz(r.targetAt, r.store.timezone)} · every van on it is full · add a van and they ride`,
-      actions: manage ? [{ label: 'Add a van', onClick: () => setDispatch({ rides: riders }) }] : [],
-    });
-  }
-  for (const r of waiting.filter((x) => x.allDeclined)) {
-    attention.push({
-      key: `declined-${r.id}`,
-      tone: 'alert',
-      title: `No driver took ${r.rider.name.split(' ')[0]}'s seat`,
-      body: `${r.direction === 'TO_WORK' ? 'To' : 'Home from'} ${r.store.name} · ${fmtTimeTz(r.targetAt, r.store.timezone)} · every driver declined`,
-      actions: manage
-        ? [
-            { label: 'Dispatch', onClick: () => setDispatch({ rides: [r] }) },
-            {
-              label: 'Offer again',
-              onClick: () =>
-                void reofferRide(r.id)
-                  .then(() => {
-                    toast.success('Back in front of every driver');
-                    return queryClient.invalidateQueries({ queryKey: ['transport'] });
-                  })
-                  .catch((err) => toast.error(errMsg(err))),
-            },
-          ]
-        : [],
-    });
-  }
-  if (waiting.length > 0) {
-    const first = [...waiting].sort((a, b) => a.targetAt.localeCompare(b.targetAt))[0]!;
-    const soon = Date.parse(first.targetAt) - now < 18 * 3_600_000;
-    attention.push({
-      key: 'waiting',
-      tone: soon ? 'warning' : 'info',
-      title: `${waiting.length} seat ${waiting.length === 1 ? 'request is' : 'requests are'} waiting for a driver`,
-      body: `First: ${first.rider.name} · ${first.direction === 'TO_WORK' ? 'arrive by' : 'leaving'} ${fmtTimeTz(first.targetAt, first.store.timezone)} · ${first.store.name}`,
-      actions: manage ? [{ label: 'Plan runs', onClick: () => setPlanning(true) }] : [],
-    });
-  }
+  };
+
+  /* ----- Drag to dispatch ------------------------------------------------- */
+  const moves = useRideMoves(board, tz);
+  const drag = useDragDispatch((m, target) => {
+    const runId = runIdOfTarget(target);
+    void moves.move(m, target === NEEDS_VAN ? null : runId);
+  });
+  const moveTo = (m: MovingRide, toRunId: string | null) => void moves.move(m, toRunId);
+  const dragWords = (() => {
+    if (!drag.moving) return '';
+    const who = drag.moving.ride.rider.name;
+    if (!drag.over) return `Moving ${who}. Drop them on a run, or use Move on their row.`;
+    const check = checkMove(drag.moving, drag.over === NEEDS_VAN ? null : runIdOfTarget(drag.over), board, tz);
+    if (!check.ok) return check.reason;
+    return drag.over === NEEDS_VAN ? `Drop to take ${who} off their run.` : `Drop to move ${who} here${check.seatsAfter ? ` — ${seatsText(check.seatsAfter)} after` : ''}.`;
+  })();
+
+  // Every driver declined the seat: put it in front of them again.
+  const reoffer = (r: Ride) =>
+    void reofferRide(r.id)
+      .then(() => {
+        toast.success('Back in front of every driver');
+        return queryClient.invalidateQueries({ queryKey: ['transport'] });
+      })
+      .catch((err) => toast.error(errMsg(err)));
+
   // Transport walk 8: riders on this day who haven't signed ride uncharged.
   const dayRides = new Map([...board.rides, ...board.runs.flatMap((r) => r.rides)].map((r) => [r.id, r]));
   const unsignedToday = [...dayRides.values()].filter((r) => (r.status === 'REQUESTED' || r.status === 'SCHEDULED') && r.signatureNeeded);
   const unsignedIds = [...new Set(unsignedToday.map((r) => r.rider.associateId))];
-  if (unsignedIds.length > 0) {
-    attention.push({
-      key: 'unsigned',
-      tone: 'warning',
-      title: `${unsignedIds.length} ${unsignedIds.length === 1 ? 'rider' : 'riders'} ${fmtRelativeDayTz(`${board.date}T12:00:00Z`, 'UTC').toLowerCase()} won’t be charged — not signed`,
-      body: `${unsignedToday.slice(0, 3).map((r) => r.rider.name.split(' ')[0]).join(', ')}${unsignedToday.length > 3 ? ` and ${unsignedToday.length - 3} more` : ''} · a ride taken is never waived: it’s held until they sign`,
-      actions: manage ? [{ label: `Ask ${unsignedIds.length === 1 ? 'them' : `all ${unsignedIds.length}`} to sign`, onClick: () => remindUnsigned.mutate(unsignedIds) }] : [],
-    });
-  }
-  if (board.kpis.openIssues > 0) {
-    attention.push({
-      key: 'issues',
-      tone: 'info',
-      title: `${board.kpis.openIssues} open ${board.kpis.openIssues === 1 ? 'issue' : 'issues'}`,
-      actions: [{ label: 'Open issues', onClick: () => setParams({ tab: 'issues' }) }],
-    });
-  }
-
-  // Something new needs the desk: buzz, chime.
-  useNewKeys(
-    live.data ? attention.filter((a) => a.tone !== 'info').map((a) => a.key) : null,
-    () => rideAlert('attention'),
-  );
 
   // Nothing booked and no run planned: one quiet state for the day, not a
-  // row of zero tiles, a green "all clear" and two "nothing here" boxes.
+  // line of zeros and two "nothing here" boxes.
   const quietDay = board.rides.length === 0 && liveRuns.length === 0;
+  const dayTitle =
+    board.date === today
+      ? `Today · ${fmtDateOnly(board.date, { weekday: true, year: 'auto' })}`
+      : board.date === shiftDay(today, 1)
+        ? `Tomorrow · ${fmtDateOnly(board.date, { weekday: true, year: 'auto' })}`
+        : fmtDateOnly(board.date, { weekday: true, year: 'auto' });
 
   return (
     <div className="space-y-5">
-      <NeedsAttention items={attention} compact={compact} active={!quietDay} />
-      {quietDay ? (
+      {!quietDay && <DayLine day={dayTitle} kpis={board.kpis} />}
+      <ExceptionsQueue date={board.date} compact onOpenRun={openRun} onOpenRide={openRide} />
+      {/* The desk's paperwork the queue doesn't carry: incidents, papers lapsing, access requests. */}
+      {board.date === today && <TransportNeedsYou variant="line" exclude={['sos', 'no-answer', 'needs-van', 'late']} />}
+      <TransportKpiRow date={board.date} />
+      {readinessDate && <ReadinessStrip date={readinessDate} dayLabel={readinessDay} manage={manage} onAction={onReadinessAction} />}
+      {quietDay && (
         <EmptyState
           icon={Bus}
           title={`No rides booked for ${dayName(board.date)}`}
           description="Bookings land here as riders make them. Then plan runs, or pick bookings and dispatch them onto a van."
           className="py-8"
         />
-      ) : (
-        <KpiStrip k={board.kpis} />
+      )}
+      {unsignedIds.length > 0 && (
+        <section aria-label="Unsigned riders">
+          <ErrorBanner
+            severity="warning"
+            action={
+              manage ? (
+                <Button size="xs" variant="outline" loading={remindUnsigned.isPending} onClick={() => remindUnsigned.mutate(unsignedIds)}>
+                  Ask {unsignedIds.length === 1 ? 'them' : `all ${unsignedIds.length}`} to sign
+                </Button>
+              ) : undefined
+            }
+          >
+            <span className="font-medium">
+              {unsignedIds.length} {unsignedIds.length === 1 ? 'rider' : 'riders'} {dayName(board.date)} won’t be charged — not signed.
+            </span>{' '}
+            {unsignedToday.slice(0, 3).map((r) => r.rider.name.split(' ')[0]).join(', ')}
+            {unsignedToday.length > 3 ? ` and ${unsignedToday.length - 3} more` : ''} · a ride taken is never waived: it’s held until they sign.
+          </ErrorBanner>
+        </section>
       )}
       {/* Transport walk 6: which van is free at 5:30, at a glance. */}
       {!compact && !quietDay && (
@@ -983,8 +968,17 @@ function TodayBoard({
 
       {!quietDay && (
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        {/* Waiting on a van */}
-        <section aria-label="Needs a van">
+        {/* Waiting on a van — and where a rider dragged off a run lands. */}
+        <section
+          aria-label="Needs a van"
+          ref={needsVanRef}
+          {...(manage ? drag.target(NEEDS_VAN) : {})}
+          className={cn(
+            'scroll-mt-24 rounded-lg',
+            drag.moving?.fromRunId && (drag.over === NEEDS_VAN ? '[outline-style:solid] outline-2 outline-offset-4 outline-info-600' : '[outline-style:dashed] outline-1 outline-offset-4 outline-info-500'),
+            flash === NEEDS_VAN && '[outline-style:solid] outline-2 outline-offset-4 outline-accent-600',
+          )}
+        >
           <SectionTitle
             className="mb-2"
             wrap
@@ -998,18 +992,19 @@ function TodayBoard({
               <div className="flex items-center gap-2">
                 {pickedRides.length > 0 ? (
                   <>
-                    {mixed && <span className="text-xs text-warning">One way per run</span>}
+                    {mixed && <span className="text-xs text-caution-800">One way per run</span>}
                     <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
                       Clear
                     </Button>
-                    <Button size="sm" disabled={mixed} onClick={() => setDispatch({ rides: pickedRides })}>
+                    <Button size="sm" variant={planIsPrimary ? 'secondary' : 'primary'} disabled={mixed} onClick={() => setDispatch({ rides: pickedRides })}>
                       <Send className="h-3.5 w-3.5" />
                       Dispatch {pickedRides.length}
                     </Button>
                   </>
                 ) : (
-                  waiting.length > 0 && (
-                    <Button size="sm" onClick={() => setPlanning(true)}>
+                  // The strip's "Plan tomorrow" is the same action on tomorrow's board.
+                  waiting.length > 0 && !(planIsPrimary && readinessDate === board.date) && (
+                    <Button size="sm" variant="secondary" onClick={() => setPlanFor(board.date)}>
                       <Wand2 className="h-3.5 w-3.5" />
                       Plan runs
                     </Button>
@@ -1019,6 +1014,9 @@ function TodayBoard({
               ) : undefined
             }
           />
+          {drag.moving?.fromRunId && (
+            <DropHint check={checkMove(drag.moving, null, board, tz)} over={drag.over === NEEDS_VAN} who={drag.moving.ride.rider.name} offRun />
+          )}
           {groups.length === 0 ? (
             <div data-testid="needs-van-none">
               <EmptyState size="sm" icon={Check} title="Everyone has a van" description="New bookings for this day land here." />
@@ -1027,6 +1025,8 @@ function TodayBoard({
             <div className="space-y-3">
               {groups.map((g) => {
                 const all = g.rides.every((r) => picked.has(r.id));
+                // A shift whose vans are full, riders in line: add a van and they ride.
+                const inLine = g.rides.filter((r) => r.waitlist).length;
                 return (
                   <Card key={g.key} className={cn(cursor === g.key && 'ring-1 ring-gold')} data-kb-cursor={cursor === g.key ? 'true' : undefined} aria-selected={cursor === g.key}>
                     <CardContent>
@@ -1039,69 +1039,91 @@ function TodayBoard({
                           />
                         )}
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-white">
+                          <div className="text-sm font-semibold text-ink">
                             {g.direction === 'TO_WORK' ? 'To' : 'Home from'} {g.storeName} ·{' '}
                             <span className="tabular-nums">
                               {g.direction === 'TO_WORK' ? 'arrive by' : 'leaving'} {fmtTimeTz(g.at, g.tz)}
                             </span>
                           </div>
-                          <div className="text-xs text-silver">
+                          <div className="text-xs text-ink-muted">
                             {g.rides.length} {g.rides.length === 1 ? 'rider' : 'riders'}
+                            {inLine > 0 && ` · the shift’s vans are full, ${inLine} on the waitlist — add a van and they ride`}
                           </div>
                         </div>
                         {manage && (
                           <Button size="xs" variant="secondary" onClick={() => setDispatch({ rides: g.rides })} aria-label={`Dispatch ${g.storeName} ${fmtTimeTz(g.at, g.tz)}`}>
                             <Send className="h-3.5 w-3.5" />
-                            Dispatch
+                            {inLine > 0 ? 'Add a van' : 'Dispatch'}
                           </Button>
                         )}
                       </div>
-                      <ul className="mt-2 divide-y divide-navy-secondary/60">
-                        {g.rides.map((r) => (
-                          <li key={r.id} className="flex items-center gap-3 py-2">
-                            {manage && (
-                              <PickBox label={`Pick ${r.rider.name}`} checked={picked.has(r.id)} onChange={(on) => toggle([r.id], on)} />
-                            )}
-                            <Avatar src={associatePhotoUrl(r.rider.associateId)} name={r.rider.name} size="sm" />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-x-2 text-sm text-white">
-                                <RiderName ride={r} onRider={onRider} />
-                                {r.signatureNeeded && (
-                                  <Badge size="sm" variant="pending" title={r.signatureNeeded}>
-                                    Unsigned
-                                  </Badge>
-                                )}
-                                {r.windowLabel && <span className="text-xs text-silver">{r.windowLabel} shift</span>}
-                                {r.waitlist && (
-                                  <Badge size="sm" variant="pending">
-                                    Waitlist #{r.waitlist.position}
-                                  </Badge>
-                                )}
-                                {r.shortNotice && (
-                                  <Badge size="sm" variant="accent">
-                                    Short notice
-                                  </Badge>
-                                )}
-                                {r.declines > 0 && (
-                                  <Badge size="sm" variant={r.allDeclined ? 'destructive' : 'pending'}>
-                                    {r.allDeclined ? 'Every driver declined' : `Declined by ${r.declines}`}
-                                  </Badge>
+                      <ul className="mt-2 divide-y divide-line">
+                        {g.rides.map((r) => {
+                          const moving: MovingRide = { ride: r, fromRunId: null };
+                          const movable = manage && canMoveRide(r, null, now);
+                          return (
+                            <li
+                              key={r.id}
+                              {...(movable ? drag.source(moving) : {})}
+                              className={cn('flex items-center gap-2 py-2 sm:gap-3', movable && 'cursor-grab active:cursor-grabbing', drag.moving?.ride.id === r.id && 'opacity-50')}
+                            >
+                              {movable && !compact && <GripVertical className="-mr-1 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden="true" />}
+                              {manage && (
+                                <PickBox label={`Pick ${r.rider.name}`} checked={picked.has(r.id)} onChange={(on) => toggle([r.id], on)} />
+                              )}
+                              <Avatar src={associatePhotoUrl(r.rider.associateId)} name={r.rider.name} size="sm" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-x-2 text-sm text-ink">
+                                  <RiderName ride={r} onRider={onRider} />
+                                  {r.signatureNeeded && (
+                                    <Badge size="sm" variant="pending" title={r.signatureNeeded}>
+                                      Unsigned
+                                    </Badge>
+                                  )}
+                                  {r.windowLabel && <span className="text-xs text-ink-muted">{r.windowLabel} shift</span>}
+                                  {r.waitlist && (
+                                    <Badge size="sm" variant="pending">
+                                      Waitlist #{r.waitlist.position}
+                                    </Badge>
+                                  )}
+                                  {r.shortNotice && (
+                                    <Badge size="sm" variant="accent">
+                                      Short notice
+                                    </Badge>
+                                  )}
+                                  {r.declines > 0 && (
+                                    <Badge size="sm" variant={r.allDeclined ? 'destructive' : 'pending'}>
+                                      {r.allDeclined ? 'Every driver declined' : `Declined by ${r.declines}`}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 truncate text-xs text-ink-muted">
+                                  <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
+                                  <span className="truncate">{homeEnd(r)}</span>
+                                  <span className="shrink-0 tabular-nums"> · {fmtTimeTz(r.targetAt, r.store.timezone)}</span>
+                                </div>
+                                {r.note && <div className="text-xs text-accent">{r.note}</div>}
+                                {/* On a phone the row has no room beside the name: under it. */}
+                                {manage && r.allDeclined && compact && (
+                                  <Button size="xs" variant="outline" className="mt-1" onClick={() => reoffer(r)}>
+                                    Offer again
+                                  </Button>
                                 )}
                               </div>
-                              <div className="flex items-center gap-1 truncate text-xs text-silver">
-                                <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
-                                <span className="truncate">{homeEnd(r)}</span>
-                                <span className="shrink-0 tabular-nums"> · {fmtTimeTz(r.targetAt, r.store.timezone)}</span>
-                              </div>
-                              {r.note && <div className="text-xs text-gold">{r.note}</div>}
-                            </div>
-                            {manage && (
-                              <Button size="icon-sm" variant="ghost" aria-label={`Cancel ${r.rider.name}'s ride`} onClick={() => void actions.cancel(r)}>
-                                <X className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </li>
-                        ))}
+                              {manage && r.allDeclined && !compact && (
+                                <Button size="xs" variant="ghost" onClick={() => reoffer(r)}>
+                                  Offer again
+                                </Button>
+                              )}
+                              {movable && <MoveMenu moving={moving} runs={board.runs} tz={tz} onMove={(to) => moveTo(moving, to)} />}
+                              {manage && canCancelRide(r, now) && (
+                                <Button size="icon-sm" variant="ghost" aria-label={`Cancel ${r.rider.name}'s ride`} onClick={() => void actions.cancel(r)}>
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </CardContent>
                   </Card>
@@ -1131,9 +1153,21 @@ function TodayBoard({
                 <RunPanel
                   key={run.id}
                   run={run}
+                  runs={board.runs}
+                  tz={tz}
                   live={liveById.get(run.id) ?? null}
                   driverPhone={driverPhone(run.driver.userId)}
                   manage={manage}
+                  compact={compact}
+                  now={now}
+                  drag={drag}
+                  highlighted={flash === run.id}
+                  cardRef={(el) => {
+                    if (el) runCards.current.set(run.id, el);
+                    else runCards.current.delete(run.id);
+                  }}
+                  onOpenRun={openRun}
+                  onMove={moveTo}
                   onRider={onRider}
                   onCloseStuck={() => void closeRun(run.id, run.van.name)}
                   onEdit={() => setDispatch({ run })}
@@ -1149,6 +1183,10 @@ function TodayBoard({
         </section>
       </div>
       )}
+      {/* What a drag would do, for a screen reader (the cards say it on screen). */}
+      <p className="sr-only" aria-live="polite">
+        {dragWords}
+      </p>
 
       {dispatch && (
         <DispatchDialog
@@ -1160,8 +1198,38 @@ function TodayBoard({
           }}
         />
       )}
-      {planning && <PlanDialog board={board} onClose={() => setPlanning(false)} />}
+      {planFor === board.date && <PlanDialog board={board} onClose={() => setPlanFor(null)} />}
+      {planFor && planFor !== board.date && <PlanForDay date={planFor} onClose={() => setPlanFor(null)} />}
     </div>
+  );
+}
+
+/**
+ * What a drop would do, on the card under a rider in the air: the seats after
+ * the move, or — over a run that can't take them — why not.
+ */
+function DropHint({ check, over, who, offRun = false }: { check: MoveCheck; over: boolean; who: string; offRun?: boolean }) {
+  const first = who.split(' ')[0];
+  if (!check.ok) {
+    if (!over) return null;
+    return (
+      <p role="note" className="mb-2 rounded-md border border-caution-300 bg-caution-50 px-2.5 py-1.5 text-xs text-caution-800">
+        Can’t take {first}: {check.reason}
+      </p>
+    );
+  }
+  return (
+    <p
+      role="note"
+      className={cn(
+        'mb-2 rounded-md border border-dashed px-2.5 py-1.5 text-xs',
+        over ? 'border-info-400 bg-info-100 text-info-800' : 'border-info-300 bg-info-50 text-info-800',
+      )}
+    >
+      {offRun ? `Drop to take ${first} off their run — back to needing a van` : `Drop to move ${first} here`}
+      {check.seatsAfter && <span className="tabular-nums"> · {seatsText(check.seatsAfter)} after</span>}
+      {check.caution && <span className="block text-caution-800">{check.caution}</span>}
+    </p>
   );
 }
 
@@ -1177,9 +1245,18 @@ function RiderName({ ride, onRider, className }: { ride: Pick<Ride, 'rider'>; on
 
 function RunPanel({
   run,
+  runs,
+  tz: boardTz,
   live,
   driverPhone,
   manage,
+  compact = false,
+  now,
+  drag,
+  highlighted = false,
+  cardRef,
+  onOpenRun,
+  onMove,
   onRider,
   onCloseStuck,
   onEdit,
@@ -1190,9 +1267,19 @@ function RunPanel({
   onWaiveAll,
 }: {
   run: RideRun;
+  /** The day's runs: the double-bookings and the Move to… menu read them. */
+  runs: RideRun[];
+  tz?: string;
   live: RunMap | null;
   driverPhone: string | null;
   manage: boolean;
+  compact?: boolean;
+  now: number;
+  drag?: DragDispatch;
+  highlighted?: boolean;
+  cardRef?: (el: HTMLElement | null) => void;
+  onOpenRun?: (runId: string) => void;
+  onMove?: (m: MovingRide, toRunId: string | null) => void;
   onRider?: (associateId: string) => void;
   onCloseStuck?: () => void;
   onEdit: () => void;
@@ -1202,35 +1289,70 @@ function RunPanel({
   onWaive: (r: Ride) => void;
   onWaiveAll: (rides: Ride[]) => void;
 }) {
-  const tz = run.rides[0]?.store.timezone;
+  const tz = run.rides[0]?.store.timezone ?? boardTz;
   const waivable = run.rides.filter(canWaive);
-  const riders = run.rides.filter((r) => r.status !== 'CANCELLED');
+  const didntRun = !!run.notRun;
+  // A run that didn't run keeps its riders on the card (cancelled by the sweep, never charged).
+  const riders = didntRun ? run.rides : run.rides.filter((r) => r.status !== 'CANCELLED');
   const full = run.seats.taken >= run.seats.capacity;
   const active = run.status === 'ACTIVE';
+  const notStarted = runNotStarted(run, now);
   const late = live ? Math.max(0, ...live.late.map((l) => l.minutes)) : 0;
   const stuck = active && (run.stuck || live?.stuck || late >= STUCK_RUN_MINUTES);
   const next = live?.waypoints.find((w) => w.etaAt);
   const riderLive = new Map((live?.riders ?? []).map((x) => [x.rideId, x]));
-  const now = Date.now();
+  const byId = new Map(runs.map((r) => [r.id, r]));
+  const clashes = didntRun || run.status === 'CANCELLED' ? [] : runConflicts(run, runs);
+  // A rider in the air: what a drop here would do.
+  const moving = drag?.moving ?? null;
+  const target = runTarget(run.id);
+  const over = drag?.over === target;
+  const check = moving && moving.fromRunId !== run.id ? checkMoveToRun(moving, run, tz) : null;
+  const dropOk = !!check?.ok;
   return (
-    <Card className={cn(active && (stuck ? 'border-warning/50' : late >= 5 ? 'border-alert/50' : 'border-success/40'))}>
+    <Card
+      ref={cardRef}
+      data-run-id={run.id}
+      aria-label={`${run.van.name}, leaves ${fmtTimeTz(run.departAt, tz)}`}
+      role="group"
+      {...(manage && drag && !didntRun ? drag.target(target) : {})}
+      className={cn(
+        'scroll-mt-24',
+        didntRun && 'border-dashed bg-surface-sunken',
+        active && (stuck ? 'border-caution-300' : late >= 5 ? 'border-negative-300' : 'border-positive-300'),
+        !active && !didntRun && clashes.length > 0 && 'border-caution-300',
+        // Outlines, not rings: the card's own elevation is a box-shadow and would hide a ring.
+        moving && dropOk && (over ? '[outline-style:solid] outline-2 outline-offset-2 outline-info-600' : '[outline-style:dashed] outline-1 outline-offset-2 outline-info-500'),
+        moving && check && !check.ok && over && '[outline-style:solid] outline-2 outline-offset-2 outline-caution-600',
+        highlighted && '[outline-style:solid] outline-2 outline-offset-4 outline-accent-600',
+      )}
+    >
       <CardContent>
+        {moving && check && <DropHint check={check} over={over} who={moving.ride.rider.name} />}
         <div className="flex flex-wrap items-center gap-2">
-          <Bus className={cn('h-4 w-4', active ? 'text-success' : 'text-gold')} aria-hidden="true" />
-          <span className="font-semibold text-white">{run.van.name}</span>
-          <span className="flex items-center gap-1.5 text-sm text-silver">
+          <Bus className={cn('h-4 w-4', didntRun ? 'text-ink-muted' : active ? 'text-positive-700' : 'text-accent')} aria-hidden="true" />
+          <span className={cn('font-semibold', didntRun ? 'text-ink-muted' : 'text-ink')}>{run.van.name}</span>
+          <span className="flex items-center gap-1.5 text-sm text-ink-muted">
             · <Avatar src={personPhotoUrl({ userId: run.driver.userId })} name={run.driver.name} size="xs" />
             {run.driver.name}
           </span>
-          <span className="text-sm tabular-nums text-silver">· leaves {fmtTimeTz(run.departAt, tz)}</span>
+          <span className="text-sm tabular-nums text-ink-muted">
+            · {didntRun || notStarted ? 'was to leave' : 'leaves'} {fmtTimeTz(run.departAt, tz)}
+          </span>
           <span className="ml-auto flex items-center gap-2">
-            <span className={cn('text-xs tabular-nums', full ? 'text-warning' : 'text-silver')}>
-              {run.seats.taken}/{run.seats.capacity} seats
-            </span>
-            {stuck ? (
+            {!didntRun && (
+              <span className={cn('text-xs tabular-nums', full ? 'text-caution-800' : 'text-ink-muted')}>
+                {run.seats.taken}/{run.seats.capacity} seats
+              </span>
+            )}
+            {didntRun ? (
+              <Badge variant="default">Didn’t run</Badge>
+            ) : stuck ? (
               <Badge variant="pending">Not closed</Badge>
             ) : active && late >= 5 ? (
               <Badge variant="destructive">~{fmtMinutes(late)} late</Badge>
+            ) : notStarted ? (
+              <Badge variant="pending">Not started</Badge>
             ) : (
               <Badge variant={active ? 'success' : run.status === 'COMPLETED' ? 'default' : 'accent'}>
                 {run.status === 'PLANNED' ? 'Planned' : active ? 'On the road' : run.status === 'COMPLETED' ? (run.autoClosedAt ? 'Closed automatically' : 'Finished') : 'Called off'}
@@ -1238,8 +1360,36 @@ function RunPanel({
             )}
           </span>
         </div>
+        <div className="mt-0.5 text-xs text-ink-muted">
+          {run.direction === 'TO_WORK' ? 'To work' : 'Home from work'}
+          {/* The sweep's own note ("Didn't run — …") is the line below, in full. */}
+          {run.notes && !(didntRun && /didn[’']t run/i.test(run.notes)) ? ` · ${run.notes}` : ''}
+        </div>
+        {didntRun && (
+          <p className="mt-2 text-xs text-ink-muted">
+            Nobody started this run, so it was closed. {riders.length === 1 ? 'Its rider was' : `Its ${riders.length} riders were`} told and{' '}
+            {riders.length === 1 ? 'isn’t' : 'aren’t'} charged.
+          </p>
+        )}
+        {clashes.map((c) => {
+          const other = byId.get(c.runId);
+          const words = conflictWords(run, c, other, tz);
+          return (
+            <button
+              key={c.runId}
+              type="button"
+              onClick={() => onOpenRun?.(c.runId)}
+              disabled={!other || !onOpenRun}
+              aria-label={`${words}. Show that run.`}
+              className="mt-2 flex w-full items-start gap-2 rounded-md border border-caution-300 bg-caution-50 px-2.5 py-1.5 text-left text-xs text-caution-800 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:no-underline"
+            >
+              <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>{words}</span>
+            </button>
+          );
+        })}
         {stuck && (
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-xs text-warning">
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-caution-300 bg-caution-50 px-2.5 py-1.5 text-xs text-caution-800">
             <span>The driver never completed this run — it still counts as on the road.</span>
             {manage && onCloseStuck && (
               <Button size="xs" variant="secondary" onClick={onCloseStuck}>
@@ -1248,12 +1398,8 @@ function RunPanel({
             )}
           </div>
         )}
-        <div className="mt-0.5 text-xs text-silver">
-          {run.direction === 'TO_WORK' ? 'To work' : 'Home from work'}
-          {run.notes ? ` · ${run.notes}` : ''}
-        </div>
         {active && live && !stuck && (
-          <div className={cn('mt-2 rounded-md px-2.5 py-1.5 text-xs', live.stale ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success')}>
+          <div className={cn('mt-2 rounded-md border px-2.5 py-1.5 text-xs', live.stale ? 'border-caution-300 bg-caution-50 text-caution-800' : 'border-positive-200 bg-positive-50 text-positive-800')}>
             {next ? (
               <>
                 Next: <span className="font-medium">{next.label}</span>
@@ -1266,15 +1412,26 @@ function RunPanel({
             {live.position ? (live.stale ? `no signal since ${ago(live.position.at, now)}` : `updated ${ago(live.position.at, now)}`) : 'waiting for the driver’s phone'}
           </div>
         )}
-        <ol className="mt-2 divide-y divide-navy-secondary/60">
+        <ol className="mt-2 divide-y divide-line">
           {riders.map((r, i) => {
             const eta = riderLive.get(r.id)?.pickupEtaAt;
+            const words = rideStatusWords(r);
+            const m: MovingRide = { ride: r, fromRunId: run.id };
+            const movable = manage && !!drag && canMoveRide(r, run, now);
             return (
-              <li key={r.id} className="flex items-center gap-3 py-2">
-                <span className="w-5 shrink-0 text-right text-xs tabular-nums text-silver">{i + 1}</span>
+              <li
+                key={r.id}
+                {...(movable ? drag!.source(m) : {})}
+                className={cn('flex items-center gap-2 py-2 sm:gap-3', movable && 'cursor-grab active:cursor-grabbing', moving?.ride.id === r.id && 'opacity-50')}
+              >
+                {movable && !compact ? (
+                  <GripVertical className="h-4 w-4 shrink-0 text-ink-subtle" aria-hidden="true" />
+                ) : (
+                  <span className="w-4 shrink-0 text-right text-xs tabular-nums text-ink-muted">{i + 1}</span>
+                )}
                 <Avatar src={associatePhotoUrl(r.rider.associateId)} name={r.rider.name} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-white">
+                  <div className={cn('flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm', didntRun ? 'text-ink-muted' : 'text-ink')}>
                     <RiderName ride={r} onRider={onRider} />
                     {r.signatureNeeded && r.status === 'SCHEDULED' && (
                       <Badge size="sm" variant="pending" title={r.signatureNeeded}>
@@ -1292,21 +1449,25 @@ function RunPanel({
                       </Badge>
                     )}
                   </div>
-                  <div className="truncate text-xs text-silver">
+                  <div className="truncate text-xs text-ink-muted">
+                    {movable && !compact && <span className="tabular-nums">{i + 1} · </span>}
                     {r.pickupAt ? fmtTimeTz(r.pickupAt, r.store.timezone) : '—'}
                     {active && eta && r.status === 'SCHEDULED' && !r.vanArrivedAt && ` (ETA ${fmtTimeTz(eta, r.store.timezone)})`} ·{' '}
                     {run.direction === 'TO_WORK' ? homeEnd(r) : `${r.store.name} → ${homeEnd(r)}`}
                   </div>
                 </div>
-                <Badge size="sm" variant={statusVariant(r.status)}>
-                  {STATUS_LABEL[r.status]}
-                </Badge>
+                {!didntRun && (
+                  <Badge size="sm" variant={words.variant} className={cn(compact && r.status === 'SCHEDULED' && 'hidden')}>
+                    {words.label}
+                  </Badge>
+                )}
                 {manage && canWaive(r) && (
                   <Button size="xs" variant="ghost" onClick={() => onWaive(r)}>
                     Waive {cents(r.owedCents)} fee
                   </Button>
                 )}
-                {manage && r.status === 'SCHEDULED' && run.status === 'PLANNED' && (
+                {movable && onMove && <MoveMenu moving={m} runs={runs} tz={tz} onMove={(to) => onMove(m, to)} />}
+                {manage && r.status === 'SCHEDULED' && run.status === 'PLANNED' && canCancelRide(r, now) && (
                   <Button size="icon-sm" variant="ghost" aria-label={`Cancel ${r.rider.name}'s ride`} onClick={() => onCancelRide(r)}>
                     <X className="h-4 w-4" />
                   </Button>
@@ -1316,7 +1477,7 @@ function RunPanel({
           })}
         </ol>
         {manage && waivable.length > 1 && (
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs text-silver">
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs text-ink-muted">
             <span>
               {waivable.length} no-show fees on this run · {cents(waivable.reduce((sum, r) => sum + r.owedCents, 0))}
             </span>
@@ -2018,184 +2179,10 @@ function DispatchDialog({
   );
 }
 
-/* ===== Live map ============================================================= */
-
+/** "just now", "40s ago", "6 min ago" — how fresh a van's position is. */
 function ago(iso: string, now: number): string {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
   return s < 10 ? 'just now' : s < 60 ? `${s}s ago` : `${fmtMinutes(s / 60)} ago`;
-}
-
-function LiveTab() {
-  const queryClient = useQueryClient();
-  const { can } = useAuth();
-  const closeRun = useCloseRun();
-  const live = useQuery({ queryKey: ['transport', 'live'], queryFn: () => getLiveBoard(), refetchInterval: 10_000 });
-  useEffect(
-    () => onLiveEvent('transport', () => void queryClient.invalidateQueries({ queryKey: ['transport', 'live'] })),
-    [queryClient],
-  );
-  const [picked, setPicked] = useState<string | null>(null);
-  const runs = live.data?.runs ?? [];
-  const onRoad = runs.filter((r) => r.status === 'ACTIVE');
-  const planned = runs.filter((r) => r.status === 'PLANNED');
-  const selected = runs.find((r) => r.runId === picked) ?? onRoad[0] ?? null;
-  const now = Date.now();
-
-  const markers: MapMarker[] = [];
-  for (const r of onRoad) {
-    if (!r.position) continue;
-    markers.push({
-      id: `van-${r.runId}`,
-      kind: 'van',
-      ...r.position,
-      label: `${r.van.name} · ${r.driver.name}`,
-      stale: r.stale,
-      highlight: r.runId === selected?.runId,
-    });
-  }
-  let n = 0;
-  for (const w of selected?.waypoints ?? []) {
-    if (!w.point) continue;
-    if (w.kind === 'store') markers.push({ id: `store-${w.label}`, kind: 'store', ...w.point, label: w.label });
-    else markers.push({ id: `stop-${w.rideIds.join(',')}`, kind: 'stop', ...w.point, order: ++n, label: w.label });
-  }
-  const route: Array<[number, number]> = selected
-    ? [
-        ...(selected.position ? [[selected.position.lng, selected.position.lat] as [number, number]] : []),
-        ...selected.waypoints.filter((w) => w.point).map((w) => [w.point!.lng, w.point!.lat] as [number, number]),
-      ]
-    : [];
-
-  if (live.isLoading) return <Skeleton className="h-96" />;
-  if (live.isError) return <QueryError what="the live board" query={live} />;
-
-  return (
-    <>
-    <SosBanner runs={onRoad} manage={can('manage:transport')} />
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <div className="lg:col-span-2">
-        {markers.length > 0 ? (
-          <LazyLiveMap
-            ariaLabel="Live map of the vans"
-            className="h-[55vh] min-h-80 w-full"
-            markers={markers}
-            route={route.length > 1 ? route : undefined}
-            trail={selected?.trail}
-          />
-        ) : (
-          <EmptyState
-            icon={Bus}
-            title="No vans on the road"
-            description="A van shows here as soon as its driver starts the run and their phone shares its location."
-          />
-        )}
-      </div>
-      <section aria-label="Runs" className="space-y-2">
-        <h2 className="text-base font-medium text-ink">
-          On the road{onRoad.length > 0 && <span className="ml-2 text-sm font-normal tabular-nums text-ink-muted">{onRoad.length}</span>}
-        </h2>
-        {onRoad.length === 0 && <EmptyState size="sm" title="Nothing on the road right now" />}
-        {onRoad.map((r) => (
-          <LiveRunRow key={r.runId} run={r} now={now} selected={r.runId === selected?.runId} onPick={() => setPicked(r.runId)} onClose={can('manage:transport') ? () => void closeRun(r.runId, r.van.name) : undefined} />
-        ))}
-        {planned.length > 0 && (
-          <>
-            <h2 className="pt-3 text-base font-medium text-ink">
-              Leaving later <span className="ml-1 text-sm font-normal tabular-nums text-ink-muted">{planned.length}</span>
-            </h2>
-            {planned.map((r) => (
-              <LiveRunRow key={r.runId} run={r} now={now} selected={r.runId === selected?.runId} onPick={() => setPicked(r.runId)} />
-            ))}
-          </>
-        )}
-      </section>
-    </div>
-    </>
-  );
-}
-
-function LiveRunRow({ run, now, selected, onPick, onClose }: { run: RunMap; now: number; selected: boolean; onPick: () => void; onClose?: () => void }) {
-  const late = Math.max(0, ...run.late.map((l) => l.minutes));
-  const next = run.waypoints.find((w) => w.etaAt) ?? run.waypoints[0];
-  const active = run.status === 'ACTIVE';
-  // Transport walk 4: the same stuck rule as the board — "Not closed", not "~32d late".
-  const stuck = active && (run.stuck || late >= STUCK_RUN_MINUTES);
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onPick}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onPick();
-        }
-      }}
-      aria-pressed={selected}
-      className={cn(
-        'w-full rounded-lg border p-3 text-left transition-colors',
-        selected ? 'border-gold/60 bg-gold/5' : 'border-navy-secondary hover:border-silver/40',
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <Bus className={cn('h-4 w-4', active ? 'text-success' : 'text-gold')} aria-hidden="true" />
-        <span className="font-semibold text-white">{run.van.name}</span>
-        <span className="truncate text-sm text-silver">· {run.driver.name}</span>
-        <span className="ml-auto">
-          {run.safety?.sosAt && !run.safety.sosAckAt ? (
-            <Badge variant="destructive">SOS</Badge>
-          ) : run.safety?.escalatedAt ? (
-            <Badge variant="pending">No answer</Badge>
-          ) : stuck ? (
-            <Badge variant="pending">Not closed</Badge>
-          ) : active ? (
-            late >= 5 ? (
-              <Badge variant="pending">~{fmtMinutes(late)} late</Badge>
-            ) : (
-              <Badge variant="success">On time</Badge>
-            )
-          ) : (
-            <Badge variant="accent">Leaves {fmtTimeTz(run.departAt, run.timezone)}</Badge>
-          )}
-        </span>
-      </div>
-      <div className="mt-1 text-xs text-silver">
-        {run.direction === 'TO_WORK' ? 'To work' : 'Home from work'} · {run.riders.filter((r) => r.status === 'BOARDED').length} on board ·{' '}
-        {run.riders.filter((r) => r.status === 'SCHEDULED').length} to pick up
-      </div>
-      {stuck ? (
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-warning">
-          <span>Not closed — the driver never completed this run.</span>
-          {onClose && (
-            <Button
-              size="xs"
-              variant="secondary"
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose();
-              }}
-            >
-              Close run
-            </Button>
-          )}
-        </div>
-      ) : (
-        <>
-          {active && next && (
-            <div className="mt-1 text-sm text-white">
-              Next: {next.label}
-              {next.etaAt && <span className="text-silver"> · about {Math.max(1, Math.round((Date.parse(next.etaAt) - now) / 60_000))} min</span>}
-            </div>
-          )}
-          {active && (
-            <div className={cn('mt-1 text-xs', run.stale ? 'text-warning' : 'text-silver')}>
-              {run.position ? (run.stale ? `No signal since ${ago(run.position.at, now)}` : `Updated ${ago(run.position.at, now)}`) : 'Waiting for the driver’s phone'}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
 }
 
 /* ===== Rides ================================================================ */
@@ -2263,9 +2250,9 @@ function RidesTab({ manage, onRider }: { manage: boolean; onRider?: (associateId
         <DateRangeField size="sm" from={from} to={to} fromLabel="From" toLabel="To" onChange={(r) => { setFrom(r.from); setTo(r.to); }} />
         <Select size="sm" aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value as RideStatus | '')} className="w-40">
           <option value="">Every status</option>
-          {(Object.keys(STATUS_LABEL) as RideStatus[]).map((s) => (
+          {(Object.keys(STATUS_WORDS) as RideStatus[]).map((s) => (
             <option key={s} value={s}>
-              {STATUS_LABEL[s]}
+              {STATUS_WORDS[s]}
             </option>
           ))}
         </Select>
@@ -2364,7 +2351,21 @@ function RidesTab({ manage, onRider }: { manage: boolean; onRider?: (associateId
               { key: 'rider', header: 'Rider', accessor: (r) => r.rider.name, sortable: true, primary: true, cell: (r) => <RiderName ride={r} onRider={onRider} /> },
               { key: 'way', header: 'Way', accessor: (r) => `${r.direction === 'TO_WORK' ? 'To' : 'From'} ${r.store.name}`, sortable: true, cardMeta: true, className: 'whitespace-nowrap' },
               { key: 'end', header: 'Pickup / drop', accessor: (r) => homeEnd(r), className: 'max-w-56 truncate' },
-              { key: 'status', header: 'Status', accessor: (r) => STATUS_LABEL[r.status], sortable: true, cardMeta: true, cell: (r) => <Badge size="sm" variant={statusVariant(r.status)}>{STATUS_LABEL[r.status]}</Badge> },
+              {
+                key: 'status',
+                header: 'Status',
+                accessor: (r) => rideStatusWords(r).label,
+                sortable: true,
+                cardMeta: true,
+                cell: (r) => {
+                  const w = rideStatusWords(r);
+                  return (
+                    <Badge size="sm" variant={w.variant} title={w.label === 'Didn’t run' ? 'The van never left — the ride was closed and not charged.' : undefined}>
+                      {w.label}
+                    </Badge>
+                  );
+                },
+              },
               { key: 'van', header: 'Van', accessor: (r) => r.run?.van.name, sortable: true, cell: (r) => r.run?.van.name ?? '—' },
               {
                 key: 'owed',
@@ -2419,7 +2420,9 @@ function RidesTab({ manage, onRider }: { manage: boolean; onRider?: (associateId
                   // border is a coin toss under a finger, and one of them
                   // tells a rider their ride is off.
                   <div className="flex items-center justify-end gap-1 coarse:gap-3">
-                    {manage && (r.status === 'REQUESTED' || r.status === 'SCHEDULED') && r.run?.status !== 'ACTIVE' && (
+                    {/* Only a ride that can still be stopped: waiting or on a van
+                        that hasn't left, its time still ahead. */}
+                    {manage && canCancelRide(r) && (
                       <Button size="xs" variant="ghost" onClick={() => void actions.cancel(r)}>
                         Cancel
                       </Button>
@@ -2469,6 +2472,44 @@ function IssuesTab({ manage, onRider }: { manage: boolean; onRider?: (associateI
     queryKey: ['transport', 'issues', view],
     queryFn: () => listTransportIssues(view === 'resolved' ? 'RESOLVED' : undefined),
   });
+  // ?issue=<id> (an exception's "Open issue"): scroll to that report and light it —
+  // looking in Resolved too when it was closed meanwhile.
+  const [params, setParams] = useSearchParams();
+  const issueParam = params.get('issue');
+  const issueCards = useRef(new Map<string, HTMLElement>());
+  const [lit, setLit] = useState<string | null>(null);
+  const triedResolved = useRef(false);
+  useEffect(() => {
+    if (!issueParam || !issues.data) return;
+    const found = issues.data.issues.some((i) => i.id === issueParam);
+    if (!found && view === 'open' && !triedResolved.current) {
+      triedResolved.current = true;
+      setView('resolved');
+      return;
+    }
+    const t = window.setTimeout(() => {
+      if (found) {
+        issueCards.current.get(issueParam)?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        setLit(issueParam);
+      } else toast.info('That issue isn’t on the list any more.');
+      triedResolved.current = false;
+      setParams(
+        (p) => {
+          const next = new URLSearchParams(p);
+          next.delete('issue');
+          return next;
+        },
+        { replace: true },
+      );
+    }, 50);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issueParam, issues.data, view]);
+  useEffect(() => {
+    if (!lit) return;
+    const t = window.setTimeout(() => setLit(null), 2600);
+    return () => window.clearTimeout(t);
+  }, [lit]);
   const prompt = usePrompt();
   const queryClient = useQueryClient();
   const actions = useRideActions();
@@ -2520,7 +2561,15 @@ function IssuesTab({ manage, onRider }: { manage: boolean; onRider?: (associateI
       ) : (
         <div className="space-y-3">
           {issues.data!.issues.map((i) => (
-            <Card key={i.id} className={cn(i.category === 'SAFETY' && i.status !== 'RESOLVED' && 'border-alert/50')}>
+            <Card
+              key={i.id}
+              ref={(el) => {
+                if (el) issueCards.current.set(i.id, el);
+                else issueCards.current.delete(i.id);
+              }}
+              data-issue-id={i.id}
+              className={cn('scroll-mt-24', i.category === 'SAFETY' && i.status !== 'RESOLVED' && 'border-alert/50', lit === i.id && '[outline-style:solid] outline-2 outline-offset-4 outline-accent-600')}
+            >
               <CardContent>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={i.category === 'SAFETY' ? 'destructive' : 'accent'} withDot={false}>
@@ -2540,7 +2589,7 @@ function IssuesTab({ manage, onRider }: { manage: boolean; onRider?: (associateI
                 {i.ride && (
                   <p className="mt-2 text-xs text-silver">
                     <RiderName ride={i.ride} onRider={onRider} className="text-ink" /> · Ride: {fmtRelativeDayTz(i.ride.targetAt, i.ride.store.timezone)} {fmtTimeTz(i.ride.targetAt, i.ride.store.timezone)} ·{' '}
-                    {i.ride.direction === 'TO_WORK' ? 'to' : 'from'} {i.ride.store.name} · {STATUS_LABEL[i.ride.status]}
+                    {i.ride.direction === 'TO_WORK' ? 'to' : 'from'} {i.ride.store.name} · {STATUS_WORDS[i.ride.status]}
                     {i.ride.run ? ` · ${i.ride.run.van.name}, ${i.ride.run.driver.name}` : ''}
                     {i.ride.owedCents > 0 ? ` · ${cents(i.ride.owedCents)} owed` : ''}
                   </p>

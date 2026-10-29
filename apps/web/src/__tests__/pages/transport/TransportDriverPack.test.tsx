@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 import { ConfirmProvider } from '@/lib/confirm';
-import { navigationUrl, type DeskDriver, type DriverToday, type RideRun, type RunMap } from '@/lib/transportApi';
+import { navigationUrl, type DeskDriver, type RideRun } from '@/lib/transportApi';
 
 vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
@@ -17,8 +17,8 @@ vi.mock('@/components/transport/LazyLiveMap', () => ({
 }));
 
 import { apiFetch } from '@/lib/api';
-import { DriverTodayCard, IncidentDialog, OkPrompt, PreTripDialog, SafetyDialog } from '@/pages/transport/DriverTools';
-import { CostsSection, DriversTab, SosBanner, TransportNeedsYou } from '@/pages/transport/TransportDesk';
+import { IncidentDialog, OkPrompt, PreTripDialog, SafetyDialog } from '@/pages/transport/DriverTools';
+import { CostsSection, DriversTab, TransportNeedsYou } from '@/pages/transport/TransportDesk';
 import { RideFeedbackCard, StandingBookings } from '@/pages/transport/RideHome';
 import { TrackPage } from '@/pages/transport/TrackPage';
 
@@ -123,67 +123,9 @@ function run(over: Partial<RideRun> = {}): RideRun {
   } as RideRun;
 }
 
-const today = (over: Partial<DriverToday> = {}): DriverToday => ({
-  date: '2026-06-01',
-  associateId: 'a-mike',
-  runs: { total: 3, done: 1, active: 0 },
-  hours: { worked: 2.5, driven: 1.75, onClock: false },
-  shifts: [{ id: 'sh1', startsAt: inH(-1), endsAt: inH(7), status: 'ASSIGNED', today: true }],
-  earnings: { hourlyRate: 18, earnedSoFar: 245.5, workedHours: 13.6, projectedWeek: 612, currentShiftEarned: null, onClock: false, weekStart: '2026-05-30', weekEnd: '2026-06-05' },
-  credentials: { ok: true, problems: [], dueSoon: [] },
-  hoursOfService: { maxPerDay: 10, minRest: 8 },
-  preTripRequired: true,
-  ...over,
-});
-
 describe('the driver', () => {
-  it('sees today as runs → hours → this week’s pay, clocks in, and reads their own punches', async () => {
-    let onClock = false;
-    const calls: string[] = [];
-    routes((path, init) => {
-      if (path === '/transport/driver/today') return today({ hours: { worked: 2.5, driven: 1.75, onClock } });
-      if (path === '/transport/driver/time') return { entries: [{ id: 'e1', clockInAt: inH(-26), clockOutAt: inH(-18), status: 'COMPLETED', hours: 8 }] };
-      if (path === '/transport/driver/clock-in' && init?.method === 'POST') {
-        calls.push('in');
-        onClock = true;
-        return { entry: { id: 'e2', clockInAt: new Date().toISOString() } };
-      }
-    });
-    renderAs('DRIVER', <DriverTodayCard />);
-    const card = await screen.findByRole('region', { name: 'Today' });
-    expect(within(card).getByText('1/3')).toBeInTheDocument();
-    expect(within(card).getByText('2.5h')).toBeInTheDocument();
-    expect(within(card).getByText('$245.50')).toBeInTheDocument();
-    // Today's driver shift only — the week lives in "Your week" (F500: one schedule view).
-    expect(within(card).getByTestId('today-shift')).not.toHaveTextContent('No driver shift today');
-    expect(within(card).queryByText('My driver shifts')).toBeNull();
-    expect(await within(card).findByText('8h')).toBeInTheDocument();
-    await userEvent.click(within(card).getByRole('button', { name: /clock in/i }));
-    await waitFor(() => expect(calls).toEqual(['in']));
-    expect(await within(card).findByRole('button', { name: /clock out/i })).toBeInTheDocument();
-  });
-
-  it('carries the van in the Today card header (F500)', async () => {
-    routes((path) => {
-      if (path === '/transport/driver/today') return today();
-      if (path === '/transport/driver/requests') return { van: { id: 'v1', name: 'Van 1', plate: 'ALT 101', capacity: 12, look: 'White Ford Transit 2023' }, requests: [] };
-    });
-    renderAs('DRIVER', <DriverTodayCard />);
-    const van = await screen.findByTestId('today-van');
-    expect(van).toHaveTextContent('Van 1');
-    expect(van).toHaveTextContent('White Ford Transit 2023');
-    expect(van).toHaveTextContent('ALT 101');
-  });
-
-  it('is told plainly when their licence lapsed; a driver with no person record is told why there is no pay', async () => {
-    routes((path) => {
-      if (path === '/transport/driver/today') return today({ associateId: null, earnings: null, credentials: { ok: false, problems: [{ key: 'licence', label: "Driver's licence", expiresAt: '2026-05-01', expired: true }], dueSoon: [] } });
-    });
-    renderAs('DRIVER', <DriverTodayCard />);
-    expect(await screen.findByText(/Your driver’s licence expired/)).toBeInTheDocument();
-    expect(screen.getByText(/isn’t linked to a person record/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /clock in/i })).not.toBeInTheDocument();
-  });
+  // The day's pay, hours and time clock moved to drive mode's header and pay sheet:
+  // driverPay.test.tsx holds them (the clock, the live pill, the sheet's states).
 
   it('navigates to the next stop in the app they chose', () => {
     expect(navigationUrl('WAZE', { point: { lat: 30.21, lng: -85.86 }, address: 'x' })).toBe('https://waze.com/ul?ll=30.21,-85.86&navigate=yes');
@@ -309,50 +251,6 @@ describe('the director', () => {
     expect(within(panel).getByRole('heading', { name: 'Needs you · 4' })).toBeInTheDocument();
     expect(within(panel).getByRole('button', { name: 'SOS from a van: 1' })).toBeInTheDocument();
     expect(within(panel).getByRole('button', { name: 'Seats today without a van: 3' })).toBeInTheDocument();
-  });
-
-  it('an SOS is a banner with the position and Acknowledge; an unanswered prompt says call them', async () => {
-    const acked: string[] = [];
-    routes((path, init) => {
-      if (path === '/transport/runs/run1/sos/ack' && init?.method === 'POST') {
-        acked.push(path);
-        return { ok: true };
-      }
-    });
-    const base: RunMap = {
-      runId: 'run1',
-      status: 'ACTIVE',
-      direction: 'TO_WORK',
-      serviceDate: '2026-06-01',
-      departAt: inH(-0.5),
-      timezone: tz,
-      van: { id: 'v1', name: 'Van 1', plate: null, capacity: 12 },
-      driver: { userId: 'd1', name: 'Mike Chen' },
-      position: { lat: 30.21, lng: -85.86, heading: null, speedMps: 0, at: new Date().toISOString() },
-      stale: false,
-      trail: [],
-      waypoints: [],
-      stores: [],
-      late: [],
-      riders: [],
-    };
-    renderAs(
-      'TRANSPORTATION_DIRECTOR',
-      <SosBanner
-        manage
-        runs={[
-          { ...base, safety: { sosAt: new Date().toISOString(), sosAckAt: null, promptedAt: null, escalatedAt: null, sosNote: 'flat tire' } },
-          { ...base, runId: 'run2', driver: { userId: 'd2', name: 'Jo Park' }, safety: { sosAt: null, sosAckAt: null, promptedAt: inH(-0.2), escalatedAt: inH(-0.1) } },
-        ]}
-      />,
-    );
-    const banner = screen.getByRole('alert');
-    expect(within(banner).getByText(/SOS — Mike Chen in Van 1/)).toBeInTheDocument();
-    expect(within(banner).getByText(/flat tire/)).toBeInTheDocument();
-    expect(within(banner).getByRole('link', { name: 'Open in Maps' })).toHaveAttribute('href', 'https://www.google.com/maps?q=30.21,-85.86');
-    expect(screen.getByRole('status')).toHaveTextContent(/Jo Park hasn’t answered/);
-    await userEvent.click(within(banner).getByRole('button', { name: /Acknowledge/ }));
-    await waitFor(() => expect(acked).toEqual(['/transport/runs/run1/sos/ack']));
   });
 
   it('sees each driver’s papers — a lapsed licence stands out — and the day’s driver shifts', async () => {

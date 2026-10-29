@@ -11,7 +11,7 @@ import type { AuthUser } from '@alto-people/shared';
 import { Login } from '@/pages/Login';
 import { NotFound } from '@/pages/NotFound';
 import { Dashboard, preloadDashboard } from '@/pages/Dashboard';
-import { RequireAuth } from '@/lib/auth';
+import { RequireAuth, useAuth } from '@/lib/auth';
 import { RequireCapability } from '@/lib/RequireCapability';
 import { OperatorOnly } from '@/lib/OperatorOnly';
 import { registerPrefetch, registerDataPrefetch } from '@/lib/prefetch';
@@ -452,6 +452,17 @@ registerDataPrefetch('/clients/pipeline', () => {
 
 // Tiny in-page fallback for top-level (no-Layout) routes while their chunk
 // streams in. The Layout has its own Suspense around <Outlet />.
+/**
+ * /transport is the desk's (view:transport). A driver holds drive:transport —
+ * their runs are their home — so a link or a typed URL takes them there instead
+ * of a "you don't have access" page (transport review 2026-10-28).
+ */
+function TransportRoute() {
+  const { can } = useAuth();
+  if (!can('view:transport') && can('drive:transport')) return <Navigate to="/" replace />;
+  return <TransportHome />;
+}
+
 function PublicRouteFallback() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-midnight">
@@ -597,7 +608,7 @@ const LAYOUT_ROUTES = [
   { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']} notClientBounded><LaborCostsHome /></RequireCapability> },
   { path: 'ops', element: <RequireCapability cap="run:ops-shifts" anyOf={['view:ops', 'assist:ops-shifts']}><OpsHome /></RequireCapability> },
   { path: 'rides', element: <RequireCapability cap="ride:transport"><RideHome /></RequireCapability> },
-  { path: 'transport', element: <RequireCapability cap="view:transport"><TransportHome /></RequireCapability> },
+  { path: 'transport', element: <RequireCapability cap="view:transport" anyOf={['drive:transport']}><TransportRoute /></RequireCapability> },
   { path: 'emergency', element: <RequireCapability cap="view:emergency"><EmergencyHome /></RequireCapability> },
   { path: 'payroll', element: <RequireCapability cap="view:payroll"><PayrollHome /></RequireCapability> },
   { path: 'documents', element: <RequireCapability cap="view:documents"><DocumentsHome /></RequireCapability> },

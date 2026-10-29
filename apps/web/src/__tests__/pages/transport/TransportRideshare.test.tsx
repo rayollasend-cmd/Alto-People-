@@ -144,8 +144,8 @@ describe('the rider’s van and driver', () => {
     });
     renderAs('ASSOCIATE', <RideHome />);
     const hero = await screen.findByRole('region', { name: 'Your next ride' });
-    expect(within(hero).getByText('White Ford Transit 2023')).toBeInTheDocument();
-    expect(within(hero).getByRole('list', { name: 'Accepted' })).toBeInTheDocument();
+    expect(within(hero).getByText('White Ford Transit · Van 1')).toBeInTheDocument();
+    expect(within(hero).getByText(/^Van 1 leaves at \d/)).toBeInTheDocument();
     await userEvent.click(within(hero).getByRole('button', { name: 'Van & driver' }));
     const card = await screen.findByRole('dialog');
     expect(await within(card).findByText('Mike C.')).toBeInTheDocument();
@@ -176,7 +176,8 @@ describe('the driver decides on seat requests', () => {
         return { rider: { associateId: 'a-q1', name: 'Maria Lopez', phone: '555-0100', since: '2026-01-10T00:00:00Z', rides: 12, noShows: 1, cancelled: 2 } };
     });
     renderAs('DRIVER', <DriverHome />);
-    const list = await screen.findByRole('region', { name: 'Seat requests' });
+    // Named by its title and its count ("Seat requests 2").
+    const list = await screen.findByRole('region', { name: /^Seat requests/ });
     // The van rides in the Today card's header now (F500): the requests are just the requests.
     expect(await within(list).findByText('Maria Lopez')).toBeInTheDocument();
     expect(within(list).queryByText('White Ford Transit 2023', { exact: false })).toBeNull();
@@ -324,17 +325,17 @@ describe('the director runs the fleet — and has the last word', () => {
     );
   });
 
-  it('a seat every driver declined comes to the top — dispatch it, or offer it again', async () => {
+  it('a seat every driver declined says so on its row — dispatch it, or offer it again', async () => {
     routes((path, init) => {
       if (path.startsWith('/transport/board')) return board({ rides: [ride({ id: 'r1', declines: 2, allDeclined: true })] });
       if (path.startsWith('/transport/live')) return { date: '', generatedAt: '', runs: [] };
       if (path === '/transport/rides/r1/reoffer' && init?.method === 'POST') return { ok: true };
     });
     renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-    const panel = await screen.findByRole('region', { name: 'Needs attention' });
-    expect(within(panel).getByText("No driver took Maria's seat")).toBeInTheDocument();
-    expect(screen.getByText('Every driver declined')).toBeInTheDocument();
-    await userEvent.click(within(panel).getByRole('button', { name: 'Offer again' }));
+    const waiting = await screen.findByRole('region', { name: 'Needs a van' });
+    expect(within(waiting).getByText('Every driver declined')).toBeInTheDocument();
+    expect(within(waiting).getByRole('button', { name: /^Dispatch / })).toBeInTheDocument();
+    await userEvent.click(within(waiting).getByRole('button', { name: 'Offer again' }));
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/rides/r1/reoffer', { method: 'POST' }));
   });
 });

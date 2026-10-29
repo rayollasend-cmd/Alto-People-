@@ -1,4 +1,5 @@
 import { apiFetch } from './api';
+import type { DriverRunAdditions, MyLiveRideAdditions, RunAdditions } from '@alto-people/shared';
 
 /**
  * Transportation — the Alto vans. Associates book a seat to or from work
@@ -82,6 +83,8 @@ export interface Ride {
     id: string;
     status: RideRunStatus;
     departAt: string;
+    /** The van never started; the sweep closed the run and this ride, uncharged. */
+    notRun?: boolean;
     van: VanLook & { id: string; name: string; plate: string | null };
     driver: { userId: string; name: string; associateId: string | null; photoUrl?: string | null };
   } | null;
@@ -99,6 +102,9 @@ export interface Ride {
   /** A ride taken while no signed authorization covered it: owed, never waived, taken from pay once they sign. */
   heldForSignature?: boolean;
   charged: boolean;
+  /** The rider's own rides (GET /transport/me): when the charge was taken, and the day that pay went out (null until disbursed). */
+  chargedAt?: string | null;
+  chargedPayDate?: string | null;
   boardedAt: string | null;
   completedAt: string | null;
   noShowAt: string | null;
@@ -164,6 +170,12 @@ export interface RideRun {
   stuck?: boolean;
   /** The sweep closed it; riders never marked stayed SCHEDULED for review. */
   autoClosedAt?: string | null;
+  /** The transport upgrade (2026-10-28, packages/shared transportOps): a planned
+   *  run that never started, its overlaps, and — on the driver's runs — whether
+   *  this van's pre-trip is already done today. Optional until every answer carries them. */
+  notRun?: RunAdditions['notRun'];
+  conflicts?: RunAdditions['conflicts'];
+  preTripDone?: DriverRunAdditions['preTripDone'];
 }
 
 export interface RunSafety {
@@ -392,6 +404,14 @@ export interface MyLiveRide {
   lateMinutes: number;
   vanArrivedAt: string | null;
   riderSignal: RiderSignal | null;
+  /** The transport upgrade (2026-10-28): who to look for, where to wait, how long
+   *  the van waits, the dispatch line and the fare (shared MyLiveRideAdditions). */
+  driverFirstName?: MyLiveRideAdditions['driverFirstName'];
+  vanLook?: MyLiveRideAdditions['vanLook'];
+  pickupNote?: MyLiveRideAdditions['pickupNote'];
+  waitMinutes?: MyLiveRideAdditions['waitMinutes'];
+  dispatchPhone?: MyLiveRideAdditions['dispatchPhone'];
+  fare?: MyLiveRideAdditions['fare'];
 }
 
 export const getMyLiveRide = () => apiFetch<{ live: MyLiveRide | null }>('/transport/me/live');
@@ -522,7 +542,9 @@ export const reportTransportIssue = (body: {
 
 /* ----- The driver --------------------------------------------------------- */
 
-export const getDriverRuns = () => apiFetch<{ today: string; runs: RideRun[] }>('/transport/driver/runs');
+/** `counts`: today's runs by the one definition /driver/today uses (transport upgrade 2026-10-28). */
+export const getDriverRuns = () =>
+  apiFetch<{ today: string; runs: RideRun[]; counts?: { total: number; done: number; active: number } }>('/transport/driver/runs');
 
 export const startDriverRun = (id: string) =>
   apiFetch<{ run: RideRun }>(`/transport/driver/runs/${id}/start`, { method: 'POST' });
@@ -1088,11 +1110,35 @@ export interface DriverToday {
     onClock: boolean;
     weekStart: string;
     weekEnd: string;
+    /** The pay week, Saturday to Friday: worked and scheduled, per day. */
+    days?: Array<{ date: string; workedMinutes: number; workedAmount: number; scheduledMinutes: number; scheduledAmount: number }>;
+    overtime?: { thresholdHours: number; multiplier: number; unlocked: boolean; otHoursSoFar: number; projectedOtHours: number };
+    /** What the next minute pays (the overtime rate once it starts). */
+    currentRatePerHour?: number;
+    /** Earned so far after taxes, deductions and early pay drawn (the tax engine). */
+    takeHome?: {
+      gross: number;
+      taxes: number;
+      federalIncomeTax: number;
+      socialSecurity: number;
+      medicare: number;
+      stateIncomeTax: number;
+      deductions: number;
+      advances: number;
+      net: number;
+      basis: 'W4' | 'NO_W4' | 'NO_WITHHOLDING';
+    } | null;
+    /** 'default' when no rate is set for this driver and the company's standard rate is used. */
+    rateSource?: 'comp' | 'default';
   } | null;
   /** Null until transportation keeps a record for this driver. */
   credentials: CredentialStatus | null;
   hoursOfService: { maxPerDay: number; minRest: number };
   preTripRequired: boolean;
+  /** The dispatch line from transport settings. */
+  dispatchPhone?: string | null;
+  /** The payday this week's hours land on. */
+  nextPayday?: { payDate: string; periodStart: string; periodEnd: string } | null;
 }
 
 export const getDriverToday = () => apiFetch<DriverToday>('/transport/driver/today');
@@ -1144,8 +1190,9 @@ export interface PreTripCheck {
   driver?: string;
 }
 
+/** `done`: a passed check covers this van today; `fromOtherRun`: it was done on an earlier run of the same van (one check per van per day). */
 export const getPreTrip = (runId: string) =>
-  apiFetch<{ required: boolean; items: PreTripItemDef[]; check: PreTripCheck | null }>(`/transport/driver/runs/${runId}/pre-trip`);
+  apiFetch<{ required: boolean; items: PreTripItemDef[]; check: PreTripCheck | null; done?: boolean; fromOtherRun?: boolean }>(`/transport/driver/runs/${runId}/pre-trip`);
 export const submitPreTrip = (runId: string, body: { items: PreTripAnswer[]; odometerMiles?: number | null; notes?: string | null; photoKey?: string | null }) =>
   apiFetch<{ check: PreTripCheck; passed: boolean; failedSafety: Array<{ key: string; label: string }> }>(`/transport/driver/runs/${runId}/pre-trip`, { method: 'POST', body });
 

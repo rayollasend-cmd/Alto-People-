@@ -28,6 +28,7 @@ import type { enEarned } from './earned';
 import type { enEmergency } from './emergency';
 import type { enEwa } from './ewa';
 import type { enExecPortal } from './execPortal';
+import type { enFleetOps } from './fleetOps';
 import type { enFilters } from './filters';
 import type { enFin } from './fin';
 import type { enFloor } from './floor';
@@ -141,6 +142,7 @@ export type EnglishKey =
   | keyof typeof enEmergency
   | keyof typeof enEwa
   | keyof typeof enExecPortal
+  | keyof typeof enFleetOps
   | keyof typeof enFilters
   | keyof typeof enFin
   | keyof typeof enFloor
