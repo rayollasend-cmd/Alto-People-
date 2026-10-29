@@ -342,7 +342,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
         <Tooltip>
           <TooltipTrigger asChild>
             <span
-              className="inline-flex items-center gap-1.5 text-xs text-alert/90 px-2 py-1 rounded bg-alert/10 border border-alert/30"
+              className="inline-flex items-center gap-1.5 text-xs text-negative-800 px-2 py-1 rounded bg-negative-100 border border-negative-200"
               role="status"
             >
               <WifiOff className="h-3 w-3" aria-hidden="true" />

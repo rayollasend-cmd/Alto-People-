@@ -377,6 +377,34 @@ async function dispatch(input: SendInput): Promise<SendResult> {
   }
 }
 
+/**
+ * The do-not-email list, read once per burst. A fan-out (a time correction
+ * telling five supervisors) asked it once per address, five identical key
+ * lookups in a row — Sentry's N+1 on POST /time-corrections
+ * (ALTO-PEOPLE-API-13, 2026-10-28). Lookups that arrive within a few
+ * milliseconds of each other share one query; a lone send waits at most that.
+ */
+const SUPPRESSION_BATCH_MS = 5;
+let suppressionBatch: { emails: Set<string>; result: Promise<Map<string, string>> } | null = null;
+
+function suppressionReason(email: string): Promise<string | null> {
+  const key = email.trim().toLowerCase();
+  if (!suppressionBatch) {
+    const emails = new Set<string>();
+    const result = new Promise<Map<string, string>>((resolve, reject) => {
+      setTimeout(() => {
+        suppressionBatch = null;
+        withIdentityScope(() =>
+          prisma.emailSuppression.findMany({ where: { email: { in: [...emails] } }, select: { email: true, reason: true } }),
+        ).then((rows) => resolve(new Map(rows.map((r) => [r.email, String(r.reason)]))), reject);
+      }, SUPPRESSION_BATCH_MS);
+    });
+    suppressionBatch = { emails, result };
+  }
+  suppressionBatch.emails.add(key);
+  return suppressionBatch.result.then((found) => found.get(key) ?? null);
+}
+
 async function sendEmail(input: SendInput): Promise<SendResult> {
   const to = input.recipient.email;
   if (!to) {
@@ -392,20 +420,16 @@ async function sendEmail(input: SendInput): Promise<SendResult> {
   // never a silent "pretend it sent".
   // Decision 5 (multi-tenancy §10): one sending domain, so one list — an
   // address any tenant's mail bounced from is suppressed for every tenant.
-  // The email is unique across the platform, so this is a key lookup, not a search.
-  const suppression = await withIdentityScope(() =>
-    prisma.emailSuppression.findUnique({
-      where: { email: to.trim().toLowerCase() },
-      select: { reason: true },
-    }),
-  );
-  if (suppression) {
+  // The email is unique across the platform, so this is a key lookup, not a
+  // search — batched with any other send in the same few milliseconds.
+  const suppressed = await suppressionReason(to);
+  if (suppressed !== null) {
     console.warn(
       `[notifications.send] suppressed email to ${to} — address is on the ` +
-        `do-not-email list (${suppression.reason}). Remove it under ` +
+        `do-not-email list (${suppressed}). Remove it under ` +
         `Communications → Suppressed emails to resume delivery.`,
     );
-    throw new EmailSuppressedError(to, suppression.reason);
+    throw new EmailSuppressedError(to, suppressed);
   }
   if (!emailConfigured()) {
     // Stubbed mode — print to the API console so the developer can copy

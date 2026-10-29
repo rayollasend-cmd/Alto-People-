@@ -48,6 +48,18 @@ export function guardHistory(): void {
   const spent: number[] = [];
   /** Every attempt, for the diagnostic. */
   const attempts: number[] = [];
+  /**
+   * Once a window is past budget, who keeps calling: the first app frame of
+   * each attempt, counted. The report used to carry only the stack of the
+   * call that crossed the line — on /relay that was an innocent tab click,
+   * and the loop behind the other 59 went unnamed (ALTO-PEOPLE-WEB-N).
+   */
+  const callers = new Map<string, number>();
+  const callerOf = (): string => {
+    const lines = (new Error().stack ?? '').split('\n').slice(1);
+    const frame = lines.find((l) => !/historyGuard|react-router|posthog|node_modules|\/deps\//.test(l)) ?? lines[3] ?? '';
+    return frame.trim().replace(/\?[^)\s]*/g, '').slice(0, 160);
+  };
   let pending: Args | null = null;
   let flushTimer: number | null = null;
 
@@ -58,7 +70,13 @@ export function guardHistory(): void {
   const note = (method: Method, now: number) => {
     attempts.push(now);
     prune(attempts, now);
-    if (attempts.length < REPORT_AT || reported) return;
+    if (attempts.length < BUDGET || reported) {
+      if (attempts.length < BUDGET) callers.clear();
+      return;
+    }
+    const at = callerOf();
+    callers.set(at, (callers.get(at) ?? 0) + 1);
+    if (attempts.length < REPORT_AT) return;
     reported = true;
     // Thrown here, not constructed-and-passed, so the stack starts one
     // frame below the caller we are trying to name.
@@ -72,6 +90,8 @@ export function guardHistory(): void {
         callsInWindow: attempts.length,
         windowMs: WINDOW_MS,
         deferred: pending !== null,
+        // Who made the calls past budget, most first (file:line, no query strings).
+        topCallers: [...callers.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([frame, n]) => `${n}× ${frame}`),
       },
     });
   };

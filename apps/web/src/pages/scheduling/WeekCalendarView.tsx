@@ -1731,7 +1731,7 @@ function ShiftChip({
         {/* "Unfilled" on its own line inside the tile — as a pill beside the
             time it pushed past the tile's edge in a narrow day. */}
         {unfilled && (
-          <div className="truncate text-2xs font-medium leading-tight text-alert" data-testid="unfilled-tag">
+          <div className="truncate text-2xs font-medium leading-tight text-negative-800" data-testid="unfilled-tag">
             Unfilled
           </div>
         )}

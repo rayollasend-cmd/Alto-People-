@@ -2249,7 +2249,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                   (e.anomalies ?? []).includes('FORGOT_CLOCKOUT') &&
                   !isOwnEntry(e);
                 return (
-                  <div className="inline-flex items-center gap-1 transition-opacity can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100">
+                  // flex-wrap: on a phone the row is a card narrower than every action at once (the overflow sweep caught them off the left edge).
+                  <div className="inline-flex flex-wrap items-center justify-end gap-1 transition-opacity can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100">
                     <Button
                       size="icon-sm"
                       variant="ghost"

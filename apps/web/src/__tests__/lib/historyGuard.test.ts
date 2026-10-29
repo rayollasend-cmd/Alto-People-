@@ -66,12 +66,15 @@ describe('history guard', () => {
     expect(captureException).toHaveBeenCalledTimes(1);
     const [err, ctx] = captureException.mock.calls[0] as [
       Error,
-      { tags: { churn: string }; extra: { callsInWindow: number; deferred: boolean } },
+      { tags: { churn: string }; extra: { callsInWindow: number; deferred: boolean; topCallers: string[] } },
     ];
     expect(err.message).toMatch(/history\.replaceState called \d+ times in 10s/);
     expect(ctx.tags.churn).toBe('replaceState');
     expect(ctx.extra.callsInWindow).toBeGreaterThanOrEqual(60);
     expect(ctx.extra.deferred).toBe(true);
+    // The callers past budget are named with counts, so a loop isn't hidden behind the last call.
+    expect(ctx.extra.topCallers.length).toBeGreaterThan(0);
+    expect(ctx.extra.topCallers[0]).toMatch(/^\d+× /);
     for (let i = 0; i < 80; i += 1) window.history.replaceState(null, '', `/people?q=${i}`);
     expect(captureException).toHaveBeenCalledTimes(1);
   });

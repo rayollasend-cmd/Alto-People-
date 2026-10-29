@@ -623,7 +623,7 @@ function DayShiftChip({
             {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEnds, shift.timezone)}
           </div>
           {unfilled ? (
-            <span className="shrink-0 rounded bg-alert/20 px-1 text-2xs font-medium text-alert" data-testid="unfilled-tag">
+            <span className="shrink-0 rounded bg-negative-100 px-1 text-2xs font-medium text-negative-800" data-testid="unfilled-tag">
               Unfilled
             </span>
           ) : (

@@ -1031,7 +1031,7 @@ export function OpsBoard() {
                           </div>
                         )}
                       </div>
-                      <div className="flex shrink-0 items-center gap-2 text-xs tabular-nums">
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums sm:shrink-0">
                         {/* When it closed. A shift record with no clock on
                             it cannot answer "what happened overnight". */}
                         <span
