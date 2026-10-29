@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { useTenant } from '@/lib/auth';
 import {
   confirmMyPayPreview,
   flagMyPayPreview,
@@ -57,6 +58,7 @@ const day = (ymd: string) => {
 
 export function PayPreviewCard() {
   const { t } = useI18n();
+  const hasVans = useTenant().moduleOn('transportation');
   const qc = useQueryClient();
   const [target, setTarget] = useState<FlagTarget | null>(null);
   const q = useQuery({ queryKey: ['me', 'payPreview'], queryFn: () => getMyPayPreview(), staleTime: 60_000, retry: 1 });
@@ -172,7 +174,8 @@ export function PayPreviewCard() {
         </ul>
         {/* Rides owed that this check can't take — the minimum-wage guard —
             said here, so "Looks right" is asked of the whole story. */}
-        {p.rides && p.rides.held > 0 && (
+        {/* Vans are the transport module's: a tenant without it (a hotel) never reads "van". */}
+        {hasVans && p.rides && p.rides.held > 0 && (
           <p className="mt-2 text-xs text-silver" data-testid="pay-preview-rides-held">
             {t('payx.preview.ridesHeld', { amount: fmtMoney(p.rides.held), wage: fmtMoney(p.rides.minimumWage) })}
           </p>

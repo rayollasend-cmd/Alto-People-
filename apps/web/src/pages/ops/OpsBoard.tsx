@@ -881,7 +881,8 @@ export function OpsBoard() {
                         onClick={() => setRecordId(s.id)}
                         title="Open the full shift record"
                         className={cn(
-                          'flex items-center gap-3 rounded-lg border bg-navy-secondary/20 p-3.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                          // min-w-0: a grid item grows to its one-line text otherwise, and a long department pushed the page past a phone's edge.
+                          'flex min-w-0 items-center gap-3 rounded-lg border bg-navy-secondary/20 p-3.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
                           s.tempAlerts > 0
                             ? 'border-alert/60 bg-alert/[0.06]'
                             : 'border-navy-secondary hover:border-gold/30',
