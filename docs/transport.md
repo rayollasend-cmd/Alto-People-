@@ -44,7 +44,7 @@ Tabs: **Today · Live · Rides · Issues**, with Setup (Vans, Drivers, Stops, Se
 
 ## The "didn't run" sweep (`lib/transportNotRun.ts`, every 15 min)
 
-A run only leaves when its driver taps Start. A PLANNED run that never started, 3 hours past departure or from a day already over, is closed: CANCELLED, `autoClosedAt`, "Didn't run — the van never started" (`isNotRun` tells it from a run the desk cancelled). Its waiting riders are cancelled with "The van didn't run" and **never charged**. The desk hears once per run; each rider once, in their language.
+A run only leaves when its driver taps Start. A PLANNED run that never started is closed 3 hours past its departure, never sooner (a run's date is its site's, so a date rule would close a late western run before it left): CANCELLED, `autoClosedAt`, "Didn't run — the van never started" (`isNotRun` tells it from a run the desk cancelled). Its waiting riders are cancelled with "The van didn't run" and **never charged**. The desk hears once per run; each rider once, in their language.
 
 ## Tests
 
