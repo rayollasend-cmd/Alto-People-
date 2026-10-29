@@ -165,11 +165,13 @@ describe('the drive model', () => {
     expect(planDay([next, active()], today).now?.status).toBe('ACTIVE');
   });
 
-  it('the didn’t-run line is the sweep’s: 3 hours past leaving, or a day already over; the runs count is the API’s when it sends one', () => {
-    expect(didntRun(run({ departAt: min(-170) }), Date.now(), today)).toBe(false);
-    expect(didntRun(run({ departAt: min(-185) }), Date.now(), today)).toBe(true);
-    expect(didntRun(run({ serviceDate: yesterday, departAt: min(-60) }), Date.now(), today)).toBe(true);
-    expect(didntRun(active([], { departAt: min(-600) }), Date.now(), today)).toBe(false);
+  it('the didn’t-run line is the sweep’s: 3 hours past leaving, never sooner — a late run whose date rolled over is still NOW; the runs count is the API’s when it sends one', () => {
+    expect(didntRun(run({ departAt: min(-170) }), Date.now())).toBe(false);
+    expect(didntRun(run({ departAt: min(-185) }), Date.now())).toBe(true);
+    const lateLastNight = run({ id: 'late', serviceDate: yesterday, departAt: min(-60) });
+    expect(didntRun(lateLastNight, Date.now())).toBe(false);
+    expect(planDay([lateLastNight], today).now?.id).toBe('late');
+    expect(didntRun(active([], { departAt: min(-600) }), Date.now())).toBe(false);
     const plan = planDay([run(), run({ id: 'b', departAt: min(90) })], today, Date.now(), { total: 4, done: 2 });
     expect(plan.counts).toEqual({ total: 4, done: 2, riders: 6 });
   });

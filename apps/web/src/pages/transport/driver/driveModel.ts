@@ -99,16 +99,17 @@ export function arrivedAtStop(stop: Stop, runId: string, marks: PendingMark[]): 
 /**
  * A run that never ran: the sweep closed it (notRun), or it is still
  * "planned" past the sweep's own line — three hours after it should have
- * left, or from a day already over (apps/api lib/transportNotRun,
- * NOT_RUN_AFTER_MINUTES; the sweep runs every 15 minutes). Either way it is
- * history, never "Planned" at the top of the driver's day.
+ * left, never sooner (apps/api lib/transportNotRun, NOT_RUN_AFTER_MINUTES;
+ * the sweep runs every 15 minutes). A late run whose date rolled over is
+ * still the driver's to start. Past the line it is history, never "Planned"
+ * at the top of the driver's day.
  */
 export const NOT_RUN_AFTER_MINUTES = 180;
 
-export function didntRun(run: RideRun, now: number, today?: string): boolean {
+export function didntRun(run: RideRun, now: number): boolean {
   if (run.notRun) return true;
   if (run.status !== 'PLANNED') return false;
-  return now - Date.parse(run.departAt) >= NOT_RUN_AFTER_MINUTES * 60_000 || (!!today && run.serviceDate < today);
+  return now - Date.parse(run.departAt) >= NOT_RUN_AFTER_MINUTES * 60_000;
 }
 
 export interface DayCounts {
@@ -144,11 +145,12 @@ const byDepart = (a: RideRun, b: RideRun) => Date.parse(a.departAt) - Date.parse
 export function planDay(runs: RideRun[], today: string, now = Date.now(), apiCounts?: { total: number; done: number } | null): DayPlan {
   const yesterday = dayBefore(today);
   const live = runs.filter((r) => r.status !== 'CANCELLED' || r.notRun);
-  const notRun = live.filter((r) => (r.serviceDate === today || r.serviceDate === yesterday) && didntRun(r, now, today)).sort(byDepart);
-  const ran = (r: RideRun) => !didntRun(r, now, today) && r.status !== 'CANCELLED';
+  const notRun = live.filter((r) => (r.serviceDate === today || r.serviceDate === yesterday) && didntRun(r, now)).sort(byDepart);
+  const ran = (r: RideRun) => !didntRun(r, now) && r.status !== 'CANCELLED';
   // A run left on the road is NOW whatever its date: only Complete ends it.
   const active = live.filter((r) => r.status === 'ACTIVE' && ran(r)).sort(byDepart);
-  const upcoming = live.filter((r) => r.serviceDate === today && r.status === 'PLANNED' && ran(r)).sort(byDepart);
+  // Yesterday's too while it can still leave: an 11:30 PM run at 12:30 AM is late, not gone.
+  const upcoming = live.filter((r) => (r.serviceDate === today || r.serviceDate === yesterday) && r.status === 'PLANNED' && ran(r)).sort(byDepart);
   const current = active[0] ?? upcoming[0] ?? null;
   const later = [...active, ...upcoming].filter((r) => r !== current);
   const todays = live.filter((r) => r.serviceDate === today && ran(r));

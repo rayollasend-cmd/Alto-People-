@@ -139,12 +139,14 @@ describe('closeRunsThatNeverRan', () => {
     expect([twice.desk.length, twice.ana.length, twice.bo.length]).toEqual([1, 1, 1]);
   });
 
-  it('closes yesterday’s planned runs whatever their hour, and never touches a run that left or finished', async () => {
+  it('never closes a run before three hours past its departure — even one dated the day before (a late run in the west) — and never touches a run that finished', async () => {
     const f = await fleet();
     const yesterday = new Date(Date.parse(`${f.today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
     const late = await f.run(f.at(-60), { serviceDate: yesterday });
     const done = await f.run(f.at(-26 * 60), { status: 'COMPLETED' });
-    const r = await closeRunsThatNeverRan(f.now);
+    // An hour after it was due to leave, its date already "yesterday": still the driver's to start.
+    expect((await closeRunsThatNeverRan(f.now)).runIds).toEqual([]);
+    const r = await closeRunsThatNeverRan(new Date(f.now.getTime() + 121 * 60_000));
     expect(r.runIds).toEqual([late.id]);
     expect((await prisma.rideRun.findUniqueOrThrow({ where: { id: done.id } })).status).toBe('COMPLETED');
     // Nobody on it: the desk still hears, and says so.

@@ -18,9 +18,10 @@ import { riderLang, riderTime, type RiderLang } from './transportRider.js';
  * runs, the rides table said its riders were "On a van", and the ops board
  * counted a van that never moved. Every 15 minutes this closes them:
  *
- *   which   PLANNED, never started, and either NOT_RUN_AFTER_MINUTES (3 h)
- *           past its departure or from a day already over in the company
- *           calendar
+ *   which   PLANNED, never started, and NOT_RUN_AFTER_MINUTES (3 h) past
+ *           its departure — never sooner. (A "day already over" rule closed a
+ *           Chicago 11:30 PM run at midnight New York, before it could leave:
+ *           a run's date is its site's, and the hour is what matters.)
  *   run     CANCELLED, stamped autoClosedAt, the note "Didn't run — the van
  *           never started" (isNotRun in lib/transportConflicts tells it from
  *           a run the desk cancelled)
@@ -57,12 +58,11 @@ export interface NotRunResult {
 }
 
 export async function closeRunsThatNeverRan(now = new Date(), db: Db = prisma): Promise<NotRunResult> {
-  const today = dateKeyInZone(now, DEFAULT_TIMEZONE);
   const candidates = await db.rideRun.findMany({
     where: {
       status: 'PLANNED',
       startedAt: null,
-      OR: [{ departAt: { lt: new Date(now.getTime() - NOT_RUN_AFTER_MINUTES * 60_000) } }, { serviceDate: { lt: today } }],
+      departAt: { lt: new Date(now.getTime() - NOT_RUN_AFTER_MINUTES * 60_000) },
     },
     orderBy: { departAt: 'asc' },
     select: {
@@ -130,8 +130,9 @@ export async function closeRunsThatNeverRan(now = new Date(), db: Db = prisma): 
       );
     }
     const driver = run.driver.associate ? `${run.driver.associate.firstName} ${run.driver.associate.lastName}` : run.driver.email;
-    const when = new Intl.DateTimeFormat('en-US', { timeZone: run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE, hour: 'numeric', minute: '2-digit' }).format(run.departAt);
-    const day = run.serviceDate === today ? '' : ` on ${fmtDay(run.serviceDate, { weekday: true })}`;
+    const zone = run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE;
+    const when = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' }).format(run.departAt);
+    const day = run.serviceDate === dateKeyInZone(now, zone) ? '' : ` on ${fmtDay(run.serviceDate, { weekday: true })}`;
     for (const u of desk) {
       void trackNotificationWork(
         notifyUser(u.id, {
