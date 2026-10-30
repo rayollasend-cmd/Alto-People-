@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -218,6 +219,9 @@ describe('the store manager reads a live day', () => {
   });
 
   it('hands over the photographs, not just how many there were', async () => {
+    // A run of today's (midweek noon): after midnight a run opened three hours
+    // ago is yesterday's overnight, carried — its photos stay with its own day.
+    pinMidweekNoon();
     const { client, loc, sup, manager } = await store();
     const shift = await overnight({
       clientId: client.id,
