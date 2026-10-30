@@ -61,6 +61,8 @@ schedule-change request to the lead. The planning step cost about $0.013.
 **Storage.** Facts the person told Hugo about themselves, in `HugoMemory`: at most
 50, 200 characters each, of kinds PREFERENCE, AVAILABILITY, TRAVEL, WORK or OTHER.
 The on/off switch is in `HugoMemorySetting`, and is on by default.
+Everyone Hugo serves has it, internal staff as well as associates and
+supervisors (owner, 2026-10-30); each person sees and changes only their own.
 
 **Saving.** Every save goes through one guard, `checkHugoMemoryText`, in six
 languages. It refuses:

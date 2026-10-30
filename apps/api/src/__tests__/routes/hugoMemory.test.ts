@@ -137,6 +137,26 @@ describe('in the chat: kept only through the remember tool, when told', () => {
     expect(await prisma.hugoMemory.count({ where: { lastUsedAt: { not: null } } })).toBe(2);
   });
 
+  it('internal staff keep their own too: an HR administrator’s fact is kept, listed and in their next prompt — and only theirs', async () => {
+    const w = await world();
+    const hr = await loginAs(w.hr.email);
+    calls.remember = { text: 'I review time-off requests on Monday mornings', kind: 'WORK' };
+    const told = await hr.post('/hugo/ask').send({ text: ASK });
+    expect(told.status, JSON.stringify(told.body)).toBe(200);
+    expect(told.body).toMatchObject({ source: 'model', remembered: [{ text: 'I review time-off requests on Monday mornings' }] });
+    expect(await prisma.hugoMemory.findMany()).toMatchObject([{ userId: w.hr.id, kind: 'WORK', source: 'TOLD' }]);
+
+    const list = await hr.get('/hugo/memory');
+    expect(list.body).toMatchObject({ memoryOn: true, facts: [{ text: 'I review time-off requests on Monday mornings' }] });
+    calls.remember = null;
+    await hr.post('/hugo/ask').send({ text: 'Why is the desk like this today?' });
+    expect(calls.inputs.at(-1)!.memory).toEqual(['I review time-off requests on Monday mornings']);
+
+    // An associate's Hugo knows none of it.
+    const ana = await loginAs(w.anaUser.email);
+    expect((await ana.get('/hugo/memory')).body.facts).toEqual([]);
+  });
+
   it('the instant (registry) path is unchanged: no model, no memory', async () => {
     const w = await world();
     const ana = await loginAs(w.anaUser.email);
