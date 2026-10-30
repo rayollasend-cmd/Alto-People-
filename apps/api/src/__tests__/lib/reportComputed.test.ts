@@ -207,6 +207,34 @@ describe('overtime by store', () => {
   });
 });
 
+describe('days in a filter', () => {
+  // Sentry ALTO-PEOPLE-API-17: Hugo's run_report grouped time entries with
+  // clockIn gte a bare day; Prisma refused it and the preview answered 500.
+  it('a grouped preview over one company-time day takes in that whole day and nothing either side', async () => {
+    const client = await createClient('Coastal');
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const p = await createAssociate();
+    // 11 PM Oct 29, 1 AM Oct 30, 11:30 PM Oct 30, 1 AM Oct 31 — Eastern (EDT).
+    for (const at of ['2026-10-30T03:00:00Z', '2026-10-30T05:00:00Z', '2026-10-31T03:30:00Z', '2026-10-31T05:00:00Z']) {
+      const clockInAt = new Date(at);
+      await prisma.timeEntry.create({ data: { associateId: p.id, clientId: client.id, locationId: site.id, clockInAt, clockOutAt: new Date(clockInAt.getTime() + 3_600_000), status: 'APPROVED', anomalies: [] } });
+    }
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const http = await loginAs(agent(), user.email);
+    const spec = (filters: unknown[]) => ({ name: 'x', entity: 'TIME_ENTRY', spec: { columns: ['status'], filters, sort: [], limit: 50, groupBy: ['status'], aggregates: [{ fn: 'count' }] } });
+    const r = await http.post('/reports/preview').send(spec([
+      { column: 'clockIn', op: 'gte', value: '2026-10-30' },
+      { column: 'clockIn', op: 'lte', value: '2026-10-30' },
+    ]));
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.rows).toEqual([{ status: 'APPROVED', count: 2 }]);
+
+    const bad = await http.post('/reports/preview').send(spec([{ column: 'clockIn', op: 'gte', value: 'yesterday' }]));
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.code).toBe('invalid_value');
+  });
+});
+
 describe('the in-memory operators', () => {
   it('filters, sorts, groups and rolls up like the database path', () => {
     const rows = [
@@ -218,6 +246,9 @@ describe('the in-memory operators', () => {
     expect(rowMatches(rows[1]!, { s: { in: ['A'] } })).toBe(false);
     expect(rowMatches(rows[1]!, { d: { gte: new Date('2026-10-02T00:00:00Z'), lt: new Date('2026-10-09T00:00:00Z') } })).toBe(true);
     expect(rowMatches(rows[2]!, { n: { gt: '3' } })).toBe(true);
+    // A day's `ne` is a range (lib/reportRun): the day's own row is out, the rest stay.
+    const notOct1 = { d: { not: { gte: new Date('2026-10-01T00:00:00Z'), lt: new Date('2026-10-02T00:00:00Z') } } };
+    expect(rows.map((r) => rowMatches(r, notOct1))).toEqual([false, true, true]);
     expect(runSpecOverRows(rows, { columns: ['s'], sort: [], limit: 10, groupBy: ['s'], aggregates: [{ fn: 'sum', column: 'n', alias: 't' }, { fn: 'max', column: 'n', alias: 'm' }] }, {})).toEqual([
       { s: 'A', t: 6, m: 4 },
       { s: 'B', t: 5, m: 5 },

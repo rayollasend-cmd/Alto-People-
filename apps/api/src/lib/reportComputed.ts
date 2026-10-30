@@ -406,13 +406,16 @@ function cmp(a: unknown, b: unknown): number {
   return String(nx).localeCompare(String(ny));
 }
 
+const isRange = (x: unknown) => x !== null && typeof x === 'object' && !(x instanceof Date) && !Array.isArray(x);
+
 /** Does a row pass a compiled where (the shape lib/reportRun.buildWhere makes)? */
 export function rowMatches(row: Row, where: Record<string, unknown>): boolean {
   for (const [col, cond] of Object.entries(where)) {
     const v = row[col];
     if (cond !== null && typeof cond === 'object' && !(cond instanceof Date) && !Array.isArray(cond)) {
       const c = cond as Record<string, unknown>;
-      if ('not' in c && same(v, c.not)) return false;
+      // A day's `ne` is a range (lib/reportRun): { not: { gte, lt } }.
+      if ('not' in c && (isRange(c.not) ? rowMatches({ [col]: v }, { [col]: c.not }) : same(v, c.not))) return false;
       if ('in' in c && !(c.in as unknown[]).some((x) => same(v, x))) return false;
       if ('contains' in c && !String(v ?? '').toLowerCase().includes(String(c.contains).toLowerCase())) return false;
       for (const op of ['gt', 'gte', 'lt', 'lte'] as const) {

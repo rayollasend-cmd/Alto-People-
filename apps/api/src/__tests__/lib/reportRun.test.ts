@@ -106,3 +106,62 @@ describe('buildWhere with period filters', () => {
     ).toThrow(/relative-period token/);
   });
 });
+
+describe('buildWhere with days', () => {
+  // Sentry ALTO-PEOPLE-API-17: Hugo's run_report sent clockIn gte "2026-10-30"
+  // and Prisma rejected the bare day — a 500. A day is now that whole day.
+  it('a bare day on a timestamp is the company-time day, and a from/to pair both hold', () => {
+    const where = buildWhere('TIME_ENTRY', [
+      { column: 'clockIn', op: 'gte', value: '2026-10-30' },
+      { column: 'clockIn', op: 'lte', value: '2026-11-01' },
+    ]);
+    // Oct 30 starts at 04:00Z (EDT); "through Nov 1" ends at Nov 2's midnight, 05:00Z (EST).
+    expect(where).toEqual({
+      clockInAt: { gte: new Date('2026-10-30T04:00:00.000Z'), lt: new Date('2026-11-02T05:00:00.000Z') },
+    });
+  });
+
+  it('gt starts the next day, lt ends before the day, eq and ne are the whole day', () => {
+    const day = (op: 'gt' | 'lt' | 'eq' | 'ne') => buildWhere('EXPENSE', [{ column: 'paidAt', op, value: '2026-08-12' }]).paidAt;
+    expect(day('gt')).toEqual({ gte: new Date('2026-08-13T04:00:00.000Z') });
+    expect(day('lt')).toEqual({ lt: new Date('2026-08-12T04:00:00.000Z') });
+    expect(day('eq')).toEqual({ gte: new Date('2026-08-12T04:00:00.000Z'), lt: new Date('2026-08-13T04:00:00.000Z') });
+    expect(day('ne')).toEqual({ not: { gte: new Date('2026-08-12T04:00:00.000Z'), lt: new Date('2026-08-13T04:00:00.000Z') } });
+  });
+
+  it('a calendar-day column compares at the UTC midnight it is stored at', () => {
+    expect(buildWhere('PAYROLL_RUN', [{ column: 'periodStart', op: 'eq', value: '2026-10-17' }])).toEqual({
+      periodStart: { gte: new Date('2026-10-17T00:00:00.000Z'), lt: new Date('2026-10-18T00:00:00.000Z') },
+    });
+    expect(buildWhere('PAYROLL_RUN', [{ column: 'periodStart', op: 'in', value: ['2026-10-03', '2026-10-17'] }])).toEqual({
+      periodStart: { in: [new Date('2026-10-03T00:00:00.000Z'), new Date('2026-10-17T00:00:00.000Z')] },
+    });
+  });
+
+  it('a full timestamp is that instant, and null still means "not set"', () => {
+    expect(buildWhere('TIME_ENTRY', [{ column: 'clockIn', op: 'lte', value: '2026-10-30T00:00:00.000Z' }])).toEqual({
+      clockInAt: { lte: new Date('2026-10-30T00:00:00.000Z') },
+    });
+    expect(buildWhere('ASSOCIATE', [{ column: 'separatedAt', op: 'eq', value: null }])).toEqual({ separatedAt: null });
+    expect(buildWhere('ASSOCIATE', [{ column: 'separatedAt', op: 'ne', value: null }])).toEqual({ separatedAt: { not: null } });
+  });
+
+  it('a period and a day on one column both hold', () => {
+    expect(buildWhere('TIME_ENTRY', [
+      { column: 'clockIn', op: 'period', value: 'last-week' },
+      { column: 'clockIn', op: 'gte', value: '2026-08-05' },
+    ], WED_AUG_12)).toEqual({
+      clockInAt: { gte: new Date('2026-08-05T04:00:00.000Z'), lt: new Date('2026-08-08T04:00:00.000Z') },
+    });
+  });
+
+  it('refuses what is not a day with a 400, not a database error', () => {
+    const bad = (column: string, op: 'gte' | 'in' | 'contains', value: unknown) => () => buildWhere(column === 'periodStart' ? 'PAYROLL_RUN' : 'TIME_ENTRY', [{ column, op, value }]);
+    expect(bad('clockIn', 'gte', 'yesterday')).toThrow(/YYYY-MM-DD/);
+    expect(bad('clockIn', 'gte', '2026-02-30')).toThrow(/YYYY-MM-DD/);
+    expect(bad('clockIn', 'gte', 20261030)).toThrow(/YYYY-MM-DD/);
+    expect(bad('periodStart', 'in', ['2026-10-03', 'soon'])).toThrow(/YYYY-MM-DD/);
+    expect(bad('clockIn', 'in', ['2026-10-30'])).toThrow(/timestamp/);
+    expect(bad('clockIn', 'contains', '2026')).toThrow(/is a date/);
+  });
+});

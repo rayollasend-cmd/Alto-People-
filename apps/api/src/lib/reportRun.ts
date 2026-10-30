@@ -16,6 +16,7 @@ import {
   startOfWeekUTC,
   utcInstantOfLocalMidnight,
 } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 import {
   scopeApplications,
   scopeAssociates,
@@ -306,6 +307,73 @@ const isDateColumnKey = (c: string) =>
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
+/** Date columns holding instants; the others (hireDate, periodStart, weekStart…)
+ *  are calendar days, stored at UTC midnight. */
+const isInstantColumnKey = (c: string) => /At$/.test(c) || c === 'clockIn' || c === 'clockOut';
+
+const BARE_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+const isOps = (x: unknown): x is Record<string, unknown> =>
+  x !== null && typeof x === 'object' && !(x instanceof Date) && !Array.isArray(x);
+
+/**
+ * A comparison on a date column. A bare day ("2026-10-30" — what people and
+ * Hugo write) means that whole day: an instant column's day runs from
+ * org-local midnight, as the period tokens' do; a calendar-day column's is
+ * the UTC midnight it is stored at. So `lte` a day takes in all of it and
+ * `gt` a day starts the next one. Prisma rejects a bare day on a DateTime
+ * column, so passing one through was a 500 (Sentry ALTO-PEOPLE-API-17).
+ */
+function dateCondition(f: z.infer<typeof FilterSchema>): unknown {
+  const bad = () =>
+    new HttpError(400, 'invalid_value', `"${f.column}" takes a day (YYYY-MM-DD) or a full timestamp.`);
+  const instant = isInstantColumnKey(f.column);
+  const dayStart = (d: string) => (instant ? utcInstantOfLocalMidnight(d, ORG_TZ) : new Date(`${d}T00:00:00.000Z`));
+  const read = (v: unknown): { day: string } | { at: Date } => {
+    if (typeof v === 'string' && BARE_DAY.test(v)) {
+      // A real calendar day: "2026-02-30" doesn't round-trip.
+      if (Number.isNaN(Date.parse(`${v}T00:00:00.000Z`)) || addDaysToKey(v, 0) !== v) throw bad();
+      return { day: v };
+    }
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) {
+      const t = new Date(v);
+      if (Number.isNaN(t.getTime())) throw bad();
+      return { at: t };
+    }
+    throw bad();
+  };
+  if (f.op === 'in') {
+    return {
+      in: (f.value as unknown[]).map((v) => {
+        const r = read(v);
+        if ('at' in r) return r.at;
+        if (instant) {
+          throw new HttpError(400, 'invalid_value', `"${f.column}" is a timestamp: pick days with gte and lte, or a period.`);
+        }
+        return dayStart(r.day);
+      }),
+    };
+  }
+  const r = read(f.value);
+  if ('at' in r) return f.op === 'eq' ? r.at : f.op === 'ne' ? { not: r.at } : { [f.op]: r.at };
+  const from = dayStart(r.day);
+  const to = dayStart(addDaysToKey(r.day, 1));
+  switch (f.op) {
+    case 'gte':
+      return { gte: from };
+    case 'gt':
+      return { gte: to };
+    case 'lt':
+      return { lt: from };
+    case 'lte':
+      return { lt: to };
+    case 'eq':
+      return { gte: from, lt: to };
+    default:
+      return { not: { gte: from, lt: to } };
+  }
+}
+
 /**
  * Resolve a relative period token to a concrete [start, end) window as of
  * `now`. Week tokens use the org Saturday-start workweek helpers; month/
@@ -379,6 +447,12 @@ export function buildWhere(
   const cols = ENTITY_COLUMNS[entity];
   if (!cols) throw new HttpError(400, 'invalid_entity', 'Unknown report entity.');
   const where: Record<string, unknown> = {};
+  // Two filters on one column (a from/to range) both hold; before, the
+  // second replaced the first.
+  const put = (col: string, cond: unknown) => {
+    const prev = where[col];
+    where[col] = isOps(prev) && isOps(cond) ? { ...prev, ...cond } : cond;
+  };
   for (const f of filters) {
     const col = cols[f.column];
     if (!col) {
@@ -388,15 +462,20 @@ export function buildWhere(
         `Column "${f.column}" is not allowed on ${entity}.`,
       );
     }
-    if (f.op === 'eq') where[col] = f.value;
-    else if (f.op === 'ne') where[col] = { not: f.value };
-    else if (f.op === 'in') {
-      if (!Array.isArray(f.value)) {
-        throw new HttpError(400, 'invalid_value', '`in` requires an array.');
-      }
-      where[col] = { in: f.value };
-    } else if (f.op === 'contains') {
-      where[col] = { contains: String(f.value), mode: 'insensitive' };
+    if (f.op === 'in' && !Array.isArray(f.value)) {
+      throw new HttpError(400, 'invalid_value', '`in` requires an array.');
+    }
+    const dateCompare =
+      isDateColumnKey(f.column) && f.op !== 'period' && !((f.op === 'eq' || f.op === 'ne') && f.value === null);
+    if (dateCompare && f.op === 'contains') {
+      throw new HttpError(400, 'invalid_value', `"${f.column}" is a date: compare it, or use a period.`);
+    }
+    if (dateCompare) put(col, dateCondition(f));
+    else if (f.op === 'eq') put(col, f.value);
+    else if (f.op === 'ne') put(col, { not: f.value });
+    else if (f.op === 'in') put(col, { in: f.value });
+    else if (f.op === 'contains') {
+      put(col, { contains: String(f.value), mode: 'insensitive' });
     } else if (f.op === 'period') {
       const token = ReportPeriodTokenSchema.safeParse(f.value);
       if (!token.success) {
@@ -414,9 +493,9 @@ export function buildWhere(
         );
       }
       const { start, end } = resolvePeriodWindow(token.data, now);
-      where[col] = { gte: start, lt: end };
+      put(col, { gte: start, lt: end });
     } else {
-      where[col] = { [f.op]: f.value };
+      put(col, { [f.op]: f.value });
     }
   }
   return where;

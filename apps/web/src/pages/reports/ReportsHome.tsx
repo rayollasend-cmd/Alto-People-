@@ -699,9 +699,10 @@ function ReportBuilder({
   const buildSpec = (): ReportSpec => {
     // Convert each filter row to the API shape. `in` splits the comma-list;
     // numeric ops coerce when the value parses cleanly so reports compare
-    // numbers as numbers, not strings. Date columns are widened to full
-    // ISO datetimes (Prisma DateTime filters reject bare dates). `period`
-    // tokens pass through verbatim — the server resolves them at run time.
+    // numbers as numbers, not strings. A date stays a bare day: the server
+    // reads it as that whole day in the company's time (lib/reportRun), so
+    // "<= Oct 30" takes in Oct 30. `period` tokens pass through verbatim —
+    // the server resolves them at run time.
     const compiledFilters = filters
       .filter((f) => f.column && f.value.trim())
       .map((f) => {
@@ -711,11 +712,6 @@ function ReportBuilder({
             .split(',')
             .map((v) => v.trim())
             .filter(Boolean);
-        } else if (
-          isDateColumn(f.column) &&
-          /^\d{4}-\d{2}-\d{2}$/.test(f.value.trim())
-        ) {
-          value = new Date(f.value.trim()).toISOString();
         } else if (
           ['gt', 'gte', 'lt', 'lte'].includes(f.op) &&
           /^-?\d+(\.\d+)?$/.test(f.value.trim())

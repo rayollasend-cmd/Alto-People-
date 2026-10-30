@@ -3,7 +3,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Request } from 'express';
 import type { Prisma } from '@prisma/client';
-import { can } from '@alto-people/shared';
+import { REPORT_PERIOD_TOKENS, can } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
@@ -561,7 +561,8 @@ export function actionTools(ctx: ActionContext): AssistantTool[] {
       name: 'run_report',
       description:
         `Answer a numbers question with the report builder, inside the person's own reach. Entities and columns — ${catalog}. ` +
-        `Filters: {column, op, value} with op in ${FILTER_OPS.join('/')}; op "period" takes this-week, last-week, this-month, last-month, this-quarter, last-quarter, this-year, last-year. ` +
+        `Filters: {column, op, value} with op in ${FILTER_OPS.join('/')}; op "period" takes ${REPORT_PERIOD_TOKENS.join(', ')}. ` +
+        `Other dates are days, YYYY-MM-DD: gte a day is from it, lte a day is through it; a from/to range is two filters on the column. ` +
         `Group with groupBy (≤4 columns) and aggregates [{fn: ${AGGREGATE_FNS.join('|')}, column?}] — sum/avg/min/max only on grossAmount, netAmount, totalGross, totalNet, amount. Returns a small table and a link to open it in the report builder.`,
       input: {
         properties: {
