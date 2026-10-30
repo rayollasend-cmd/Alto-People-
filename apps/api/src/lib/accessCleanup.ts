@@ -6,6 +6,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache } from '../middleware/auth.js';
 import { recordCriticalAudit } from './audit.js';
+import { eraseHugoMemory } from './hugoMemory.js';
 import { activeAssociateIds } from './activeDefinition.js';
 
 /**
@@ -375,6 +376,8 @@ export async function sweepDeactivatedUsers(db: PrismaClient = defaultPrisma, no
   });
   for (const u of due) {
     await db.user.update({ where: { id: u.id }, data: { deletedAt: now, tokenVersion: { increment: 1 } } });
+    // What the assistant kept about them (lib/hugoMemory) has no use once the account is gone.
+    await eraseHugoMemory(db, u.id);
     invalidateUserCache(u.id);
     await recordCriticalAudit(
       {

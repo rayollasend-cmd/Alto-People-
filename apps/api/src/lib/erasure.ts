@@ -5,6 +5,8 @@ import { recordCriticalAudit } from './audit.js';
 import { purgeAssociateBiometrics } from './kioskMaintenance.js';
 import { getBlobStore } from './blobStore.js';
 import { logger } from './logger.js';
+import { eraseHugoMemory } from './hugoMemory.js';
+import { eraseHugoAccount } from './hugoThread.js';
 
 /**
  * Admin-initiated associate erasure (privacy / right-to-deletion).
@@ -70,6 +72,12 @@ export interface ErasureResult {
     activityDaysDeleted: number;
     /** Sign-in tracking: the IP addresses the login came from. */
     knownIpsDeleted: number;
+    /** What Hugo knows: the facts the person told the assistant (lib/hugoMemory). */
+    hugoMemoriesDeleted: number;
+    /** The person's own Hugo (lib/hugoThread): their conversation, what his thinking cost them, their settings. */
+    hugoTurnsDeleted: number;
+    hugoUsageDeleted: number;
+    hugoProfileDeleted: number;
   };
 }
 
@@ -158,6 +166,10 @@ export async function eraseAssociate(
     notificationsScrubbed: 0,
     activityDaysDeleted: 0,
     knownIpsDeleted: 0,
+    hugoMemoriesDeleted: 0,
+    hugoTurnsDeleted: 0,
+    hugoUsageDeleted: 0,
+    hugoProfileDeleted: 0,
   };
 
   await prisma.$transaction(async (tx) => {
@@ -245,6 +257,13 @@ export async function eraseAssociate(
       const knownIps = await tx.userKnownIp.deleteMany({ where: { userId } });
       counts.activityDaysDeleted = activityDays.count;
       counts.knownIpsDeleted = knownIps.count;
+      // What Hugo knows: the person's own words about themselves, no retention duty.
+      counts.hugoMemoriesDeleted = await eraseHugoMemory(tx, userId);
+      // Their own Hugo: the conversation (their words), each call's cost, their settings — no retention duty.
+      const hugo = await eraseHugoAccount(tx, userId);
+      counts.hugoTurnsDeleted = hugo.turns;
+      counts.hugoUsageDeleted = hugo.usage;
+      counts.hugoProfileDeleted = hugo.profiles;
 
       // Notifications: null the content, keep the rows + categories so
       // delivery accounting (e.g. campaign send history) still adds up.

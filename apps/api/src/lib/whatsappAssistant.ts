@@ -15,6 +15,7 @@ import { inProcessAgent, logBuiltInAgentAction } from './agents.js';
 import { tenantIdForWrite } from './tenant.js';
 import { getBrandingSync } from './branding.js';
 import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
+import { pendingOffer, startReply, voidOffers } from './hugoWhatsappOffers.js';
 
 /**
  * THE ASSISTANT — three questions, answered from the associate's own data.
@@ -31,6 +32,14 @@ import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
  * The only key into anyone's data is the phone the message came from,
  * resolved to the one associate who opted in with it — nothing here can
  * be steered to another person's record.
+ *
+ * Hugo's brain (lib/hugoWhatsapp, Muse phase 6): after the commands that
+ * must stay deterministic (an unknown number, a call-out, the YES/NO to the
+ * Workforce agent, STOP, START, a language, "who are you"), a question goes
+ * the way the app's do — the registry at once for a plain one about their
+ * own records, the model for the rest (their own records as its tools),
+ * work to hand over offered with "Reply START" — and the registry answers,
+ * exactly as below, whenever the model can't.
  */
 
 type Db = PrismaClient;
@@ -42,8 +51,11 @@ export interface InboundMessage {
   timestamp?: Date;
 }
 
-/** Hugo's intents as WhatsApp sees them (lib/hugo: the registry), plus the attendance.confirm answers. */
-export type Intent = HugoIntentKey | 'CONFIRM_YES' | 'CONFIRM_NO' | 'CALL_OUT';
+/**
+ * Hugo's intents as WhatsApp sees them (lib/hugo: the registry), plus the attendance.confirm answers;
+ * MODEL: the model answered (lib/hugoWhatsapp); TASK_START: a START reply took a task offer.
+ */
+export type Intent = HugoIntentKey | 'CONFIRM_YES' | 'CONFIRM_NO' | 'CALL_OUT' | 'MODEL' | 'TASK_START';
 
 export { detectConfirmAnswer };
 
@@ -190,12 +202,15 @@ export async function handleInbound(received: InboundMessage, db: Db = defaultPr
   const tenantId = tenantIdForWrite();
   const me = await inProcessAgent(db, 'whatsapp-assistant', tenantId);
   const disclose = await discloserFor(db, { workerId: me?.workerId ?? '', name: getBrandingSync(tenantId).assistantName, ownerUserId: me?.ownerUserId ?? null, tenantId }, lang);
-  const say = async (text: string, kind: 'ANSWER' | 'SYSTEM' | 'HANDOFF' = 'ANSWER', conversationId: string | null = null) => {
+  // `trail` adds to the reply's line on the agent trail (Hugo's brain: the intent MODEL and the tier); `lastSent`: it reached WhatsApp.
+  let lastSent = false;
+  const say = async (text: string, kind: 'ANSWER' | 'SYSTEM' | 'HANDOFF' = 'ANSWER', conversationId: string | null = null, trail: Record<string, unknown> = {}) => {
     const out = kind === 'SYSTEM' ? text : disclose(text, lang);
     const sent = await sendWhatsApp(db, { associateId, text: () => out, lang, category: 'assistant', kind, replyToId: replyTo }, now);
+    lastSent = sent?.status === 'SENT';
     if (sent && conversationId) await db.whatsAppMessage.update({ where: { id: sent.id }, data: { conversationId } });
     // Brief 1D-2: the assistant is a registered agent; every reply is on its trail.
-    await logBuiltInAgentAction(db, 'whatsapp-assistant', { action: 'agent.whatsapp.reply', entityType: 'WhatsAppMessage', entityId: sent?.id ?? replyTo ?? 'unsent', metadata: { intent, kind, lang, associateId } });
+    await logBuiltInAgentAction(db, 'whatsapp-assistant', { action: 'agent.whatsapp.reply', entityType: 'WhatsAppMessage', entityId: sent?.id ?? replyTo ?? 'unsent', metadata: { intent, kind, lang, associateId, ...trail } });
     return out;
   };
 
@@ -221,9 +236,29 @@ export async function handleInbound(received: InboundMessage, db: Db = defaultPr
     }
   }
 
+  // Hugo's brain (lib/hugoWhatsapp), loaded on use: it reaches the registry, the model and the tasks.
+  const turn = async () => {
+    const brain = await import('./hugoWhatsapp.js');
+    const t: import('./hugoWhatsapp.js').WaTurn = {
+      db,
+      now,
+      associateId,
+      userId: user?.id ?? null,
+      lang,
+      text: msg.text,
+      inboundId: replyTo,
+      say: async (text, kind, conversationId, trail) => ({ text: await say(text, kind, conversationId, trail), sent: lastSent }),
+      handoff: (text) => handoff(db, associateId, user?.id ?? null, text, now),
+      registry: (extra) => registryAnswer(extra),
+    };
+    return { brain, t };
+  };
+
   switch (intent) {
     case 'OPT_OUT': {
       await db.whatsAppConsent.update({ where: { associateId }, data: { status: 'OPTED_OUT', optedOutAt: now, source: 'reply' } });
+      // A task offer waiting on START is set aside: STOP means stop.
+      await voidOffers(db, associateId, now);
       // Their last word still gets its one confirmation.
       const text = WA_REPLY.optedOut(lang);
       await db.whatsAppConsent.update({ where: { associateId }, data: { status: 'OPTED_IN' } });
@@ -232,6 +267,12 @@ export async function handleInbound(received: InboundMessage, db: Db = defaultPr
       return { intent, reply: text, associateId };
     }
     case 'OPT_IN': {
+      // Already on, with a task offer of theirs waiting: START is their tap on it (lib/hugoWhatsapp).
+      if (consent.status === 'OPTED_IN' && user && startReply(msg.text) && (await pendingOffer(db, associateId, now))) {
+        const { brain, t } = await turn();
+        const taken = await brain.takeOfferOnWhatsApp(t);
+        if (taken) return taken;
+      }
       await db.whatsAppConsent.update({ where: { associateId }, data: { status: 'OPTED_IN', optedInAt: now, optedOutAt: null, source: 'reply' } });
       return { intent, reply: await say(WA_REPLY.optedIn(lang, getBrandingSync().assistantName), 'SYSTEM'), associateId };
     }
@@ -242,28 +283,45 @@ export async function handleInbound(received: InboundMessage, db: Db = defaultPr
       if (user) await db.user.update({ where: { id: user.id }, data: { language: lang } });
       return { intent, reply: await say(WA_REPLY.languageSet(lang), 'SYSTEM'), associateId };
     }
-    case 'RENEW': {
-      const { answerRenewals } = await import('./complianceAgent.js');
-      return { intent, reply: await say((await answerRenewals(db, tenantIdForWrite(), associateId, lang, now)).reply), associateId };
-    }
-    case 'PAYDAY': {
-      const pay = await answerPayday(associateId, lang, now);
-      if (pay.scheduled) return { intent, reply: await say(pay.text), associateId };
-      // No schedule to read: a person has to set one up, so the question goes
-      // to one — as any question Hugo can't answer does on WhatsApp. The reply
-      // says it was passed on only when it was.
-      const h = await handoff(db, associateId, user?.id ?? null, msg.text, now);
-      const next = h.conversationId ? WA_REPLY.handoff(lang, h.who) : WA_REPLY.handoffUnsent(lang);
-      return { intent, reply: await say(`${pay.text} ${next}`, 'HANDOFF', h.conversationId), associateId };
-    }
-    case 'RIDE':
-      return { intent, reply: await say(await answerRide(db, associateId, lang, now)), associateId };
-    case 'SCHEDULE':
-      return { intent, reply: await say(await answerSchedule(db, associateId, lang, now)), associateId };
-    default: {
-      const h = await handoff(db, associateId, user?.id ?? null, msg.text, now);
-      const reply = h.conversationId ? WA_REPLY.handoff(lang, h.who) : WA_REPLY.handoffUnsent(lang);
-      return { intent: 'HANDOFF', reply: await say(reply, 'HANDOFF', h.conversationId), associateId };
+  }
+
+  /** The registry's answer, exactly as before Hugo's brain; `extra`: one line said after it (the allowance notice). */
+  async function registryAnswer(extra?: string): Promise<HandledInbound> {
+    const plus = (text: string) => (extra ? `${text}\n\n${extra}` : text);
+    switch (intent) {
+      case 'RENEW': {
+        const { answerRenewals } = await import('./complianceAgent.js');
+        return { intent, reply: await say(plus((await answerRenewals(db, tenantIdForWrite(), associateId!, lang, now)).reply)), associateId };
+      }
+      case 'PAYDAY': {
+        const pay = await answerPayday(associateId!, lang, now);
+        if (pay.scheduled) return { intent, reply: await say(plus(pay.text)), associateId };
+        // No schedule to read: a person has to set one up, so the question goes
+        // to one — as any question Hugo can't answer does on WhatsApp. The reply
+        // says it was passed on only when it was.
+        const h = await handoff(db, associateId!, user?.id ?? null, msg.text, now);
+        const next = h.conversationId ? WA_REPLY.handoff(lang, h.who) : WA_REPLY.handoffUnsent(lang);
+        return { intent, reply: await say(plus(`${pay.text} ${next}`), 'HANDOFF', h.conversationId), associateId };
+      }
+      case 'RIDE':
+        return { intent, reply: await say(plus(await answerRide(db, associateId!, lang, now))), associateId };
+      case 'SCHEDULE':
+        return { intent, reply: await say(plus(await answerSchedule(db, associateId!, lang, now))), associateId };
+      default: {
+        const h = await handoff(db, associateId!, user?.id ?? null, msg.text, now);
+        const reply = h.conversationId ? WA_REPLY.handoff(lang, h.who) : WA_REPLY.handoffUnsent(lang);
+        return { intent: 'HANDOFF', reply: await say(plus(reply), 'HANDOFF', h.conversationId), associateId };
+      }
     }
   }
+
+  // Everything above stays deterministic. The rest is Hugo's brain — the same one the app has —
+  // for someone still opted in with an account: work to hand over, the registry at once for a
+  // plain question about their own records, the model for the rest, the registry when the model
+  // can't (lib/hugoWhatsapp). Opted out, nothing goes out, so nothing is asked of the model.
+  if (consent.status === 'OPTED_IN' && user) {
+    const { brain, t } = await turn();
+    return brain.answerOnWhatsApp(t);
+  }
+  return registryAnswer();
 }

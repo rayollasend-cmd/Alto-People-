@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { HugoTaskChoice, HugoTaskKind, HugoTaskStatus, HugoTaskView } from '@alto-people/shared';
-import { ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, FileText, Plane, CalendarPlus, Users, Wallet, type LucideIcon } from '@/components/ui/icons';
+import { ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, FileText, Plane, CalendarPlus, Repeat, Target, Users, Wallet, type LucideIcon } from '@/components/ui/icons';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -18,6 +18,9 @@ export const TASK_ICON: Record<HugoTaskKind, LucideIcon> = {
   WATCH_DOCUMENT: FileText,
   FIND_COVER: ArrowLeftRight,
   CHASE_CONFIRMATIONS: Users,
+  RECURRING: Repeat,
+  // A goal renders as HugoGoalCard; the icon serves lists that show every kind.
+  GOAL: Target,
 };
 
 const STATUS_VARIANT: Record<HugoTaskStatus, 'accent' | 'info' | 'pending' | 'success' | 'default' | 'destructive'> = {
@@ -61,7 +64,7 @@ export function HugoTaskCard({
   const Icon = TASK_ICON[task.kind];
   const title = taskTitle(task, t, lang);
   const open = OPEN.includes(task.status);
-  const needs = needsLine(task, t);
+  const needs = needsLine(task, t, lang);
   const steps = task.events.filter((e) => e.code !== 'STARTED');
   const result = task.result;
   // A task waiting on the person stops through its own answer (the API's STOP); a running one through cancel.

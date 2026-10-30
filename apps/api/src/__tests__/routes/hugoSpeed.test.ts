@@ -45,6 +45,7 @@ vi.mock('../../lib/assistantModel.js', async (orig) => {
 import { createApp } from '../../app.js';
 import { ensureBuiltInAgents } from '../../lib/agents.js';
 import { flushPendingAudits } from '../../lib/audit.js';
+import { chargeModelCall } from '../../lib/hugoAllowance.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createUser, prisma, truncateAll } from '../../../test/db.js';
 
@@ -65,12 +66,15 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
   return a;
 }
 
+// A fresh pair of emails per test: the per-email sign-in limit (5 in 15 minutes) holds across a file.
+let worlds = 0;
 async function world() {
+  const n = ++worlds;
   // The built-in agents take the first admin as their owner: an agent with no owner is off.
-  const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR', email: 'hr@example.com' });
+  const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR', email: `hr${n}@example.com` });
   await ensureBuiltInAgents(prisma, ALTO_TENANT_ID);
   const ana = await createAssociate({ firstName: 'Ana', lastName: 'Lopez' });
-  const { user: anaUser } = await createUser({ role: 'ASSOCIATE', associateId: ana.id, email: 'ana@example.com' });
+  const { user: anaUser } = await createUser({ role: 'ASSOCIATE', associateId: ana.id, email: `ana${n}@example.com` });
   return { hr, anaUser };
 }
 
@@ -144,3 +148,36 @@ describe('POST /hugo/ask/stream', () => {
     expect(r.headers['content-type']).toContain('application/json');
   });
 });
+
+describe('each person’s allowance', () => {
+  it('used up: the question is answered from the records, says until when — and the model is never called', async () => {
+    const w = await world();
+    // Ana's dollar for this cycle is spent.
+    await chargeModelCall({ userId: w.anaUser.id, purpose: 'chat' }, { tier: 'fast', model: 'deepseek-flash', inputTokens: 4_000_000, cachedTokens: 0, outputTokens: 0 });
+    const ana = await loginAs(w.anaUser.email);
+    const r = await ana.post('/hugo/ask').send({ text: 'Why was my check short?' });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ source: 'rules', tier: 'instant', allowance: { exhausted: true } });
+    expect(r.body.reply).toMatch(/I can only answer the basics/);
+    expect(calls.tiers).toEqual([]);
+    // A plain question still gets its instant answer, with no note.
+    const payday = await ana.post('/hugo/ask').send({ text: 'When is payday?' });
+    expect(payday.body).toMatchObject({ intent: 'PAYDAY', tier: 'instant', allowance: null });
+    // HR's allowance is untouched by Ana's.
+    const hr = await loginAs(w.hr.email);
+    expect((await hr.post('/hugo/ask').send({ text: 'who is on tonight?' })).body.source).toBe('model');
+  });
+
+  it('GET /hugo/allowance: a worker sees the share used and the renewal day; the office also sees dollars', async () => {
+    const w = await world();
+    await chargeModelCall({ userId: w.anaUser.id, purpose: 'chat' }, { tier: 'fast', model: 'deepseek-flash', inputTokens: 1_000_000, cachedTokens: 0, outputTokens: 0 });
+    const ana = await loginAs(w.anaUser.email);
+    const mine = (await ana.get('/hugo/allowance')).body;
+    expect(mine).toMatchObject({ on: true, allowanceClass: 'floor', usedPercent: 30, exhausted: false });
+    expect(mine.spentUsd).toBeUndefined();
+    expect(new Date(mine.renewsAt).getTime() - new Date(mine.periodStart).getTime()).toBe(30 * 86_400_000);
+    const hr = await loginAs(w.hr.email);
+    expect((await hr.get('/hugo/allowance')).body).toMatchObject({ allowanceClass: 'staff', spentUsd: 0, capUsd: 10, usedPercent: 0 });
+  });
+});
+

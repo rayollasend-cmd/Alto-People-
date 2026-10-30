@@ -19,7 +19,17 @@ import { hugoTaskTurn } from '../lib/hugoTaskChat.js';
 import { instantIntent, pickTier } from '../lib/hugoRouting.js';
 import { type Answer, type Asker, canList, contextFor, escalationFor, registryFor, rulesAnswer } from '../lib/hugoRegistry.js';
 import { toHugoLang } from '../lib/hugoWorkCopy.js';
+import { HugoAllowanceError, MICROS_PER_USD, allowanceStatus, allowanceUsedLine } from '../lib/hugoAllowance.js';
 import { cancelHugoTask, getHugoTask, hugoTaskCounts, listHugoTasks, markHugoTasksSeen, respondToHugoTask, startHugoTask } from '../lib/hugoTasks.js';
+import { hugoMemoryTurn, type HugoMemoryTurn } from '../lib/hugoMemory.js';
+import { hugoMemoryRouter } from './hugoMemory.js';
+import type { HugoTaskOffer } from '@alto-people/shared';
+import { offerRecurringTool } from '../lib/hugoRecurringChat.js';
+import { offerGoalTool } from '../lib/hugoGoalChat.js';
+import { hugoActivityRouter } from './hugoActivity.js';
+import { hugoRecurringRouter } from './hugoRecurring.js';
+import { hugoAccountRouter } from './hugoAccount.js';
+import { ensureHugoProfileOnSignIn, modelHistory, saveHugoReply, saveHugoTurns } from '../lib/hugoThread.js';
 import { acceptHugoNote, countNewHugoNotes, dismissHugoNote, hugoNoteSettings, listHugoNotes, markHugoNotesSeen, setHugoNoteKind } from '../lib/hugoNotes.js';
 
 /**
@@ -44,6 +54,9 @@ import { acceptHugoNote, countNewHugoNotes, dismissHugoNote, hugoNoteSettings, l
  *   POST /hugo/seen                  { tasks?, notes? } → they looked
  *   GET  /hugo/summary               the badge: working, needs you, done unseen, new notes
  *
+ *   What Hugo knows (routes/hugoMemory, lib/hugoMemory) — the facts a person told him, theirs to see and edit:
+ *   GET/POST /hugo/memory, PATCH/DELETE /hugo/memory/:id, DELETE /hugo/memory (forget all), PUT /hugo/memory/settings
+ *
  *   One registry (lib/hugo) answers on WhatsApp and here: an associate asks
  *   about their own payday, ride, schedule and documents; a desk asks about
  *   coverage and what the agents have waiting on it. Only what is on is
@@ -62,6 +75,14 @@ import { acceptHugoNote, countNewHugoNotes, dismissHugoNote, hugoNoteSettings, l
  */
 
 export const hugoRouter = Router();
+
+// What Hugo knows (routes/hugoMemory): the person's own facts — read, change, remove, switch off.
+hugoRouter.use('/memory', hugoMemoryRouter);
+// Everything Hugo did for the person (routes/hugoActivity), and changing when a recurring brief comes (routes/hugoRecurring).
+hugoRouter.use('/activity', hugoActivityRouter);
+hugoRouter.use('/recurring', hugoRecurringRouter);
+// The person's own Hugo (routes/hugoAccount): their conversation on every device, their settings; the organization's spend.
+hugoRouter.use(hugoAccountRouter);
 
 const PageSchema = z
   .object({
@@ -89,6 +110,8 @@ const HandoffSchema = z.object({ text: z.string().trim().min(1).max(500) });
 hugoRouter.get('/', requireAuth, async (req, res) => {
   const user = req.user! as Asker;
   const { tenantId, audience, ctx, lang, name, profile } = await contextFor(user);
+  // Every account Hugo serves has its own Hugo (lib/hugoThread): made here, on the first call any signed-in app makes.
+  await ensureHugoProfileOnSignIn(user.id);
   const sitesNoun = termsIn(profile, lang).sites.toLowerCase();
   const can = canList(registryFor(user, tenantId, lang, sitesNoun, new Date(), name, ctx).tools, lang, ctx);
   res.json({ name, audience, intro: WA_REPLY.appIntro(lang, name, can.map((c) => c.label.toLowerCase()), { tasks: can.some((c) => c.key.startsWith('TASK_')) }), can, model: modelAvailable() });
@@ -117,6 +140,10 @@ const STEP_OF: Record<string, HugoStep> = {
   ACT_REPORT: 'report',
   ACT_FIND_PERSON: 'team',
   ESCALATE: 'person',
+  MEMORY_REMEMBER: 'memory',
+  MEMORY_FORGET: 'memory',
+  OFFER_RECURRING: 'action',
+  OFFER_GOAL: 'action',
 };
 export const stepOf = (key: string): HugoStep => STEP_OF[key] ?? (key.startsWith('ACT_') ? 'action' : 'records');
 
@@ -132,7 +159,7 @@ async function answerAsk(req: Request, body: AskBody, live?: { emit: (e: HugoAsk
   // (the app stops them first; this is the backstop — shared/sensitiveText).
   const text = redactSensitiveNumbers(body.text);
   const page = body.page;
-  const history = body.history?.map((h) => ({ ...h, text: redactSensitiveNumbers(h.text) }));
+  // The conversation so far is the person's own, read on the server (lib/hugoThread modelHistory): a client's `history` is ignored.
   const { tenantId, audience, ctx, lang, name, profile } = await contextFor(user);
   const now = new Date();
   const terms = termsIn(profile, lang);
@@ -145,7 +172,8 @@ async function answerAsk(req: Request, body: AskBody, live?: { emit: (e: HugoAsk
   if (taskTurn) {
     await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.reply', entityType: 'User', entityId: user.id, metadata: { intent: taskTurn.intent, tools: [], source: 'rules', tier: 'instant', channel: 'app', audience, lang, offers: taskTurn.offers.map((o) => o.task.kind) } });
     enqueueAudit({ actorUserId: user.id, clientId: user.clientId, action: 'hugo.asked', entityType: 'Hugo', entityId: taskTurn.intent, metadata: { intent: taskTurn.intent, tools: [], source: 'rules', tier: 'instant', channel: 'app', audience } }, 'hugo');
-    return { intent: taskTurn.intent, reply: taskTurn.reply, linkUrl: null, handoff: null, source: 'rules', tier: 'instant', actions: [], tables: [], offers: taskTurn.offers, view: taskTurn.view ?? null };
+    const saved = await saveHugoTurns(user, { question: text, answer: { reply: taskTurn.reply, intent: taskTurn.intent }, askedAt: now });
+    return { turns: saved, intent: taskTurn.intent, reply: taskTurn.reply, linkUrl: null, handoff: null, source: 'rules', tier: 'instant', actions: [], tables: [], offers: taskTurn.offers, view: taskTurn.view ?? null };
   }
 
   let intent = '';
@@ -167,19 +195,32 @@ async function answerAsk(req: Request, body: AskBody, live?: { emit: (e: HugoAsk
 
   // What the model may propose (never do): confirmation cards and tables collected as it works.
   const acting: ActionContext = { req, user: req.user!, proposals: [], tables: [] };
+  // Briefs on a schedule the model offers (lib/hugoRecurringChat): Start cards — nothing is set up until the tap.
+  const recurringOffers: HugoTaskOffer[] = [];
+  // A goal the model offers for an outcome that takes time (lib/hugoGoalChat): a Start card, nothing until the tap.
+  const goalOffers: HugoTaskOffer[] = [];
+  // What the person told Hugo before (lib/hugoMemory), when their memory is on: in the prompt, with remember/forget.
+  let memory: HugoMemoryTurn | null = null;
+  // The person's own allowance for Hugo's thinking (lib/hugoAllowance): used up, the registry answers and says until when.
+  let allowance: { exhausted: true; renewsAt: string } | null = null;
   if (!out && modelAvailable()) {
+    const left = await allowanceStatus(user.id, now);
+    if (left.exhausted) allowance = { exhausted: true, renewsAt: left.renewsAt.toISOString() };
+  }
+  if (!out && modelAvailable() && !allowance) {
     source = 'model';
     const escalation = audience === 'associate' ? await escalationFor(user) : null;
     const actTools = actionTools(acting);
     const canPropose = actTools.some((t) => t.name.startsWith('propose_'));
     tier = pickTier(text, { canPropose, canReport: actTools.some((t) => t.key === 'ACT_REPORT') });
+    memory = await hugoMemoryTurn(user, { name, lang: toHugoLang(user.language), now });
     try {
       const answer = await answerWithModel({
         text,
-        history: history ?? [],
+        history: await modelHistory(user.id, now),
         page: (page ?? null) as AssistantPage | null,
         // A worker's own paystub and withholding (lib/payAssistantTools) — their records only.
-        tools: [...tools, ...actTools, ...payTools(prisma, user)],
+        tools: [...tools, ...actTools, ...payTools(prisma, user), ...(memory?.tools ?? []), offerRecurringTool(req.user!, recurringOffers, now), offerGoalTool(req.user!, goalOffers, now)],
         identity: {
           name,
           product: getBrandingSync().orgName || 'Alto People',
@@ -192,6 +233,8 @@ async function answerAsk(req: Request, body: AskBody, live?: { emit: (e: HugoAsk
         },
         now,
         tier,
+        meter: { userId: user.id, purpose: 'chat' },
+        memory: memory?.memory,
         live: live && {
           onTool: (key) => live.emit({ t: 'step', step: stepOf(key) }),
           onText: (d) => live.emit({ t: 'text', d }),
@@ -205,8 +248,9 @@ async function answerAsk(req: Request, body: AskBody, live?: { emit: (e: HugoAsk
       offer = answer.handoff;
     } catch (err) {
       // The model is a convenience over the registry, never a dependency:
-      // a timeout or an outage falls back to the rules path below.
-      if (!live?.signal.aborted) console.warn('[assistant] model answer failed; answering from the registry:', err instanceof Error ? err.message : err);
+      // a timeout, an outage or a used-up allowance falls back to the rules path below.
+      if (err instanceof HugoAllowanceError) allowance = { exhausted: true, renewsAt: err.renewsAt.toISOString() };
+      else if (!live?.signal.aborted) console.warn('[assistant] model answer failed; answering from the registry:', err instanceof Error ? err.message : err);
       live?.emit({ t: 'clear' });
       source = 'rules';
       tier = 'instant';
@@ -214,12 +258,40 @@ async function answerAsk(req: Request, body: AskBody, live?: { emit: (e: HugoAsk
     }
   }
   if (!out) ({ intent, out, offer } = await rulesAnswer(text, user, ctx, lang, name, mk, tools));
+  if (allowance) out = { ...out, reply: `${out.reply}\n\n${allowanceUsedLine(toHugoLang(user.language), new Date(allowance.renewsAt))}` };
+  // What this answer kept (the chip, with Undo) or forgot; the first time, Hugo says where it lives.
+  const kept = memory ? await memory.finish(out.reply) : null;
+  if (kept) out = { ...out, reply: kept.reply };
 
   // On the assistant's trail and the audit log: the intent, the tools and the tier, never the words.
   await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.reply', entityType: 'User', entityId: user.id, metadata: { intent, tools: toolsUsed, source, tier, channel: 'app', audience, lang } });
   enqueueAudit({ actorUserId: user.id, clientId: user.clientId, action: 'hugo.asked', entityType: 'Hugo', entityId: intent, metadata: { intent, tools: toolsUsed, source, tier, channel: 'app', audience } }, 'hugo');
-  return { intent, reply: out.reply, linkUrl: out.linkUrl, handoff: offer, source, tier, actions: acting.proposals, tables: acting.tables, offers: [], view: null };
+  // Kept on the server (lib/hugoThread): the conversation follows the account to every device.
+  const saved = await saveHugoTurns(user, { question: text, answer: { reply: out.reply, intent, linkUrl: out.linkUrl }, askedAt: now });
+  return { turns: saved, intent, reply: out.reply, linkUrl: out.linkUrl, handoff: offer, source, tier, allowance, actions: acting.proposals, tables: acting.tables, offers: [...recurringOffers, ...goalOffers], view: null, ...kept?.fields };
 }
+
+/**
+ * GET /hugo/allowance — where the person's own allowance for Hugo's thinking
+ * stands: the share used, when it renews, and their class. The amounts in
+ * dollars only for the office (staff); a worker sees the share.
+ */
+hugoRouter.get('/allowance', requireAuth, async (req, res) => {
+  const user = req.user! as Asker;
+  await contextFor(user);
+  const s = await allowanceStatus(user.id);
+  // Anything used shows as at least 1% — "0% used" after a few answers reads as broken.
+  const usedPercent = s.capMicros ? Math.min(100, s.spentMicros > 0 ? Math.max(1, Math.round((s.spentMicros / s.capMicros) * 100)) : 0) : 100;
+  res.json({
+    on: modelAvailable(),
+    allowanceClass: s.allowanceClass,
+    usedPercent,
+    exhausted: s.exhausted,
+    periodStart: s.periodStart.toISOString(),
+    renewsAt: s.renewsAt.toISOString(),
+    ...(s.allowanceClass === 'staff' ? { spentUsd: s.spentMicros / MICROS_PER_USD, capUsd: s.capMicros / MICROS_PER_USD } : {}),
+  });
+});
 
 hugoRouter.post('/ask', requireAuth, async (req, res) => {
   res.json(await answerAsk(req, AskSchema.parse(req.body)));
@@ -291,7 +363,11 @@ hugoRouter.post('/handoff', requireAuth, async (req, res) => {
   if (!user.associateId) throw new HttpError(403, 'no_handoff', 'Only a worker\'s question can be passed to their supervisor.');
   const hand = await handoff(prisma, user.associateId, user.id, text, new Date(), name);
   await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.handoff', entityType: 'User', entityId: user.id, metadata: { channel: 'app', sent: Boolean(hand.conversationId) } });
-  res.json({ reply: hand.conversationId ? WA_REPLY.handoff(lang, hand.who) : WA_REPLY.handoffUnsent(lang), linkUrl: hand.conversationId ? `/messages/${hand.conversationId}` : hand.conversationId === null ? null : '/messages', sent: Boolean(hand.conversationId) });
+  const reply = hand.conversationId ? WA_REPLY.handoff(lang, hand.who) : WA_REPLY.handoffUnsent(lang);
+  const linkUrl = hand.conversationId ? `/messages/${hand.conversationId}` : hand.conversationId === null ? null : '/messages';
+  // The confirmation is part of the conversation, on every device (lib/hugoThread).
+  const turn = await saveHugoReply(user, { text: reply, intent: 'HANDOFF', linkUrl });
+  res.json({ reply, linkUrl, sent: Boolean(hand.conversationId), turn });
 });
 
 /* ------------------------------------------------------- Hugo works for you */
@@ -332,7 +408,8 @@ hugoRouter.post('/tasks/:id/respond', requireAuth, async (req, res) => {
   const user = await worker(req);
   const { id } = IdParam.parse(req.params);
   const { choice } = HugoTaskRespondInputSchema.parse(req.body ?? {});
-  res.json({ task: await respondToHugoTask(user, id, choice) });
+  // The request itself rides along: an approved goal step runs through it, as the person (lib/hugoGoals).
+  res.json({ task: await respondToHugoTask(user, id, choice, new Date(), req) });
 });
 
 hugoRouter.get('/notes', requireAuth, async (req, res) => {

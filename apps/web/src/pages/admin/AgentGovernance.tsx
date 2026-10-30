@@ -21,6 +21,7 @@ import { fmtCount, fmtDateTime } from '@/lib/format';
 import { getAgentControl, getPlatformControl, listAgents, listDecisionRecords, resumeAllAgents, resumePlatformAgents, suspendPlatformAgents } from '@/lib/agentsApi';
 import { AgentGatesPanel } from './AgentGatesPanel';
 import { McpCatalogPreview } from './McpCatalogPreview';
+import { HugoAllowanceAdminSection } from '@/components/assistant/HugoAllowanceAdmin';
 import { OwnerPerson, STATUS_VARIANT, SuspendAllDialog, certificationLabel, errorMessage, familyLabel, versionLabel } from './AgentRegistryAdmin';
 
 /**
@@ -96,6 +97,9 @@ export function AgentGovernance() {
       <CertificationAcross agents={agents} loading={registry.isLoading} />
 
       <CredentialsAcross agents={agents} loading={registry.isLoading} />
+
+      {/* What the assistant's thinking cost this month, and each person's allowance (manage:org). */}
+      <HugoAllowanceAdminSection />
 
       <SettingsSection
         id="mcp"

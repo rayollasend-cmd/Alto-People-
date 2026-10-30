@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/Input';
 import { useAssistant } from '@/lib/assistantContext';
 import { useAuth } from '@/lib/auth';
 import { MOOD_POSE, useHugoMood, type HugoMood } from '@/components/assistant/hugoMood';
+import { allowanceRenewDay, useHugoAllowance } from '@/components/assistant/HugoAllowance';
 import { cn } from '@/lib/cn';
 import '@/lib/i18n/en/hugoSeat';
 import '@/lib/i18n/en/hugoPane';
@@ -125,7 +126,7 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
                 {isHugo(me.data.name) && <span className="rounded-full border border-accent/40 bg-accent-fill/10 px-2 py-px text-xs font-medium text-accent">{t('hugoSeat.tagline')}</span>}
               </div>
               {/* What he is up to, written for the card; his full introduction is in the panel. */}
-              {isHugo(me.data.name) ? <HugoMoodLine mood={mood} /> : <div className="text-xs2 text-ink-muted">{me.data.intro}</div>}
+              {isHugo(me.data.name) ? <HugoMoodLine mood={mood} model={Boolean(me.data.model)} /> : <div className="text-xs2 text-ink-muted">{me.data.intro}</div>}
             </div>
           </div>
           <form
@@ -172,12 +173,17 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
 }
 
 /** The seat's status line: a dot and his mood in plain words. */
-function HugoMoodLine({ mood }: { mood: HugoMood }) {
+function HugoMoodLine({ mood, model = false }: { mood: HugoMood; /** A model answers here: his thinking time can run out. */ model?: boolean }) {
   const { t } = useI18n();
-  const { summary, live } = useAssistant();
+  const { summary, live, openWaiting } = useAssistant();
   const working = summary?.working ?? 0;
-  const line =
-    mood === 'answering'
+  // The person's thinking time used up: idle, the line says until when he answers the basics (the panel says which).
+  const seat = useAssistant();
+  const allowance = useHugoAllowance(model && seat.available);
+  const resting = (mood === 'coffee' || mood === 'reading') && allowance.data?.on && allowance.data.exhausted ? allowance.data : null;
+  const line = resting
+    ? t('hugoSeat.allowance.basics', { date: allowanceRenewDay(resting) })
+    : mood === 'answering'
       ? t(`hugoPane.step.${live?.step ?? 'records'}` as const)
       : mood === 'working'
         ? working > 1
@@ -185,7 +191,7 @@ function HugoMoodLine({ mood }: { mood: HugoMood }) {
           : t('hugoSeat.mood.working')
         : t(`hugoSeat.mood.${mood}` as const);
   return (
-    <div className="mt-0.5 flex items-center gap-1.5 text-sm text-ink-muted" data-testid="hugo-mood" data-mood={mood}>
+    <div className="mt-0.5 flex items-center gap-1.5 text-sm text-ink-muted" data-testid="hugo-mood" data-mood={mood} data-allowance={resting ? 'used-up' : undefined}>
       <span
         className={cn(
           'h-2 w-2 shrink-0 rounded-full',
@@ -194,7 +200,14 @@ function HugoMoodLine({ mood }: { mood: HugoMood }) {
         )}
         aria-hidden="true"
       />
-      <span>{line}</span>
+      {mood === 'needsYou' ? (
+        // "I need a quick answer from you" opens what is waiting on them.
+        <button type="button" onClick={openWaiting} className="rounded text-left text-ink underline decoration-dotted underline-offset-2 hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11">
+          {line}
+        </button>
+      ) : (
+        <span>{line}</span>
+      )}
     </div>
   );
 }
@@ -208,7 +221,7 @@ function HugoSeatWork({ name }: { name: string }) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { summary, openTasks } = useAssistant();
+  const { summary, openTasks, openWaiting } = useAssistant();
   const notes = useQuery({ queryKey: ['hugo', 'notes'], queryFn: listHugoNotes, staleTime: 30_000, retry: false });
   const [busy, setBusy] = useState<{ id: string; what: 'accept' | 'dismiss' } | null>(null);
   const done = () => {
@@ -250,7 +263,7 @@ function HugoSeatWork({ name }: { name: string }) {
       {(needsYou > 0 || working > 0) && (
         <button
           type="button"
-          onClick={() => openTasks()}
+          onClick={() => (needsYou > 0 ? openWaiting() : openTasks())}
           className="group flex min-h-11 w-full items-center gap-2 rounded-xl border border-line bg-surface-raised px-3 py-2 text-left text-sm text-ink transition-colors hover:border-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
           <span className="min-w-0 flex-1">

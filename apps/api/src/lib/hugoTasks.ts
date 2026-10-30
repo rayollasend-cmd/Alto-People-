@@ -1,3 +1,4 @@
+import type { Request } from 'express';
 import { Prisma, type HugoTask, type HugoTaskEvent } from '@prisma/client';
 import {
   HUGO_TASK_CHOICES_FOR,
@@ -24,6 +25,8 @@ import type { SessionUser } from '../types/express.js';
 import { logBuiltInAgentAction, type AgentContext } from './agents.js';
 import { enqueueAudit } from './audit.js';
 import { armJob, stopJob } from './jobs.js';
+import { answerGoal, cleanGoal, expireGoal, goalKey, goalViewOf, kickHugoGoal, prepareGoal, stepGoal, wakeGoal } from './hugoGoals.js';
+import { expireRecurring, keepGoingOutcome, prepareRecurring, recurringKey, stepRecurring } from './hugoRecurring.js';
 import { HUGO_NOTICE, hugoDay, hugoPeriod, hugoWhen, type HugoLang } from './hugoWorkCopy.js';
 import { SHIFT_REF_SELECT, hugoAgent, openShiftsThatFit, readerOf, sendHugoNotice, shiftRefOf } from './hugoWork.js';
 import { emitLiveEvent } from './liveEvents.js';
@@ -84,6 +87,10 @@ const GAP: Record<HugoTaskKind, number> = {
   WATCH_DOCUMENT: 10 * MIN,
   FIND_COVER: 10 * MIN,
   CHASE_CONFIRMATIONS: 20 * MIN,
+  // A recurring brief always says when it is next due (lib/hugoRecurring); this is the fallback.
+  RECURRING: 60 * MIN,
+  // A goal always says when it looks next (lib/hugoGoals); this is the fallback.
+  GOAL: 12 * HOUR,
 };
 
 /** The modules a kind needs on. */
@@ -174,6 +181,10 @@ function keyOf(input: HugoTaskCreate): string {
       return `${input.kind}:${input.shiftId}`;
     case 'CHASE_CONFIRMATIONS':
       return `${input.kind}:${input.date ?? 'next'}`;
+    case 'RECURRING':
+      return recurringKey(input);
+    case 'GOAL':
+      return goalKey(input.goal);
     default:
       return input.kind;
   }
@@ -291,6 +302,10 @@ async function prepare(user: SessionUser, input: HugoTaskCreate, now: Date): Pro
       if (!total) throw new HttpError(409, 'nothing_to_chase', 'No shifts that day need confirming.');
       return { subject: { date, shifts: total }, state: {}, expiresAt: end, linkUrl: '/approvals?tab=unconfirmed', progress: { done: 0, total } };
     }
+    case 'RECURRING':
+      return prepareRecurring(user, input, now);
+    case 'GOAL':
+      return prepareGoal(user, input, now);
   }
 }
 
@@ -315,10 +330,14 @@ async function assertMayStart(user: SessionUser, kind: HugoTaskKind): Promise<vo
 export async function startHugoTask(
   user: SessionUser,
   input: HugoTaskCreate,
-  source: 'panel' | 'chat' | 'note',
+  source: 'panel' | 'chat' | 'note' | 'whatsapp' | 'goal',
   now: Date = new Date(),
   noteId: string | null = null,
+  /** The goal that started it on an approved step (lib/hugoGoals): its news wakes the goal. */
+  parentId: string | null = null,
 ): Promise<{ task: HugoTaskView; existing: boolean }> {
+  // A goal is kept without any SSN or account number in it.
+  if (input.kind === 'GOAL') input = cleanGoal(input);
   await assertMayStart(user, input.kind);
   const key = keyOf(input);
   const same = await prisma.hugoTask.findFirst({
@@ -343,6 +362,7 @@ export async function startHugoTask(
       linkUrl: prep.linkUrl,
       source,
       noteId,
+      ...(parentId ? { parentId } : {}),
       expiresAt: prep.expiresAt,
       nextCheckAt: now,
       // The app's clock, like every later line: the trail reads in the order it happened.
@@ -351,6 +371,11 @@ export async function startHugoTask(
   });
   await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.task.started', entityType: 'HugoTask', entityId: task.id, metadata: { kind: task.kind, source } });
   enqueueAudit({ actorUserId: user.id, clientId: user.clientId ?? null, action: 'hugo.task_started', entityType: 'HugoTask', entityId: task.id, metadata: { kind: task.kind, source } }, 'hugo');
+  // A goal's first step thinks (a model call): it plans in the background, and the card follows live.
+  if (task.kind === 'GOAL') {
+    kickHugoGoal(task.id, task.tenantId, new Date(now.getTime() + 1));
+    return { task: await viewOf(task.id), existing: false };
+  }
   await advanceHugoTask(task.id, new Date(now.getTime() + 1));
   return { task: await viewOf(task.id), existing: false };
 }
@@ -364,6 +389,8 @@ const STEPS: Record<HugoTaskKind, (t: HugoTask, c: Ctx) => Promise<Outcome>> = {
   WATCH_DOCUMENT: stepDocument,
   FIND_COVER: stepCover,
   CHASE_CONFIRMATIONS: stepChase,
+  RECURRING: (t, c) => stepRecurring(t, c),
+  GOAL: (t, c) => stepGoal(t, c),
 };
 
 /**
@@ -725,6 +752,8 @@ async function stepChase(t: HugoTask, c: Ctx): Promise<Outcome> {
 
 /** The deadline passed with the task still open. */
 async function expire(t: HugoTask, c: Ctx): Promise<Outcome> {
+  if (t.kind === 'RECURRING') return expireRecurring(t, c);
+  if (t.kind === 'GOAL') return expireGoal(t, c);
   if (t.kind === 'FIND_COVER') {
     const st = t.state as unknown as CoverState;
     const swap = st.current ? await prisma.shiftSwapRequest.findUnique({ where: { id: st.current }, select: { id: true, status: true } }) : null;
@@ -788,8 +817,11 @@ async function apply(t: HugoTask, at: Date, o: Outcome, c: Ctx): Promise<boolean
   for (const [i, e] of events.entries()) {
     await prisma.hugoTaskEvent.create({ data: { tenantId: t.tenantId, taskId: t.id, code: e.code, data: (e.data ?? {}) as Prisma.InputJsonValue, createdAt: new Date(c.now.getTime() + i) } });
   }
-  if (o.notice) await sendHugoNotice(c.agent, { ...o.notice, userId: t.userId, lang: c.lang });
+  // Started from WhatsApp (lib/hugoWhatsapp): the news goes back there too, on the person's own channel settings.
+  if (o.notice) await sendHugoNotice(c.agent, { ...o.notice, userId: t.userId, lang: c.lang, ...(t.source === 'whatsapp' ? { full: true } : {}) });
   else if (changed || events.length) emitLiveEvent(t.userId, 'hugo');
+  // Something a goal started finished or needs the person: the goal looks again (lib/hugoGoals).
+  if (changed && t.parentId && (final || status === 'NEEDS_YOU')) await wakeGoal(t.parentId, c.now);
   if (changed) {
     await logBuiltInAgentAction(prisma, 'whatsapp-assistant', {
       action: `agent.task.${status.toLowerCase()}`,
@@ -822,7 +854,8 @@ export async function advanceHugoTask(taskId: string, now: Date = new Date()): P
     let o: Outcome;
     if (!active) o = { status: 'FAILED', events: [{ code: 'FAILED', data: { reason: 'no_access' } }] };
     else if (t.expiresAt <= now) o = await expire(t, c);
-    else if (t.status === 'NEEDS_YOU') {
+    // A recurring brief keeps sending while its "keep going?" waits on the person.
+    else if (t.status === 'NEEDS_YOU' && t.kind !== 'RECURRING') {
       await release(t.id, now, t.expiresAt);
       return;
     } else o = await STEPS[t.kind as HugoTaskKind](t, c);
@@ -851,14 +884,19 @@ export async function sweepHugoTasks(now: Date = new Date()): Promise<{ stepped:
       OR: [
         { status: { in: ['WORKING', 'WAITING'] }, nextCheckAt: { lte: now } },
         { status: { in: [...OPEN] }, expiresAt: { lte: now } },
+        { kind: 'RECURRING', status: 'NEEDS_YOU', nextCheckAt: { lte: now } },
       ],
       AND: [{ OR: [{ claimedAt: null }, { claimedAt: { lt: new Date(now.getTime() - STALE_CLAIM_MS) } }] }],
     },
     orderBy: { nextCheckAt: 'asc' },
     take: 200,
-    select: { id: true },
+    select: { id: true, kind: true, tenantId: true },
   });
-  for (const t of due) await advanceHugoTask(t.id, now);
+  for (const t of due) {
+    // A goal's step thinks (a model call): it runs beside the sweep, a few at a time (lib/hugoGoals).
+    if (t.kind === 'GOAL') kickHugoGoal(t.id, t.tenantId, now);
+    else await advanceHugoTask(t.id, now);
+  }
   return { stepped: due.length };
 }
 
@@ -900,7 +938,9 @@ async function claimForPerson(t: HugoTask, at: Date): Promise<void> {
 }
 
 /** Stop, under a claim already held: withdraw what is in flight, then close. */
-async function stopUnderClaim(t: HugoTask, at: Date, c: Ctx, by: 'person'): Promise<void> {
+async function stopUnderClaim(t: HugoTask, at: Date, c: Ctx, by: 'person' | 'goal'): Promise<void> {
+  // A goal stops what it started.
+  if (t.kind === 'GOAL') await stopChildTasks(t.id, at);
   if (t.kind === 'FIND_COVER') {
     const st = t.state as unknown as CoverState;
     if (st.current) {
@@ -909,6 +949,39 @@ async function stopUnderClaim(t: HugoTask, at: Date, c: Ctx, by: 'person'): Prom
     }
   }
   await apply(t, at, { status: 'CANCELLED', events: [{ code: 'CANCELLED', data: { by } }] }, c);
+}
+
+/**
+ * A goal stopped, finished or ran out (lib/hugoGoals): what it started stops
+ * too — a cover ask in flight is withdrawn — quietly; the goal's own line
+ * says so. A child in the middle of a step is tried a few times; one still
+ * busy is left to finish it.
+ */
+export async function stopChildTasks(parentId: string, now: Date = new Date()): Promise<number> {
+  const kids = await prisma.hugoTask.findMany({ where: { parentId, status: { in: [...OPEN] } }, select: { id: true } });
+  let stopped = 0;
+  for (const { id } of kids) {
+    let held = false;
+    for (let i = 0; i < 3 && !held; i++) {
+      held = await claim(id, now);
+      if (!held) await new Promise((r) => setTimeout(r, 200));
+    }
+    if (!held) continue;
+    const k = await prisma.hugoTask.findUnique({ where: { id } });
+    const agent = k ? await hugoAgent(k.tenantId) : null;
+    if (!k || !agent) {
+      await release(id, now, now);
+      continue;
+    }
+    try {
+      await stopUnderClaim(k, now, { now, agent, lang: (await readerOf(k.userId)).lang }, 'goal');
+      stopped += 1;
+    } catch (err) {
+      await release(id, now, now);
+      console.warn(`[hugo] could not stop task ${id} of goal ${parentId}:`, err instanceof Error ? err.message : err);
+    }
+  }
+  return stopped;
 }
 
 async function personCtx(t: HugoTask, now: Date): Promise<Ctx> {
@@ -932,14 +1005,21 @@ export async function cancelHugoTask(user: SessionUser, taskId: string, now: Dat
 }
 
 /** The person's answer to a task that needs them. */
-export async function respondToHugoTask(user: SessionUser, taskId: string, choice: HugoTaskChoice, now: Date = new Date()): Promise<HugoTaskView> {
+export async function respondToHugoTask(
+  user: SessionUser,
+  taskId: string,
+  choice: HugoTaskChoice,
+  now: Date = new Date(),
+  /** The person's own request: an approved goal step runs through it, as them (lib/hugoGoals). */
+  req?: Request,
+): Promise<HugoTaskView> {
   const t = await ownTask(user.id, taskId);
   if (t.status !== 'NEEDS_YOU' || !t.needs) throw new HttpError(409, 'nothing_to_answer', 'This task is not waiting on you.');
   if (!choicesFor(t).includes(choice)) throw new HttpError(400, 'invalid_choice', 'That is not one of the answers for this task.');
   const c = await personCtx(t, now);
   await claimForPerson(t, now);
   try {
-    const o = await answer(t, user, choice, c);
+    const o = await answer(t, user, choice, c, req);
     if (o === 'stop') await stopUnderClaim(t, now, c, 'person');
     else await apply(t, now, o, c);
   } catch (err) {
@@ -947,14 +1027,24 @@ export async function respondToHugoTask(user: SessionUser, taskId: string, choic
     throw err;
   }
   enqueueAudit({ actorUserId: user.id, clientId: user.clientId ?? null, action: 'hugo.task_answered', entityType: 'HugoTask', entityId: t.id, metadata: { kind: t.kind, needs: t.needs, choice } }, 'hugo');
+  // A goal's next step thinks (a model call): it runs in the background; the answer shows the result now.
+  if (t.kind === 'GOAL') {
+    kickHugoGoal(t.id, t.tenantId, new Date(now.getTime() + 1));
+    return viewOf(t.id);
+  }
   // Keep going straight away when the answer sent Hugo back to work.
   await advanceHugoTask(t.id, new Date(now.getTime() + 1));
   return viewOf(t.id);
 }
 
-async function answer(t: HugoTask, user: SessionUser, choice: HugoTaskChoice, c: Ctx): Promise<Outcome | 'stop'> {
+async function answer(t: HugoTask, user: SessionUser, choice: HugoTaskChoice, c: Ctx, req?: Request): Promise<Outcome | 'stop'> {
+  // A goal answers for itself: approve runs the proposal as the person, decline re-plans (lib/hugoGoals).
+  if (t.kind === 'GOAL') return answerGoal(t, user, choice, c, req);
   const needs = t.needs as HugoTaskNeed;
   switch (choice) {
+    case 'APPROVE':
+    case 'DECLINE':
+      throw new HttpError(400, 'invalid_choice', 'That is not one of the answers for this task.');
     case 'STOP':
       return 'stop';
     case 'GOT_IT':
@@ -972,6 +1062,8 @@ async function answer(t: HugoTask, user: SessionUser, choice: HugoTaskChoice, c:
       const url = `/messages/${hand.conversationId}`;
       return { status: 'DONE', result: { passedTo: { who: hand.who, url } }, linkUrl: url, events: [{ code: 'PASSED_TO_SUPERVISOR', data: { who: hand.who } }] };
     }
+    case 'KEEP_GOING':
+      return keepGoingOutcome(t, c);
     case 'NUDGE_AGAIN': {
       const st = t.state as ChaseState;
       const day = (t.subject as HugoTaskSubject).date!;
@@ -1018,6 +1110,7 @@ export function toHugoTaskView(t: HugoTask & { events: HugoTaskEvent[] }): HugoT
     completedAt: t.completedAt?.toISOString() ?? null,
     expiresAt: t.expiresAt.toISOString(),
     events: t.events.map((e) => ({ id: e.id, code: e.code as HugoTaskEventCode, data: e.data as Record<string, string | number | null>, at: e.createdAt.toISOString() })),
+    ...(t.kind === 'GOAL' ? { goal: goalViewOf(t) } : {}),
   };
 }
 
@@ -1029,7 +1122,8 @@ async function viewOf(taskId: string): Promise<HugoTaskView> {
 /** The person's tasks: everything open and what finished in the last two weeks — after a step for any that are due. */
 export async function listHugoTasks(userId: string, now: Date = new Date()): Promise<HugoTaskView[]> {
   const due = await prisma.hugoTask.findMany({
-    where: { userId, OR: [{ status: { in: ['WORKING', 'WAITING'] }, nextCheckAt: { lte: now } }, { status: { in: [...OPEN] }, expiresAt: { lte: now } }] },
+    // A goal steps on the timer and on the person's answers, never on a read (its step thinks: lib/hugoGoals).
+    where: { userId, NOT: { kind: 'GOAL' }, OR: [{ status: { in: ['WORKING', 'WAITING'] }, nextCheckAt: { lte: now } }, { status: { in: [...OPEN] }, expiresAt: { lte: now } }, { kind: 'RECURRING', status: 'NEEDS_YOU', nextCheckAt: { lte: now } }] },
     select: { id: true },
     take: MAX_OPEN_PER_USER,
   });
@@ -1045,6 +1139,7 @@ export async function listHugoTasks(userId: string, now: Date = new Date()): Pro
 
 export async function getHugoTask(userId: string, taskId: string, now: Date = new Date()): Promise<HugoTaskView> {
   const t = await ownTask(userId, taskId);
+  if (t.kind === 'GOAL') return viewOf(t.id);
   if (OPEN.includes(t.status as HugoTaskStatus) && (t.nextCheckAt <= now || t.expiresAt <= now)) await advanceHugoTask(t.id, now);
   return viewOf(t.id);
 }
@@ -1058,7 +1153,8 @@ export async function markHugoTasksSeen(userId: string, ids: string[], now: Date
 
 export async function hugoTaskCounts(userId: string, now: Date = new Date()): Promise<{ working: number; needsYou: number; unseenDone: number }> {
   const [working, needsYou, unseenDone] = await Promise.all([
-    prisma.hugoTask.count({ where: { userId, status: { in: ['WORKING', 'WAITING'] } } }),
+    // A recurring brief between runs is not "working on it" (the Tasks tab lists it under Upcoming).
+    prisma.hugoTask.count({ where: { userId, status: { in: ['WORKING', 'WAITING'] }, kind: { not: 'RECURRING' } } }),
     prisma.hugoTask.count({ where: { userId, status: 'NEEDS_YOU' } }),
     prisma.hugoTask.count({ where: { userId, status: { in: ['DONE', 'FAILED', 'EXPIRED'] }, seenAt: null, completedAt: { gte: new Date(now.getTime() - KEEP_FINISHED_MS) } } }),
   ]);
@@ -1077,6 +1173,8 @@ export async function previewHugoTask(user: SessionUser, input: HugoTaskCreate, 
 }
 
 export type { HugoShiftRef };
+/** The step engine's shapes, for the kinds that live in their own files (lib/hugoGoals). */
+export type { Outcome as HugoOutcome, Ctx as HugoCtx, Prepared as HugoPrepared };
 
 /* ------------------------------------------------------------------ boot */
 

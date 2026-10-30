@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { findSensitiveNumbers } from '@alto-people/shared';
 import { hugoBadgeCount, type HugoStep, type HugoTaskOffer } from '@alto-people/shared';
 import {
@@ -8,12 +8,14 @@ import {
   ArrowRight,
   ArrowUp,
   Bell,
+  Bookmark,
   BookOpen,
   Bus,
   CalendarDays,
   Check,
   Copy,
   FileText,
+  History,
   Inbox,
   ListTodo,
   Lock,
@@ -37,22 +39,31 @@ import { useAssistant } from '@/lib/assistantContext';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import '@/lib/i18n/en/hugoPane';
 import '@/lib/i18n/en/hugoWork';
-import { askHugo, decideAssistantAction, handoffToPerson, type ActionResult, type AssistantActionCard, type AssistantTable, type AssistantTurn, type HugoAnswer } from '@/lib/hugoApi';
+import { askHugo, clearHugoThread, decideAssistantAction, handoffToPerson, setHugoReadAloud, type ActionResult, type AssistantActionCard, type AssistantTable, type HugoAnswer } from '@/lib/hugoApi';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Input';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { cn } from '@/lib/cn';
 import { useSpeechInput, useSpeechOutput } from './useSpeech';
 import { HugoTaskOfferCard } from './HugoTaskOffer';
+import { HugoGoalOfferCard } from './HugoGoalOffer';
 import { HugoTasksPanel } from './HugoTasksPanel';
+import { HugoMemoryChip } from './HugoMemoryChip';
+import type { HugoThreadView } from '@alto-people/shared';
+import { HUGO_ALLOWANCE_KEY, HugoAllowanceMeter, HugoAllowanceNotice, useHugoAllowance } from './HugoAllowance';
+import { HUGO_PROFILE_KEY, HUGO_THREAD_KEY, mergeThread, useHugoProfile, useHugoThread } from './HugoThread';
+
+/** What Hugo knows — its own chunk, fetched the first time it opens. */
+const HugoMemoryView = lazy(() => import('./HugoMemoryView').then((m) => ({ default: m.HugoMemoryView })));
 
 /**
  * Hugo's panel: a column at the right that stays open while the person
- * works (below md, the whole screen), with one conversation that survives
- * moving between pages and a reload (this tab's session storage, per
- * account). Every question carries the page the person is on and the last
- * turns, so an answer can say "this person".
+ * works (below md, the whole screen), with one conversation that follows
+ * the account to every device it signs in on (kept on the server for 90
+ * days — HugoThread; this tab's session copy only paints it first). Every
+ * question carries the page the person is on, so an answer can say "this
+ * person"; the conversation so far is read on the server, never sent.
  *
  * Hugo is an agent, not a chat box, and the panel shows it:
  *  - he acts out what he is doing, at a size you notice (status below):
@@ -88,6 +99,11 @@ interface Turn {
   tables?: AssistantTable[];
   /** Work the answer offered to take on; each starts only on the person's tap. */
   offers?: HugoTaskOffer[];
+  /** What this answer kept in What Hugo knows (the chip, with Undo), and how many it forgot. */
+  remembered?: HugoAnswer['remembered'];
+  forgot?: number;
+  /** When this tab added it — lines it up with the server's copy of the thread (HugoThread mergeThread). */
+  localAt?: number;
 }
 
 const KEY = (userId: string) => `alto:assistant:thread:${userId}`;
@@ -186,10 +202,18 @@ export function AssistantPane() {
   // The answer as it is made (POST /hugo/ask/stream): the step he is on, and the words so far.
   const [liveStep, setLiveStep] = useState<HugoStep | null>(null);
   const [liveText, setLiveText] = useState('');
+  // What Hugo knows, open over the panel.
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const askedByVoice = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const voiceOut = useSpeechOutput(lang);
+  const queryClient = useQueryClient();
+  // The conversation and the person's settings follow the account (API lib/hugoThread): the session copy is only first paint.
+  const thread = useHugoThread(available && open && Boolean(userId));
+  const profile = useHugoProfile(available && open);
+  // Their own allowance for his thinking (the meter, the 80% line, the used-up banner) — only when a model answers.
+  const allowance = useHugoAllowance(available && open && Boolean(me?.model));
 
   useEffect(() => {
     if (userId) writeThread(userId, turns);
@@ -197,10 +221,9 @@ export function AssistantPane() {
 
   const ask = useMutation({
     mutationFn: (q: string) => {
-      const history: AssistantTurn[] = turns.slice(-10).map((x) => ({ role: x.role, text: x.text }));
+      // The conversation so far is read on the server — the account's own turns — never sent from here.
       return askHugo(q, {
         page,
-        history,
         onEvent: (e) => {
           if (e.t === 'step') {
             setLiveStep(e.step);
@@ -211,21 +234,29 @@ export function AssistantPane() {
       });
     },
     onMutate: (q) => {
-      setTurns((x) => [...x, { id: `${Date.now()}-u`, role: 'user', text: q }]);
+      const qid = `${Date.now()}-u`;
+      setTurns((x) => [...x, { id: qid, role: 'user', text: q, localAt: Date.now() }]);
       setText('');
       setAskedAt(Date.now());
       setLiveStep(null);
       setLiveText('');
       setLive({ step: null });
+      return { qid };
     },
     onSettled: () => {
       setLiveStep(null);
       setLiveText('');
       setLive(null);
     },
-    onSuccess: (a: HugoAnswer) => {
-      setTurns((x) => [...x, { id: `${Date.now()}-a`, role: 'assistant', text: a.reply, intent: a.intent, linkUrl: a.linkUrl, handoff: a.handoff ?? null, actions: a.actions ?? [], tables: a.tables ?? [], offers: a.offers ?? [] }]);
+    onSuccess: (a: HugoAnswer, _q, ctx) => {
+      // The server kept both: the question takes its id, the answer comes with its own (one copy, whatever arrived first).
+      const at = Date.now();
+      const kept = a.turns ?? null;
+      setTurns((x) => x.map((y) => (kept && y.id === ctx?.qid ? { ...y, id: kept.question.id, localAt: at } : y)));
+      setTurns((x) => [...x.filter((y) => !kept || y.id !== kept.answer.id), { id: kept?.answer.id ?? `${at}-a`, localAt: at, role: 'assistant', text: a.reply, intent: a.intent, linkUrl: a.linkUrl, handoff: a.handoff ?? null, actions: a.actions ?? [], tables: a.tables ?? [], offers: a.offers ?? [], remembered: a.remembered, forgot: a.forgot }]);
       setAnsweredAt(Date.now());
+      // An answer may have used some of the person's thinking time: the meter refreshes.
+      void queryClient.invalidateQueries({ queryKey: HUGO_ALLOWANCE_KEY });
       // "What are you working on?" — the answer is the Tasks tab.
       if (a.view === 'tasks') setTab('tasks');
       setActiveAt(Date.now());
@@ -233,14 +264,14 @@ export function AssistantPane() {
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? err.message : t('hugoPane.error.answer');
-      setTurns((x) => [...x, { id: `${Date.now()}-e`, role: 'assistant', text: msg }]);
+      setTurns((x) => [...x, { id: `${Date.now()}-e`, role: 'assistant', text: msg, localAt: Date.now() }]);
     },
   });
 
   const handoff = useMutation({
     mutationFn: (summary: string) => handoffToPerson(summary),
     onSuccess: (r) => {
-      setTurns((x) => x.map((y) => (y.handoff && !y.handoffSent ? { ...y, handoffSent: true } : y)).concat({ id: `${Date.now()}-h`, role: 'assistant', text: r.reply, linkUrl: r.linkUrl }));
+      setTurns((x) => x.map((y) => (y.handoff && !y.handoffSent ? { ...y, handoffSent: true } : y)).concat({ id: r.turn?.id ?? `${Date.now()}-h`, localAt: Date.now(), role: 'assistant', text: r.reply, linkUrl: r.linkUrl }));
       if (r.sent) setDoneAt(Date.now());
     },
   });
@@ -256,6 +287,48 @@ export function AssistantPane() {
       setTurns((x) => x.map((y) => (y.id === v.turnId ? { ...y, results: { ...(y.results ?? {}), [v.card.id]: { status: 'failed', title: v.card.title, message, linkUrl: null } } } : y)));
     },
   });
+
+  // The server's thread is the truth: what this tab added since it was fetched stays until the server has it.
+  useEffect(() => {
+    if (!thread.data || ask.isPending) return;
+    const server = thread.data;
+    const fetchedAt = thread.dataUpdatedAt;
+    setTurns((local) => mergeThread(server, fetchedAt, local));
+  }, [thread.data, thread.dataUpdatedAt, ask.isPending]);
+
+  // "Start over" — on every device: the server forgets the turns, and other devices drop their copy.
+  const startOver = useMutation({
+    mutationFn: () => clearHugoThread(),
+    onMutate: () => {
+      const before = turns;
+      setTurns([]);
+      return { before };
+    },
+    onSuccess: (r) => queryClient.setQueryData<HugoThreadView>(HUGO_THREAD_KEY, (old) => ({ turns: [], clearedAt: r.clearedAt, retentionDays: old?.retentionDays ?? 90 })),
+    onError: (_e, _v, ctx) => setTurns([...(ctx?.before ?? []), { id: `${Date.now()}-e`, role: 'assistant', text: t('hugoPane.thread.clearFailed'), localAt: Date.now() }]),
+  });
+
+  // Read aloud follows the account. Never chosen on any device: this browser's earlier choice goes up, once.
+  const readAloudSet = useMutation({
+    mutationFn: (on: boolean) => setHugoReadAloud(on),
+    onSuccess: (p) => queryClient.setQueryData(HUGO_PROFILE_KEY, p),
+  });
+  useEffect(() => {
+    const p = profile.data;
+    if (!p) return;
+    if (p.readAloud === null) {
+      if (readFlag(READ_ALOUD_KEY) && readAloudSet.isIdle) readAloudSet.mutate(true);
+      return;
+    }
+    setReadAloud(p.readAloud);
+    try {
+      window.localStorage.setItem(READ_ALOUD_KEY, p.readAloud ? '1' : '0');
+    } catch {
+      /* the first-paint copy is a convenience */
+    }
+    // Once per answer from the server; the mutation is stable enough to leave out.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile.data]);
 
   const send = (q: string, opts: { voice?: boolean } = {}) => {
     const trimmed = q.trim();
@@ -313,6 +386,11 @@ export function AssistantPane() {
   useEffect(() => {
     if (!open) voiceOut.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // It opens on the chat again next time.
+  useEffect(() => {
+    if (!open) setMemoryOpen(false);
   }, [open]);
 
   if (!available || !open || !me) return null;
@@ -376,6 +454,7 @@ export function AssistantPane() {
     } catch {
       /* a convenience */
     }
+    readAloudSet.mutate(on);
     if (!on) voiceOut.stop();
   };
 
@@ -394,7 +473,7 @@ export function AssistantPane() {
       data-hugo-status={status}
       className={cn(
         'fixed inset-0 z-40 flex h-[100dvh] flex-col bg-surface text-ink',
-        'md:static md:inset-auto md:z-auto md:h-auto md:w-[23rem] lg:w-[26rem] md:shrink-0 md:border-l md:border-line',
+        'md:relative md:inset-auto md:z-auto md:h-auto md:w-[23rem] lg:w-[26rem] md:shrink-0 md:border-l md:border-line',
       )}
     >
       {/* Who he is and what he is doing, live. */}
@@ -443,10 +522,23 @@ export function AssistantPane() {
                 {t('hugoPane.readAloud')}
               </DropdownMenuCheckboxItem>
             )}
-            <DropdownMenuItem disabled={!turns.length} onSelect={() => setTurns([])}>
+            <DropdownMenuItem disabled={!turns.length || startOver.isPending} onSelect={() => startOver.mutate()} data-testid="hugo-start-over">
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
               {t('hugoPane.startOver')}
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setMemoryOpen(true)} data-testid="hugo-memory-open">
+              <Bookmark className="h-4 w-4" aria-hidden="true" />
+              {t('hugoPane.memory.title', { name })}
+            </DropdownMenuItem>
+            {/* Their own allowance for his thinking, and how long the conversation is kept — on every device. */}
+            <DropdownMenuSeparator />
+            <div className="w-[17rem] max-w-full">
+              <HugoAllowanceMeter allowance={allowance.data} />
+              <p className="flex items-start gap-1.5 px-2 py-1.5 text-xs leading-snug text-ink-muted" data-testid="hugo-thread-kept">
+                <History className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {t('hugoPane.thread.kept', { days: profile.data?.retentionDays ?? thread.data?.retentionDays ?? 90 })}
+              </p>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
         <Button variant="ghost" size="icon-sm" onClick={() => setOpen(false)} aria-label={t('hugoPane.close', { name })}>
@@ -486,6 +578,15 @@ export function AssistantPane() {
                   {hugo && <HugoMascot pose={heroPose} size={128} eager />}
                   <p className="font-display text-2xl text-ink">{greeting}</p>
                   <p className="max-w-[34ch] text-sm leading-relaxed text-ink-muted">{me.intro}</p>
+                  <button
+                    type="button"
+                    onClick={() => setMemoryOpen(true)}
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-ink-muted underline-offset-2 hover:text-ink hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                    data-testid="hugo-memory-peek"
+                  >
+                    <Bookmark className="h-4 w-4 text-accent" aria-hidden="true" />
+                    {t('hugoPane.memory.peek', { name })}
+                  </button>
                 </div>
                 {page.record && (
                   <p className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink-muted">
@@ -561,7 +662,11 @@ export function AssistantPane() {
                           />
                         ))}
                         {(turn.offers ?? []).map((offer, oi) => (
-                          <HugoTaskOfferCard key={`${offer.task.kind}-${oi}`} offer={offer} onSeeTasks={(id) => openTasks(id)} />
+                          offer.task.kind === 'GOAL' ? (
+                            <HugoGoalOfferCard key={`${offer.task.kind}-${oi}`} offer={offer} onSeeTasks={(id) => openTasks(id)} />
+                          ) : (
+                            <HugoTaskOfferCard key={`${offer.task.kind}-${oi}`} offer={offer} onSeeTasks={(id) => openTasks(id)} />
+                          )
                         ))}
                         {turn.handoff && !turn.handoffSent && (
                           <div className="mt-2">
@@ -571,6 +676,9 @@ export function AssistantPane() {
                           </div>
                         )}
                       </div>
+                      {!mine && (turn.remembered?.length || turn.forgot) ? (
+                        <HugoMemoryChip name={name} remembered={turn.remembered} forgot={turn.forgot} onOpen={() => setMemoryOpen(true)} />
+                      ) : null}
                       {!mine && (
                         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pl-1 text-xs text-ink-muted">
                           {turn.intent && SOURCED.has(turn.intent) && (
@@ -634,6 +742,7 @@ export function AssistantPane() {
               send(text);
             }}
           >
+            <HugoAllowanceNotice allowance={allowance.data} />
             {sensitive && (
               <p role="alert" className="mb-2 flex items-start gap-1.5 rounded-lg border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-ink">
                 <Lock className="mt-0.5 h-4 w-4 shrink-0 text-negative" aria-hidden="true" />
@@ -717,6 +826,18 @@ export function AssistantPane() {
           </form>
         )}
       </Tabs>
+      {memoryOpen && (
+        <Suspense fallback={null}>
+          <HugoMemoryView
+            name={name}
+            hugo={hugo}
+            onClose={() => {
+              setMemoryOpen(false);
+              if (!isPhone()) window.requestAnimationFrame(() => inputRef.current?.focus());
+            }}
+          />
+        </Suspense>
+      )}
     </aside>
   );
 }

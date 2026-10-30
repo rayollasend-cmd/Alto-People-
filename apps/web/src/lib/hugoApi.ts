@@ -13,6 +13,9 @@ import type {
   HugoAskEvent,
   HugoTier,
 } from '@alto-people/shared';
+import type { HugoMemoryKind, HugoMemoryListResponse, HugoMemoryView, HugoRemembered } from '@alto-people/shared';
+import type { HugoActivityPage, HugoRecurringChange } from '@alto-people/shared';
+import type { HugoAdminUsage, HugoAllowanceView, HugoProfileView, HugoSavedTurns, HugoThreadView } from '@alto-people/shared';
 import { ApiError, apiFetch, apiStream, canStream } from './api';
 
 /**
@@ -57,6 +60,16 @@ export interface HugoAnswer {
   offers?: HugoTaskOffer[];
   /** The panel shows this tab (the person asked what Hugo is working on). */
   view?: 'tasks' | null;
+  /** The ids the server kept the question and the answer under (the conversation follows the account). */
+  turns?: HugoSavedTurns | null;
+  /** Set when the person's allowance for Hugo's thinking is used up: the reply already says until when. */
+  allowance?: { exhausted: true; renewsAt: string } | null;
+  /** What Hugo kept from this answer (the chip under it: "Saved to what Hugo knows · Undo"). */
+  remembered?: HugoRemembered[];
+  /** How many kept things this answer forgot. */
+  forgot?: number;
+  /** The first time Hugo kept anything for this person (the answer says where it lives). */
+  memoryFirst?: boolean;
 }
 
 export interface AssistantActionCard {
@@ -142,7 +155,7 @@ export function decideAssistantAction(token: string, decision: 'confirm' | 'canc
   return apiFetch<ActionResult>('/hugo/confirm', { method: 'POST', body: { token, decision } });
 }
 
-export function handoffToPerson(text: string): Promise<{ reply: string; linkUrl: string | null; sent: boolean }> {
+export function handoffToPerson(text: string): Promise<{ reply: string; linkUrl: string | null; sent: boolean; turn?: { id: string; createdAt: string } | null }> {
   return apiFetch('/hugo/handoff', { method: 'POST', body: { text } });
 }
 
@@ -197,4 +210,78 @@ export function markHugoSeen(ids: { tasks?: string[]; notes?: string[] }): Promi
 
 export function getHugoSummary(): Promise<HugoSummary> {
   return apiFetch<HugoSummary>('/hugo/summary');
+}
+
+/* ------------------------------------------------- What Hugo knows */
+
+export function getHugoMemory(): Promise<HugoMemoryListResponse> {
+  return apiFetch<HugoMemoryListResponse>('/hugo/memory');
+}
+
+/** The person adds one. A refusal is a 422 whose details say why ({ reason }). */
+export function addHugoMemory(text: string, kind: HugoMemoryKind): Promise<{ fact: HugoMemoryView; existing: boolean }> {
+  return apiFetch('/hugo/memory', { method: 'POST', body: { text, kind } });
+}
+
+export function editHugoMemory(id: string, patch: { text?: string; kind?: HugoMemoryKind }): Promise<{ fact: HugoMemoryView }> {
+  return apiFetch(`/hugo/memory/${id}`, { method: 'PATCH', body: patch });
+}
+
+/** Remove one — from the list, or the Undo under an answer. */
+export function removeHugoMemory(id: string, via: 'list' | 'undo' = 'list'): Promise<{ ok: true }> {
+  return apiFetch(`/hugo/memory/${id}${via === 'undo' ? '?via=undo' : ''}`, { method: 'DELETE' });
+}
+
+/** Forget everything (after the person confirmed it). */
+export function forgetAllHugoMemory(): Promise<{ forgot: number }> {
+  return apiFetch('/hugo/memory', { method: 'DELETE', body: { confirm: true } });
+}
+
+export function setHugoMemoryOn(memoryOn: boolean): Promise<{ memoryOn: boolean }> {
+  return apiFetch('/hugo/memory/settings', { method: 'PUT', body: { memoryOn } });
+}
+
+/* ------------------------------------- recurring briefs and the activity log */
+
+/** Pause, resume or change when a recurring brief comes (stopping is cancelHugoTask). */
+export function changeHugoRecurring(id: string, change: HugoRecurringChange): Promise<{ task: HugoTaskView }> {
+  return apiFetch(`/hugo/recurring/${id}`, { method: 'PATCH', body: change });
+}
+
+/** Everything Hugo did for the person, newest first; pass the last page's `next` as `before`. */
+export function listHugoActivity(before: string | null = null, limit = 30): Promise<HugoActivityPage> {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (before) q.set('before', before);
+  return apiFetch<HugoActivityPage>(`/hugo/activity?${q.toString()}`);
+}
+
+/* ------------------------------------- one Hugo per account */
+
+/** The person's own conversation, on every device they sign in on (the last 50 turns). */
+export function getHugoThread(): Promise<HugoThreadView> {
+  return apiFetch<HugoThreadView>('/hugo/thread');
+}
+
+/** "Start over" — for every device. */
+export function clearHugoThread(): Promise<{ clearedAt: string; removed: number }> {
+  return apiFetch('/hugo/thread', { method: 'DELETE' });
+}
+
+export function getHugoProfile(): Promise<HugoProfileView> {
+  return apiFetch<HugoProfileView>('/hugo/profile');
+}
+
+/** Read answers aloud — follows the account. */
+export function setHugoReadAloud(readAloud: boolean): Promise<HugoProfileView> {
+  return apiFetch<HugoProfileView>('/hugo/profile', { method: 'PATCH', body: { readAloud } });
+}
+
+/** Where the person's own allowance for Hugo's thinking stands this month. */
+export function getHugoAllowance(): Promise<HugoAllowanceView> {
+  return apiFetch<HugoAllowanceView>('/hugo/allowance');
+}
+
+/** manage:org — this month's spend on Hugo's thinking for the organization. */
+export function getHugoAdminUsage(): Promise<HugoAdminUsage> {
+  return apiFetch<HugoAdminUsage>('/hugo/admin/usage');
 }

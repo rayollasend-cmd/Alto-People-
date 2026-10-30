@@ -793,7 +793,12 @@ model User {
   talentRatingsGiven                TalentRating[]                @relation("TalentRater")
   hugoTasks                         HugoTask[]                    @relation("HugoTaskOwner")
   hugoNotes                         HugoNote[]                    @relation("HugoNoteOwner")
+  hugoProfiles                      HugoProfile[]                 @relation("HugoProfileOwner")
+  hugoUsage                         HugoUsage[]                   @relation("HugoUsageOwner")
+  hugoTurns                         HugoTurn[]                    @relation("HugoTurnOwner")
   hugoNoteMutes                     HugoNoteMute[]                @relation("HugoNoteMuter")
+  hugoMemories                      HugoMemory[]                  @relation("HugoMemoryOwner")
+  hugoMemorySetting                 HugoMemorySetting?            @relation("HugoMemorySettingOwner")
 
   @@index([role])
   @@index([clientId])
@@ -12404,6 +12409,10 @@ model WhatsAppMessage {
   conversationId String?               @db.Uuid
   /// The inbound message an ANSWER or HANDOFF replies to.
   replyToId      String?               @db.Uuid
+  /// Hugo on an INBOUND question (lib/hugoWhatsapp): how it was answered ({ route: instant | fast | deep | rules | offer | task };
+  /// the tenant's daily model valve counts fast + deep), a task offer waiting on the person's START reply (30 minutes),
+  /// and the month's allowance notice. Null on every other row.
+  hugo           Json?
   createdAt      DateTime              @default(now()) @db.Timestamptz(6)
 
   associate Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
@@ -17116,10 +17125,16 @@ model HugoTask {
 
   user   User            @relation("HugoTaskOwner", fields: [userId], references: [id], onDelete: Cascade)
   events HugoTaskEvent[]
+  /// A watch or an ask one of the person's goals started on an approved step (lib/hugoGoals):
+  /// its news wakes the goal, and stopping the goal stops it.
+  parentId String?    @db.Uuid
+  parent   HugoTask?  @relation("HugoGoalChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children HugoTask[] @relation("HugoGoalChildren")
 
   @@index([userId, status])
   @@index([status, nextCheckAt])
   @@index([tenantId])
+  @@index([parentId])
 }
 
 /// A task's trail, one line per step (HUGO_TASK_EVENT_CODES); `data` names what the line names.
@@ -17135,6 +17150,8 @@ model HugoTaskEvent {
 
   @@index([taskId, createdAt])
   @@index([tenantId])
+  /// The day's goal steps per organization (HUGO_GOAL_DAILY_STEPS counts code STEP).
+  @@index([tenantId, code, createdAt])
 }
 
 /// Something Hugo noticed in a person's own records, with one thing it could do about it
@@ -17178,6 +17195,46 @@ model HugoNoteMute {
   @@index([tenantId])
 }
 
+/// What Hugo knows (lib/hugoMemory, packages/shared/src/hugoMemory.ts): a short fact a person
+/// told the assistant about themselves, or added in "What Hugo knows". Theirs to read, change
+/// and remove; never a number, a health, religion, immigration, orientation, criminal or union
+/// detail, or anything about someone else (checkHugoMemoryText). At most 50 per person.
+model HugoMemory {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId     String    @db.Uuid
+  /// PREFERENCE | AVAILABILITY | TRAVEL | WORK | OTHER
+  kind       String    @default("OTHER") @db.VarChar(16)
+  text       String    @db.VarChar(200)
+  /// TOLD (said in a chat; Hugo kept it) | ADDED (typed in What Hugo knows)
+  source     String    @db.VarChar(8)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(6)
+  /// The last time it went in front of the model (touched at most hourly).
+  lastUsedAt DateTime? @db.Timestamptz(6)
+
+  user User @relation("HugoMemoryOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([tenantId])
+}
+
+/// A person's memory switch. No row = on (the default). `introducedAt`: the first time Hugo
+/// kept something, his answer said so — once.
+model HugoMemorySetting {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId       String    @unique @db.Uuid
+  memoryOn     Boolean   @default(true)
+  introducedAt DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+
+  user User @relation("HugoMemorySettingOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
 /// Back pay for a punch a past run never paid (deep audit 2026-10-29: the
 /// evening hours the old UTC pay-period cut missed — lib/payrollBackPay).
 /// One row per punch, unique, so a punch is put on a run at most once. A
@@ -17211,4 +17268,78 @@ model BackPayClaim {
   @@index([tenantId])
   @@index([associateId])
   @@index([payrollRunId])
+}
+
+/// Each person's own Hugo (owner, 2026-10-29: "every unique user should have their Hugo, tied
+/// to their account"): one row per account, made on first use. Holds the allowance cycle
+/// (lib/hugoAllowance); more of their Hugo hangs off it as it grows.
+model HugoProfile {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                String    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId                  String    @db.Uuid
+  /// The person's 30-day allowance cycle began here (associates, drivers, floor and shift
+  /// supervisors); null until they first use Hugo's thinking. Staff run on calendar months.
+  allowanceCycleStartedAt DateTime? @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime  @updatedAt @db.Timestamptz(6)
+  /// Read answers aloud, on every device (lib/hugoThread). Null: never chosen — the app carries
+  /// a browser's earlier choice up once.
+  readAloud               Boolean?
+  /// "Start over": the conversation before this is gone on every device (lib/hugoThread).
+  threadClearedAt         DateTime? @db.Timestamptz(6)
+
+  user User @relation("HugoProfileOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+}
+
+/// One turn of a person's conversation with Hugo in the app (lib/hugoThread), kept on the server
+/// so it follows the account, not the browser tab. The words are redacted (never an SSN or an
+/// account number), only the person reads them, and the sweep removes them after 90 days
+/// (HUGO_THREAD_RETENTION_DAYS). The model's history is built from these, never from the client.
+model HugoTurn {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId    String   @db.Uuid
+  /// user | assistant
+  role      String   @db.VarChar(10)
+  text      String   @db.VarChar(4000)
+  /// What the answer came from (the registry's intent, MODEL, a task offer…); null for a question.
+  intent    String?  @db.VarChar(40)
+  linkUrl   String?  @db.VarChar(300)
+  /// app (the panel and the home seat)
+  channel   String   @default("app") @db.VarChar(12)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  user User @relation("HugoTurnOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([tenantId])
+  /// The retention sweep.
+  @@index([tenantId, createdAt])
+}
+
+/// What one model call cost, charged to the person it was for (lib/hugoAllowance): their
+/// monthly allowance is the sum since their period began. Tokens and cost only — never words.
+model HugoUsage {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId       String   @db.Uuid
+  /// chat | goal | recurring | whatsapp
+  purpose      String   @db.VarChar(12)
+  /// fast | deep
+  tier         String   @db.VarChar(8)
+  model        String   @db.VarChar(40)
+  inputTokens  Int
+  cachedTokens Int      @default(0)
+  outputTokens Int
+  /// Millionths of a US dollar.
+  costMicros   Int
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  user User @relation("HugoUsageOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([tenantId])
 }

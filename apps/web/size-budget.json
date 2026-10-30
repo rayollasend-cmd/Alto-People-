@@ -1,5 +1,5 @@
 {
-  "_comment": "gzip KB. `entryKb` is everything index.html loads before first paint. Raise a line only on purpose, in the commit that needs it, with the reason in the message. scripts/size-budget.mjs enforces this after every build. 2026-10-23: entry 362→372, main 224→230, es 80→92 — the Fortune 500 waves added ~600 interface strings (English is bundled for first paint; Spanish is its lazy pack) and the shared header/filter/tile components. PostHog (chunks `usage`, `usage-replay` — neutral names content blockers don't match) exists only in a build with VITE_POSTHOG_KEY — loaded after the page settles, the recorder for office staff only; CI builds without it. 2026-10-23: echarts (the flow, calendar and treemap figures; SVG renderer, three chart types) is its own chunk, fetched only by the pages that draw one. 2026-10-24: entry 372→345, main 230→200 — locked in after the phone-speed pass took zod and the API schemas out of main and the icons into one chunk (entry 367.6→333.8). 2026-10-26: es 92→100 — Hugo tasks/notes and the F500 polish round added associate copy in six languages; Spanish stays a lazy pack only Spanish readers fetch. 2026-10-29: uk 80→95 — the deep-audit wave made every associate and driver screen Ukrainian (~600 keys; Cyrillic is two bytes a letter); uk is a lazy pack only Ukrainian readers fetch. es stays under 100 because the staff desks' Spanish moved into their own page chunks (es/<desk>.ts).",
+  "_comment": "gzip KB. `entryKb` is everything index.html loads before first paint. Raise a line only on purpose, in the commit that needs it, with the reason in the message. scripts/size-budget.mjs enforces this after every build. 2026-10-23: entry 362→372, main 224→230, es 80→92 — the Fortune 500 waves added ~600 interface strings (English is bundled for first paint; Spanish is its lazy pack) and the shared header/filter/tile components. PostHog (chunks `usage`, `usage-replay` — neutral names content blockers don't match) exists only in a build with VITE_POSTHOG_KEY — loaded after the page settles, the recorder for office staff only; CI builds without it. 2026-10-23: echarts (the flow, calendar and treemap figures; SVG renderer, three chart types) is its own chunk, fetched only by the pages that draw one. 2026-10-24: entry 372→345, main 230→200 — locked in after the phone-speed pass took zod and the API schemas out of main and the icons into one chunk (entry 367.6→333.8). 2026-10-26: es 92→100 — Hugo tasks/notes and the F500 polish round added associate copy in six languages; Spanish stays a lazy pack only Spanish readers fetch. 2026-10-29: uk 80→95 — the deep-audit wave made every associate and driver screen Ukrainian (~600 keys; Cyrillic is two bytes a letter); uk is a lazy pack only Ukrainian readers fetch. es stays under 100 because the staff desks' Spanish moved into their own page chunks (es/<desk>.ts). 2026-10-29: pt/tr/ht 80→90 (new lines), uk 95→105 — Hugo's Muse phases (goals, what Hugo knows, repeats, the waiting queue, activity, the thinking-time allowance) added ~250 associate keys in six languages and left pt at its limit; each is a lazy pack only its readers fetch.",
   "entryKb": 345,
   "cssKb": 40,
   "defaultChunkKb": 80,
@@ -18,6 +18,9 @@
     "usage": 128,
     "usage-replay": 72,
     "echarts": 205,
-    "uk": 95
+    "uk": 105,
+    "pt": 90,
+    "tr": 90,
+    "ht": 90
   }
 }

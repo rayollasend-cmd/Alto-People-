@@ -2,6 +2,7 @@ import { HugoTaskCreateInputSchema, type HugoTaskCreateInput, type HugoTaskOffer
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
 import { detectHugoIntent, normalizeHugoText, type HugoContext } from './hugo.js';
+import { recurringTurn } from './hugoRecurringChat.js';
 import { hugoTaskCounts, previewHugoTask } from './hugoTasks.js';
 import type { HugoLang } from './hugoWorkCopy.js';
 import { addDaysInZone, localDateKey, zonedDayOfWeek } from './timezone.js';
@@ -15,7 +16,7 @@ import { companyWorkweek } from './timeAnomalies.js';
  */
 
 export interface TaskTurn {
-  intent: 'TASK_LIST' | 'TASK_FIND_COVER' | 'TASK_TELL_ME_WHEN' | 'TASK_CHASE';
+  intent: 'TASK_LIST' | 'TASK_FIND_COVER' | 'TASK_TELL_ME_WHEN' | 'TASK_CHASE' | 'TASK_RECURRING';
   reply: string;
   offers: HugoTaskOffer[];
   /** The panel opens its Tasks tab. */
@@ -172,6 +173,9 @@ async function chaseTurn(user: SessionUser, t: string, lang: HugoLang, now: Date
 
 /** A chat turn that hands Hugo work, or null when the words are about something else. */
 export async function hugoTaskTurn(text: string, user: SessionUser, ctx: HugoContext, lang: HugoLang, now: Date = new Date()): Promise<TaskTurn | null> {
+  // "Every Friday tell me my hours": a brief on a schedule (lib/hugoRecurringChat), ahead of the record questions it names.
+  const recurring = await recurringTurn(text, user, ctx, lang, now);
+  if (recurring) return recurring;
   const { intent } = detectHugoIntent(text, ctx);
   const t = normalizeHugoText(text);
   switch (intent) {

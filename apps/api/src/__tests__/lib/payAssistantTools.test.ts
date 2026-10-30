@@ -16,7 +16,7 @@ vi.mock('@anthropic-ai/sdk', () => {
 });
 vi.mock('../../config/env.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../config/env.js')>();
-  return { ...actual, env: { ...actual.env, ANTHROPIC_API_KEY: 'test-key', ASSISTANT_MODEL: 'claude-opus-5' } };
+  return { ...actual, env: { ...actual.env, Hugo: 'test-key', ASSISTANT_MODEL: 'deepseek-v4-pro' } };
 });
 
 const { answerWithModel } = await import('../../lib/assistantModel.js');
@@ -98,6 +98,8 @@ describe('pay tools', () => {
       tools: payTools(prisma, { associateId: ana.id }),
       identity,
       now: new Date('2026-10-18T12:00:00Z'),
+      // Nobody is charged: the stub reports no tokens.
+      meter: { userId: '00000000-0000-4000-8000-0000000000aa', purpose: 'chat' },
     });
     expect(out.reply).toBe('Tu pago bruto fue $500.00.');
     expect(out.toolsUsed).toEqual(['PAYSTUB']);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { HugoNoteView, HugoTaskChoice, HugoTaskCreateInput, HugoTaskStatus, HugoTaskView } from '@alto-people/shared';
@@ -11,11 +11,19 @@ import { useAuth } from '@/lib/auth';
 import { acceptHugoNote, cancelHugoTask, dismissHugoNote, listHugoNotes, listHugoTasks, markHugoSeen, respondToHugoTask, startHugoTask } from '@/lib/hugoApi';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import '@/lib/i18n/en/hugoWork';
+import { HugoGoalCard } from './HugoGoalCard';
+import { HugoGoalStart } from './HugoGoalStart';
 import { HugoNoteCard } from './HugoNoteCard';
 import { HugoTaskCard } from './HugoTaskCard';
+import { History, Repeat } from '@/components/ui/icons';
+import { HugoUpcoming } from './HugoUpcoming';
+import { HugoUpcomingForm, repeatableWhats } from './HugoUpcomingForm';
+import { waitingOrder } from './hugoQueue';
 import { hugoWorkError } from './hugoWorkText';
 
 const NEEDS: readonly HugoTaskStatus[] = ['NEEDS_YOU'];
+/** "See everything Hugo did": its own chunk, fetched when opened. */
+const HugoActivity = lazy(() => import('./HugoActivity'));
 const RUNNING: readonly HugoTaskStatus[] = ['WORKING', 'WAITING'];
 /** The "New" dots stay a moment before the look counts as seen. */
 const SEEN_AFTER_MS = 1500;
@@ -41,6 +49,12 @@ export function HugoTasksPanel({ hugo, onNavigate }: { hugo: boolean; onNavigate
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { ask, focusTaskId, clearFocus, openTasks } = useAssistant();
+  const assistant = useAssistant();
+  // Waiting for you / Upcoming / the activity log (Muse phase 5).
+  const { focusSection, clearFocusSection } = assistant;
+  const [view, setView] = useState<'list' | 'activity'>('list');
+  const [repeating, setRepeating] = useState(false);
+  const waitingRef = useRef<HTMLElement>(null);
   const tasks = useQuery({ queryKey: ['hugo', 'tasks'], queryFn: listHugoTasks, refetchInterval: 60_000 });
   const notes = useQuery({ queryKey: ['hugo', 'notes'], queryFn: listHugoNotes, refetchInterval: 120_000 });
   const [busy, setBusy] = useState<{ id: string; what: string } | null>(null);
@@ -112,8 +126,11 @@ export function HugoTasksPanel({ hugo, onNavigate }: { hugo: boolean; onNavigate
 
   const list = useMemo(() => tasks.data?.tasks ?? [], [tasks.data]);
   const noteList = useMemo(() => notes.data?.notes ?? [], [notes.data]);
-  const needsYou = list.filter((x) => NEEDS.includes(x.status));
-  const running = list.filter((x) => RUNNING.includes(x.status));
+  // Waiting for you: every kind that waits on the person, the most urgent first (hugoQueue).
+  const needsYou = list.filter((x) => NEEDS.includes(x.status)).sort(waitingOrder);
+  // A recurring brief between runs is Upcoming, not "working on it".
+  const upcoming = list.filter((x) => x.kind === 'RECURRING' && RUNNING.includes(x.status));
+  const running = list.filter((x) => RUNNING.includes(x.status) && x.kind !== 'RECURRING');
   const finished = list.filter((x) => !NEEDS.includes(x.status) && !RUNNING.includes(x.status));
 
   // Looking is what clears the badge — after a moment, so the "New" dots are seen first.
@@ -138,6 +155,18 @@ export function HugoTasksPanel({ hugo, onNavigate }: { hugo: boolean; onNavigate
     const id = window.setTimeout(clearFocus, 4000);
     return () => window.clearTimeout(id);
   }, [focusTaskId, list, clearFocus]);
+
+  // The home's "I need a quick answer" line and the badge: straight to Waiting for you.
+  useEffect(() => {
+    if (focusSection !== 'waiting' || tasks.isLoading) return;
+    setView('list');
+    const id = window.setTimeout(() => {
+      waitingRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+      waitingRef.current?.focus?.({ preventScroll: true });
+      clearFocusSection();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [focusSection, tasks.isLoading, clearFocusSection]);
 
   const quick: Quick[] = [
     ...(user?.associateId
@@ -177,18 +206,34 @@ export function HugoTasksPanel({ hugo, onNavigate }: { hugo: boolean; onNavigate
   }
 
   const empty = !list.length && !noteList.length;
-  const card = (task: HugoTaskView) => (
-    <li key={task.id}>
-      <HugoTaskCard
-        task={task}
-        focused={task.id === focusTaskId}
-        busy={busy?.id === task.id ? (busy.what as HugoTaskChoice | 'stop') : null}
-        onRespond={(choice) => respond.mutate({ id: task.id, choice })}
-        onStop={() => stop.mutate(task.id)}
-        onNavigate={onNavigate}
-      />
-    </li>
-  );
+  // A goal (Muse phase 3) has its own card: the plan, the proposal to approve, the result in place.
+  const TaskCard = (task: HugoTaskView) => (task.kind === 'GOAL' ? HugoGoalCard : HugoTaskCard);
+  // Goals need the model: offered only while it is on (GET /hugo says).
+  const goalsOn = assistant.me?.model === true;
+  const card = (task: HugoTaskView) => {
+    const Card = TaskCard(task);
+    return (
+      <li key={task.id}>
+        <Card
+          task={task}
+          focused={task.id === focusTaskId}
+          busy={busy?.id === task.id ? (busy.what as HugoTaskChoice | 'stop') : null}
+          onRespond={(choice) => respond.mutate({ id: task.id, choice })}
+          onStop={() => stop.mutate(task.id)}
+          onNavigate={onNavigate}
+        />
+      </li>
+    );
+  };
+
+  const whats = repeatableWhats(assistant.me, Boolean(user?.associateId));
+  if (view === 'activity') {
+    return (
+      <Suspense fallback={<Skeleton className="h-20 w-full rounded-xl" />}>
+        <HugoActivity name={assistant.me?.name ?? 'Hugo'} onBack={() => setView('list')} onNavigate={onNavigate} />
+      </Suspense>
+    );
+  }
 
   return (
     <div className="space-y-5" data-testid="hugo-tasks">
@@ -196,6 +241,17 @@ export function HugoTasksPanel({ hugo, onNavigate }: { hugo: boolean; onNavigate
         <p className="rounded-lg border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-ink" role="alert">
           {error}
         </p>
+      )}
+      {needsYou.length > 0 && (
+        <section ref={waitingRef} tabIndex={-1} aria-labelledby="hugo-sec-needs" data-testid="hugo-sec-waiting" className="scroll-mt-2 focus:outline-none">
+          <h3 id="hugo-sec-needs" className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-ink-muted">
+            <span>{t('hugoWork.sec.waiting')}</span>
+            <span className="inline-grid min-w-5 place-items-center rounded-full bg-accent-fill px-1.5 text-[11px] font-semibold leading-5 text-on-accent" aria-label={t('hugoWork.sec.waitingCount', { count: needsYou.length })}>
+              {needsYou.length}
+            </span>
+          </h3>
+          <ul className="space-y-2">{needsYou.map(card)}</ul>
+        </section>
       )}
       {empty && (
         <div className="flex flex-col items-center gap-2 pt-2 text-center">
@@ -223,14 +279,6 @@ export function HugoTasksPanel({ hugo, onNavigate }: { hugo: boolean; onNavigate
           </ul>
         </section>
       )}
-      {needsYou.length > 0 && (
-        <section aria-labelledby="hugo-sec-needs">
-          <h3 id="hugo-sec-needs" className="mb-2 text-xs font-medium uppercase tracking-wider text-ink-muted">
-            {t('hugoWork.sec.needsYou')}
-          </h3>
-          <ul className="space-y-2">{needsYou.map(card)}</ul>
-        </section>
-      )}
       {running.length > 0 && (
         <section aria-labelledby="hugo-sec-working">
           <h3 id="hugo-sec-working" className="mb-2 text-xs font-medium uppercase tracking-wider text-ink-muted">
@@ -239,6 +287,7 @@ export function HugoTasksPanel({ hugo, onNavigate }: { hugo: boolean; onNavigate
           <ul className="space-y-2">{running.map(card)}</ul>
         </section>
       )}
+      <HugoUpcoming tasks={upcoming} focusTaskId={focusTaskId} onChanged={refresh} onError={fail} />
       {finished.length > 0 && (
         <section aria-labelledby="hugo-sec-finished">
           <h3 id="hugo-sec-finished" className="mb-2 text-xs font-medium uppercase tracking-wider text-ink-muted">
@@ -247,11 +296,16 @@ export function HugoTasksPanel({ hugo, onNavigate }: { hugo: boolean; onNavigate
           <ul className="space-y-2">{finished.map(card)}</ul>
         </section>
       )}
-      {offerable.length > 0 && (
+      {(offerable.length > 0 || goalsOn) && (
         <section aria-labelledby="hugo-sec-quick">
           <h3 id="hugo-sec-quick" className="mb-2 text-xs font-medium uppercase tracking-wider text-ink-muted">
             {t('hugoWork.quick.title')}
           </h3>
+          {goalsOn && (
+            <div className="mb-2">
+              <HugoGoalStart name={assistant.me?.name ?? 'Hugo'} onStarted={(id) => openTasks(id)} />
+            </div>
+          )}
           <ul className="space-y-2">
             {offerable.map((q) => {
               const Icon = q.icon;
@@ -274,6 +328,39 @@ export function HugoTasksPanel({ hugo, onNavigate }: { hugo: boolean; onNavigate
           </ul>
         </section>
       )}
+      {whats.length > 0 && (
+        <section aria-label={t('hugoWork.repeat.title')} data-testid="hugo-repeat">
+          {repeating ? (
+            <HugoUpcomingForm
+              whats={whats}
+              onStarted={(task) => {
+                setRepeating(false);
+                refresh();
+                openTasks(task.id);
+              }}
+              onCancel={() => setRepeating(false)}
+              onError={fail}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setRepeating(true)}
+              className="group flex min-h-12 w-full items-center gap-3 rounded-xl border border-line bg-surface-raised px-3 py-2 text-left text-sm text-ink transition-colors hover:border-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            >
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent-fill/15 text-accent" aria-hidden="true">
+                <Repeat className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1">{t('hugoWork.quick.repeat')}</span>
+            </button>
+          )}
+        </section>
+      )}
+      <div className="border-t border-line pt-3 text-center">
+        <Button size="sm" variant="ghost" className="h-9" onClick={() => setView('activity')} data-testid="hugo-activity-open">
+          <History className="h-4 w-4" aria-hidden="true" />
+          {t('hugoWork.activity.open', { name: assistant.me?.name ?? 'Hugo' })}
+        </Button>
+      </div>
     </div>
   );
 }

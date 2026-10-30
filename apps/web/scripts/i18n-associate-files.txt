@@ -90,7 +90,17 @@ src/components/assistant/HugoTaskCard.tsx
 src/components/assistant/HugoNoteCard.tsx
 src/components/assistant/HugoTaskOffer.tsx
 src/components/assistant/HugoBadge.tsx
+src/components/assistant/HugoMemoryView.tsx
+src/components/assistant/HugoMemoryChip.tsx
 src/components/assistant/hugoWorkText.ts
+src/components/assistant/HugoUpcoming.tsx
+src/components/assistant/HugoUpcomingForm.tsx
+src/components/assistant/HugoActivity.tsx
+src/components/assistant/hugoRecurringText.ts
+src/components/assistant/HugoGoalCard.tsx
+src/components/assistant/HugoGoalStart.tsx
+src/components/assistant/HugoGoalOffer.tsx
+src/components/assistant/hugoGoalText.ts
 src/components/settings/HugoNotesCard.tsx
 src/pages/transport/rider/LiveTrip.tsx
 src/pages/transport/rider/OwedCard.tsx

@@ -42,6 +42,7 @@ import './hero';
 import './home';
 import './hrc';
 import './hugoSeat';
+import './hugoAdmin';
 import './inbox';
 import './install';
 import './kb';

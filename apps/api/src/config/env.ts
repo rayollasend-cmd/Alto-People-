@@ -254,16 +254,30 @@ const EnvSchema = z.object({
   // Standing ride bookings (lib/rideSeries) are booked forward this often;
   // 0 turns the sweep off (a series is still booked when it is created).
   RIDE_SERIES_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
-  // The assistant's model. Unset: the assistant answers from its intent
-  // registry alone (lib/hugo) — no model call, nothing leaves the server.
-  // Set: Claude answers with the same intents as tools, knowing the page
-  // the person is on (lib/assistantModel).
-  ANTHROPIC_API_KEY: z.string().optional(),
-  // Two models, picked per question (routes/hugo pickTier): the strongest
+  // The assistant's model (lib/assistantModel): DeepSeek, through its
+  // Anthropic-compatible API (owner, 2026-10-29). The key lives in the
+  // variable the owner named `Hugo` (DEEPSEEK_API_KEY also works). Unset:
+  // the assistant answers from its intent registry alone (lib/hugo) — no
+  // model call, nothing leaves the server.
+  Hugo: z.string().optional(),
+  DEEPSEEK_API_KEY: z.string().optional(),
+  ASSISTANT_BASE_URL: z.string().url().default('https://api.deepseek.com/anthropic'),
+  // Two models, picked per question (lib/hugoRouting pickTier): the strongest
   // for actions and numbers, a quick one for everyday questions. A plain
   // question the registry answers outright ("when is payday?") uses neither.
-  ASSISTANT_MODEL: z.string().default('claude-opus-5-5'),
-  ASSISTANT_FAST_MODEL: z.string().default('claude-haiku-5-5'),
+  ASSISTANT_MODEL: z.string().default('deepseek-v4-pro'),
+  ASSISTANT_FAST_MODEL: z.string().default('deepseek-flash'),
+  // What a million tokens cost, in US dollars — "input, cached input, output"
+  // — per tier (lib/hugoAllowance). Defaults are DeepSeek's peak prices
+  // (October 2026), so the allowance never under-counts.
+  HUGO_PRICE_FAST: z.string().default('0.30,0.006,1.20'),
+  HUGO_PRICE_DEEP: z.string().default('1.32,0.044,3.96'),
+  // Each person's monthly allowance for Hugo's thinking, in US dollars
+  // (owner, 2026-10-29): associates, drivers and floor/shift supervisors get
+  // a 30-day cycle; internal staff a calendar month. Used up: the registry
+  // still answers the basics until it renews.
+  HUGO_ALLOWANCE_FLOOR_USD: z.coerce.number().min(0).default(1),
+  HUGO_ALLOWANCE_STAFF_USD: z.coerce.number().min(0).default(10),
   // Call-outs by phone and text (lib/callOuts, routes/voice): Twilio's
   // webhooks are verified with the auth token. Unset: the voice/SMS
   // webhooks answer 503 and nothing else changes.
@@ -321,6 +335,32 @@ const EnvSchema = z.object({
   // up to date. 0 turns either timer off (tasks still step when read).
   HUGO_TASKS_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(120),
   HUGO_NOTES_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
+  // Hugo on WhatsApp (lib/hugoWhatsapp): the most questions one tenant's
+  // associates may send to the model in a company day — a safety valve
+  // over each person's monthly allowance (lib/hugoAllowance). Reached, or
+  // 0: WhatsApp answers from the registry alone (anything else → a person).
+  HUGO_WA_MODEL_TENANT_DAILY: z.coerce.number().int().min(0).default(5000),
+  // Recurring briefs (lib/hugoRecurring): how many one person may keep
+  // running, and a safety valve on the free-question ones ('ASK', the quick
+  // model) per tenant per company day — over it, a brief says "I'll answer
+  // this one tomorrow". Each person's monthly allowance is the spend limit.
+  HUGO_RECURRING_MAX_PER_USER: z.coerce.number().int().min(1).max(50).default(5),
+  HUGO_RECURRING_DAILY_MODEL: z.coerce.number().int().min(0).default(200),
+  // Goals (lib/hugoGoals): how many one person may have open, how many steps
+  // of thinking one goal takes before Hugo asks to keep going, the least
+  // time between two of a goal's own steps, and a per-tenant, per-company-day
+  // safety valve on goal steps (over it: "I'll pick this up tomorrow"). Each
+  // person's monthly allowance (lib/hugoAllowance) is the spend limit.
+  HUGO_GOAL_MAX_OPEN: z.coerce.number().int().min(1).max(10).default(3),
+  HUGO_GOAL_MAX_STEPS: z.coerce.number().int().min(1).max(100).default(12),
+  HUGO_GOAL_STEP_GAP_MINUTES: z.coerce.number().int().min(0).max(1440).default(10),
+  HUGO_GOAL_DAILY_STEPS: z.coerce.number().int().min(0).default(300),
+  // Each person's conversation with Hugo in the app follows their account
+  // (lib/hugoThread): kept this many days, then the sweep removes it; the
+  // sweep runs this often (0 turns the timer off — a read still never shows
+  // a turn past its time).
+  HUGO_THREAD_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(90),
+  HUGO_THREAD_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
   // Local hour (0-23, deployment timezone) after which the daily digest
   // may send. Default 6 → admins have it before the first shift.
   SCHEDULE_DIGEST_HOUR: z.coerce.number().int().min(0).max(23).default(6),

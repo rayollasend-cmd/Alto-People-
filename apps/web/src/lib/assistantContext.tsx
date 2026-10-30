@@ -25,7 +25,10 @@ import { usePageTitle } from '@/lib/pageTitle';
  * pane's Tasks tab, the badge on every way in (`summary`), and a link any
  * notice can carry — `?hugo=tasks`, `?hugo=task:<id>`, `?hugo=notes`,
  * `?hugo=chat` opens the pane there on whatever page it lands (a
- * notification URL contract: keep these working).
+ * notification URL contract: keep these working). `?hugo=waiting` opens
+ * the Tasks tab at "Waiting for you" — where the home's "I need a quick
+ * answer" line and the badge go too (`openWaiting`; opening the pane while
+ * something waits on the person lands there).
  */
 
 export type AssistantTab = 'chat' | 'tasks';
@@ -58,6 +61,11 @@ export interface AssistantValue {
   /** The task a link or a card asked to show; the tab scrolls to it once. */
   focusTaskId: string | null;
   clearFocus: () => void;
+  /** Open the pane on its Tasks tab at "Waiting for you". */
+  openWaiting: () => void;
+  /** A section the Tasks tab scrolls to once. */
+  focusSection: 'waiting' | null;
+  clearFocusSection: () => void;
   /** What Hugo is doing in the background — the badge. Null until known. */
   summary: HugoSummary | null;
   /** He is answering a question right now (the pane sets it): the step he is on, once he says. */
@@ -85,6 +93,9 @@ const INERT: AssistantValue = {
   openTasks: () => {},
   focusTaskId: null,
   clearFocus: () => {},
+  openWaiting: () => {},
+  focusSection: null,
+  clearFocusSection: () => {},
   summary: null,
   live: null,
   setLive: () => {},
@@ -101,6 +112,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<AssistantTab>('chat');
   const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
+  const [focusSection, setFocusSection] = useState<'waiting' | null>(null);
   const [record, setRecord] = useState<AssistantRecord | null>(null);
   const [live, setLive] = useState<HugoLive | null>(null);
   const queued = useRef<string | null>(null);
@@ -149,7 +161,11 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!hugoParam || !available) return;
     if (hugoParam === 'chat') setTab('chat');
-    else {
+    else if (hugoParam === 'waiting') {
+      setTab('tasks');
+      setFocusTaskId(null);
+      setFocusSection('waiting');
+    } else {
       setTab('tasks');
       const m = /^task:([0-9a-f-]{36})$/i.exec(hugoParam);
       setFocusTaskId(m ? m[1]! : null);
@@ -168,7 +184,18 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     setRecord(null);
   }, [location.pathname]);
 
-  const toggle = useCallback(() => setOpen((o) => !o), []);
+  // Opening the pane while something waits on the person (the badge says so) lands on "Waiting for you".
+  const openRef = useRef(open);
+  openRef.current = open;
+  const needsYouRef = useRef(0);
+  needsYouRef.current = summary.data?.needsYou ?? 0;
+  const toggle = useCallback(() => {
+    if (!openRef.current && needsYouRef.current > 0) {
+      setTab('tasks');
+      setFocusSection('waiting');
+    }
+    setOpen((o) => !o);
+  }, []);
   const ask = useCallback((text: string) => {
     queued.current = text;
     setTab('chat');
@@ -181,6 +208,13 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     setOpen(true);
   }, []);
   const clearFocus = useCallback(() => setFocusTaskId(null), []);
+  const openWaiting = useCallback(() => {
+    setTab('tasks');
+    setFocusTaskId(null);
+    setFocusSection('waiting');
+    setOpen(true);
+  }, []);
+  const clearFocusSection = useCallback(() => setFocusSection(null), []);
   const takeQueued = useCallback(() => {
     const q = queued.current;
     queued.current = null;
@@ -222,13 +256,16 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       openTasks,
       focusTaskId,
       clearFocus,
+      openWaiting,
+      focusSection,
+      clearFocusSection,
       summary: summary.data ?? null,
       live,
       setLive,
     }),
     // queueTick is in the list so a repeated `ask` of the same text re-renders the pane.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [available, me.data, open, toggle, ask, takeQueued, page, queueTick, tab, openTasks, focusTaskId, clearFocus, summary.data, live],
+    [available, me.data, open, toggle, ask, takeQueued, page, queueTick, tab, openTasks, focusTaskId, clearFocus, openWaiting, focusSection, clearFocusSection, summary.data, live],
   );
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;

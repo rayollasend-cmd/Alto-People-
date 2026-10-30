@@ -61,11 +61,13 @@ const APP_CACHE_VERSION = 'v4';
  * Those load fresh every time. Matched against every string segment of the
  * key, so a domain prefix ('payroll', 'documents') and a component name
  * ('GarnishmentsView', 'CaseDrawer') are both caught; erring wide is the
- * safe direction. APP_CACHE_VERSION moved to v2 with this rule so caches
+ * safe direction. The assistant's conversation ('hugoThread') stays off the
+ * disk too: it can be about pay, and it lives on the server for every device.
+ * APP_CACHE_VERSION moved to v2 with this rule so caches
  * written before it are dropped on restore rather than read.
  */
 const SENSITIVE_KEY =
-  /everify|casedrawer|i-?9\b|i9(tab|task|docs)|section2|document|garnish|pay|ssn|w-?4|tax|comp-records|compensation|external-payments|bank|payout|direct-?deposit|paystub|earnings|\bj1|background|bulkorder|drugtest|kiosk|financialchange|ratedefaults|application|profileinfo|inpersononboarding|associatechecklist|hrcases|discipline|vaccin|newrecorddrawer|benefits|cobra|qletab|oetab|branchenrollment|reimburs|equity|tuition|mfa|passkey|login-history|charges|timesheet/i;
+  /everify|casedrawer|i-?9\b|i9(tab|task|docs)|section2|document|garnish|pay|ssn|w-?4|tax|comp-records|compensation|external-payments|bank|payout|direct-?deposit|paystub|earnings|\bj1|background|bulkorder|drugtest|kiosk|financialchange|ratedefaults|application|profileinfo|inpersononboarding|associatechecklist|hrcases|discipline|vaccin|newrecorddrawer|benefits|cobra|qletab|oetab|branchenrollment|reimburs|equity|tuition|mfa|passkey|login-history|charges|timesheet|hugothread/i;
 export function isSensitiveQueryKey(queryKey: readonly unknown[]): boolean {
   return queryKey.some((part) => typeof part === 'string' && SENSITIVE_KEY.test(part));
 }

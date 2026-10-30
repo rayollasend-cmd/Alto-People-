@@ -1,6 +1,7 @@
 import type { HugoNoteView, HugoTaskEventView, HugoTaskKind, HugoTaskView } from '@alto-people/shared';
 import type { Lang, MessageKey, Translate } from '@/lib/i18n';
 import '@/lib/i18n/en/hugoWork';
+import { keepGoingLine, recurringEventLine, recurringTitle } from './hugoRecurringText';
 
 /**
  * The words of Hugo's tasks and notes, built from the codes the API keeps
@@ -57,6 +58,8 @@ export function taskTitle(task: Pick<HugoTaskView, 'kind' | 'subject'>, t: Trans
       return t('hugoWork.title.FIND_COVER', { when: s.shift ? fmtWhen(s.shift.startsAt, s.shift.timezone, lang) : '' });
     case 'CHASE_CONFIRMATIONS':
       return t('hugoWork.title.CHASE_CONFIRMATIONS', { day: s.date ? fmtDay(s.date, lang) : '' });
+    case 'RECURRING':
+      return recurringTitle(s, t, lang);
     default:
       return t(`hugoWork.title.${task.kind}` as MessageKey);
   }
@@ -83,6 +86,12 @@ export function eventLine(e: HugoTaskEventView, kind: HugoTaskKind, t: Translate
       return t('hugoWork.ev.NO_ONE_LEFT', { count: str(d.asked) });
     case 'CALLED_OFF':
       return t('hugoWork.ev.CALLED_OFF', { name: str(d.name), when: d.startsAt ? fmtWhen(str(d.startsAt), str(d.timezone) || 'America/New_York', lang) : '' });
+    // A recurring brief's own lines (hugoRecurringText).
+    case 'DELIVERED':
+    case 'RESCHEDULED':
+    case 'DEFERRED':
+    case 'SKIPPED':
+      return recurringEventLine(e, t, lang) ?? '';
     case 'PASSED_TO_SUPERVISOR':
       return d.who ? t('hugoWork.ev.PASSED_TO_SUPERVISOR', { who: str(d.who) }) : t('hugoWork.ev.PASSED_TO_SUPERVISOR.anon');
     case 'CANCELLED':
@@ -92,7 +101,7 @@ export function eventLine(e: HugoTaskEventView, kind: HugoTaskKind, t: Translate
       if (kind === 'WATCH_OPEN_SHIFTS') return t('hugoWork.ev.EXPIRED.openShifts');
       return t('hugoWork.ev.EXPIRED');
     case 'FAILED':
-      return d.reason === 'gone' || d.reason === 'no_access' || d.reason === 'error' ? t(`hugoWork.ev.FAILED.${d.reason}` as MessageKey) : t('hugoWork.ev.FAILED');
+      return d.reason === 'gone' || d.reason === 'no_access' || d.reason === 'error' || d.reason === 'not_available' ? t(`hugoWork.ev.FAILED.${d.reason}` as MessageKey) : t('hugoWork.ev.FAILED');
     default:
       return t(`hugoWork.ev.${e.code}` as MessageKey, { name: str(d.name), count: str(d.count), document: str(d.document) });
   }
@@ -105,7 +114,7 @@ export function latestLine(task: HugoTaskView, t: Translate, lang: Lang): string
 }
 
 /** What a task waiting on the person needs from them. */
-export function needsLine(task: HugoTaskView, t: Translate): string | null {
+export function needsLine(task: HugoTaskView, t: Translate, lang: Lang = 'en'): string | null {
   if (task.status !== 'NEEDS_YOU' || !task.needs) return null;
   const r = task.result ?? {};
   switch (task.needs) {
@@ -119,6 +128,8 @@ export function needsLine(task: HugoTaskView, t: Translate): string | null {
       const last = r.calledOff?.[r.calledOff.length - 1];
       return t('hugoWork.needs.CALLED_OFF', { name: last?.name ?? '' });
     }
+    case 'KEEP_GOING':
+      return keepGoingLine(task, t, lang);
     default:
       return t(`hugoWork.needs.${task.needs}` as MessageKey);
   }
@@ -176,5 +187,7 @@ export function noteText(note: HugoNoteView, t: Translate, lang: Lang): NoteText
 export function hugoWorkError(err: unknown, t: Translate): string {
   const code = (err as { code?: string } | null)?.code;
   const known = ['nothing_pending', 'nothing_in_review', 'too_soon', 'swap_in_flight', 'nothing_to_chase', 'too_many_tasks', 'task_busy', 'no_supervisor', 'hugo_off'];
+  // Recurring briefs (lib/hugoRecurring).
+  known.push('too_many_recurring', 'hugo_no_model', 'not_available', 'task_closed');
   return code && known.includes(code) ? t(`hugoWork.error.${code}` as MessageKey) : t('hugoWork.error.generic');
 }

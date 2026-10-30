@@ -1,5 +1,7 @@
 import { prisma } from '../db.js';
 import { dateColumnKey } from './timezone.js';
+import { exportHugoMemory } from './hugoMemory.js';
+import { exportHugoAccount } from './hugoThread.js';
 
 /**
  * Self-serve data export — builds the contents of a user's downloadable
@@ -38,7 +40,9 @@ const README = (email: string, generatedAt: Date) =>
   `  notification-preferences.json — your email-notification settings\n` +
   `  time-entries.json            — clock-in/out history (associates only)\n` +
   `  paystubs.json                — payroll items, with earning lines (associates only)\n` +
-  `  documents.json               — uploaded document metadata (associates only)\n\n` +
+  `  documents.json               — uploaded document metadata (associates only)\n` +
+  `  hugo-memory.json             — what the assistant keeps about you ("What Hugo knows"), when there is any\n` +
+  `  hugo-assistant.json          — your assistant: your settings, your conversation (kept 90 days) and what its thinking cost, when there is any\n\n` +
   `The archive contains data only — file attachments (PDFs, photos,\n` +
   `signed documents) are available via the in-app download buttons.\n`;
 
@@ -111,6 +115,27 @@ export async function buildDataExport(userId: string): Promise<ExportEntry[]> {
         2
       ) + '\n',
   });
+
+  // What Hugo knows (lib/hugoMemory): the person's switch and every fact, in their words.
+  const memory = await exportHugoMemory(userId);
+  if (memory) {
+    entries.push({
+      filename: 'hugo-memory.json',
+      contents:
+        JSON.stringify(
+          {
+            memoryOn: memory.memoryOn,
+            facts: memory.facts.map((f) => ({ kind: f.kind, text: f.text, source: f.source, createdAt: f.createdAt, updatedAt: f.updatedAt, lastUsedAt: f.lastUsedAt })),
+          },
+          null,
+          2
+        ) + '\n',
+    });
+  }
+
+  // The person's own Hugo (lib/hugoThread): their settings, their conversation in their words, and each model call's tokens and cost.
+  const hugo = await exportHugoAccount(userId);
+  if (hugo) entries.push({ filename: 'hugo-assistant.json', contents: JSON.stringify(hugo, null, 2) + '\n' });
 
   if (user.associateId) {
     const associateId = user.associateId;

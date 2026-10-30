@@ -53,6 +53,7 @@ import { startExecutiveDigestCron } from './lib/executiveDigest.js';
 import { startScheduleDigestCron } from './lib/scheduleDigest.js';
 import { installHugoTaskEvents, startHugoTasksCron } from './lib/hugoTasks.js';
 import { startHugoNotesCron } from './lib/hugoNotes.js';
+import { startHugoThreadCron } from './lib/hugoThread.js';
 import { startReadyToWorkNudgeCron } from './lib/readyToWork.js';
 import { startWeekAheadCron } from './lib/weekAheadDigest.js';
 import { startWebhookDeliveryCron } from './lib/webhookDispatch.js';
@@ -179,6 +180,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // Hugo works for you: tasks take their next step, notes stay current (lib/hugoTasks, lib/hugoNotes).
   startHugoTasksCron();
   startHugoNotesCron();
+  // Each person's conversation with Hugo is kept 90 days (lib/hugoThread).
+  startHugoThreadCron();
   installHugoTaskEvents();
   startReadyToWorkNudgeCron();
   startExecutiveDigestCron();

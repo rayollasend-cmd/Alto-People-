@@ -43,6 +43,7 @@ import type { enHero } from './hero';
 import type { enHome } from './home';
 import type { enHrc } from './hrc';
 import type { enHugoSeat } from './hugoSeat';
+import type { enHugoAdmin } from './hugoAdmin';
 import type { enInbox } from './inbox';
 import type { enInstall } from './install';
 import type { enKb } from './kb';
@@ -161,6 +162,7 @@ export type EnglishKey =
   | keyof typeof enHome
   | keyof typeof enHrc
   | keyof typeof enHugoSeat
+  | keyof typeof enHugoAdmin
   | keyof typeof enInbox
   | keyof typeof enInstall
   | keyof typeof enKb

@@ -13,10 +13,20 @@ vi.mock('@anthropic-ai/sdk', () => {
   return { default: Anthropic };
 });
 vi.mock('../../config/env.js', () => ({
-  env: { ANTHROPIC_API_KEY: 'test-key', ASSISTANT_MODEL: 'claude-opus-5', ASSISTANT_FAST_MODEL: 'claude-haiku-5-5' },
+  env: { Hugo: 'test-key', ASSISTANT_BASE_URL: 'https://api.deepseek.com/anthropic', ASSISTANT_MODEL: 'deepseek-v4-pro', ASSISTANT_FAST_MODEL: 'deepseek-flash' },
+}));
+// The allowance is tested on its own (hugoAllowance.test.ts): here it always has room, and charges are recorded.
+const charged = vi.hoisted(() => [] as Array<{ meter: unknown; usage: unknown }>);
+vi.mock('../../lib/hugoAllowance.js', () => ({
+  assertAllowance: vi.fn(async () => ({ exhausted: false })),
+  chargeModelCall: vi.fn(async (meter: unknown, usage: unknown) => {
+    charged.push({ meter, usage });
+    return 0;
+  }),
 }));
 
 const { answerWithModel, modelAvailable } = await import('../../lib/assistantModel.js');
+const meter = { userId: 'u-1', purpose: 'chat' as const };
 
 const identity = {
   name: 'Hugo',
@@ -51,6 +61,7 @@ describe('answerWithModel', () => {
       tools: [{ key: 'DESK', name: 'whats_waiting_on_my_desk', description: 'desk', run: async () => ({ reply: '2 propuestas', linkUrl: '/approvals' }) }],
       identity,
       now: new Date('2026-10-17T12:00:00Z'),
+      meter,
     });
     expect(out.reply).toBe('Tienes esto: 2 propuestas');
     expect(out.linkUrl).toBe('/approvals');
@@ -58,7 +69,7 @@ describe('answerWithModel', () => {
     expect(out.handoff).toBeNull();
 
     const params = toolRunner.mock.calls[0]![0] as { model: string; system: Array<{ text: string; cache_control?: unknown }>; messages: Array<{ role: string; content: string }>; tools: Array<{ name: string }> };
-    expect(params.model).toBe('claude-opus-5');
+    expect(params.model).toBe('deepseek-v4-pro');
     const system = params.system.map((s) => s.text).join('\n');
     expect(system).toContain('You are Hugo');
     expect(system).toContain('never a person');
@@ -89,6 +100,7 @@ describe('answerWithModel', () => {
       tools: [],
       identity: { ...identity, audience: 'associate', escalation: { who: 'Dana Reyes' } },
       now: new Date(),
+      meter,
     });
     expect(out.handoff).toEqual({ summary: 'Needs a new badge', who: 'Dana Reyes' });
     expect(out.reply).toContain('Dana');
@@ -96,21 +108,21 @@ describe('answerWithModel', () => {
 
   it('has no escalation tool for staff', async () => {
     toolRunner.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' });
-    await answerWithModel({ text: 'hi', history: [], page: null, tools: [], identity, now: new Date() });
+    await answerWithModel({ text: 'hi', history: [], page: null, tools: [], identity, now: new Date(), meter });
     const params = toolRunner.mock.calls[0]![0] as { tools: Array<{ name: string }> };
     expect(params.tools.map((t) => t.name)).not.toContain('escalate_to_person');
   });
 
   it('the quick model answers everyday questions straight off — no thinking, a shorter answer', async () => {
     toolRunner.mockResolvedValue({ content: [{ type: 'text', text: 'Tomorrow 6–2.' }], stop_reason: 'end_turn' });
-    await answerWithModel({ text: 'when do I work?', history: [], page: null, tools: [], identity, now: new Date(), tier: 'fast' });
+    await answerWithModel({ text: 'when do I work?', history: [], page: null, tools: [], identity, now: new Date(), tier: 'fast', meter });
     const fast = toolRunner.mock.calls[0]![0] as { model: string; thinking?: unknown; output_config?: unknown; max_tokens: number };
-    expect(fast.model).toBe('claude-haiku-5-5');
+    expect(fast.model).toBe('deepseek-flash');
     expect(fast.thinking).toBeUndefined();
     expect(fast.output_config).toBeUndefined();
-    await answerWithModel({ text: 'approve it', history: [], page: null, tools: [], identity, now: new Date(), tier: 'deep' });
+    await answerWithModel({ text: 'approve it', history: [], page: null, tools: [], identity, now: new Date(), tier: 'deep', meter });
     const deep = toolRunner.mock.calls[1]![0] as { model: string; thinking?: unknown; max_tokens: number };
-    expect(deep.model).toBe('claude-opus-5');
+    expect(deep.model).toBe('deepseek-v4-pro');
     expect(deep.thinking).toEqual({ type: 'adaptive' });
     expect(deep.max_tokens).toBeGreaterThan(fast.max_tokens);
   });
@@ -146,6 +158,7 @@ describe('answerWithModel', () => {
       identity,
       now: new Date(),
       tier: 'fast',
+      meter,
       live: { onTool: (k) => events.push(`tool:${k}`), onText: (d) => events.push(`text:${d}`), onClear: () => events.push('clear') },
     });
     expect(events).toEqual(['text:Let me ', 'text:check.', 'clear', 'tool:SCHEDULE', 'text:Tomorrow ', 'text:6–2.']);
@@ -153,5 +166,17 @@ describe('answerWithModel', () => {
     expect(out.linkUrl).toBe('/scheduling');
     expect(out.toolsUsed).toEqual(['SCHEDULE']);
   });
-});
 
+  it('charges every turn of the loop to the person it was for — not only the last', async () => {
+    charged.length = 0;
+    toolRunner.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield { content: [], stop_reason: 'tool_use', usage: { input_tokens: 300, cache_read_input_tokens: 1000, output_tokens: 40 } };
+        yield { content: [{ type: 'text', text: 'Tomorrow 6–2.' }], stop_reason: 'end_turn', usage: { input_tokens: 120, cache_read_input_tokens: 1100, output_tokens: 30 } };
+      },
+    }));
+    const out = await answerWithModel({ text: 'when do I work?', history: [], page: null, tools: [], identity, now: new Date(), tier: 'fast', meter: { userId: 'u-9', purpose: 'chat' } });
+    expect(out.reply).toBe('Tomorrow 6–2.');
+    expect(charged).toEqual([{ meter: { userId: 'u-9', purpose: 'chat' }, usage: { tier: 'fast', model: 'deepseek-flash', inputTokens: 420, cachedTokens: 2100, outputTokens: 70 } }]);
+  });
+});

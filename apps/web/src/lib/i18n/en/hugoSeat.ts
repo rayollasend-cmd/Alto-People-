@@ -14,6 +14,7 @@ export const enHugoSeat = {
   'hugoSeat.mood.news': 'I noticed something for you',
   'hugoSeat.mood.coffee': 'On a coffee break — ask me anything',
   'hugoSeat.mood.reading': 'Catching up on my reading — ask me anything',
+  'hugoSeat.allowance.basics': 'Until {date} I can answer the basics.',
 } as const;
 
 registerEnglish(enHugoSeat);
