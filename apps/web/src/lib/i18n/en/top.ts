@@ -52,7 +52,7 @@ export const enTop = {
   'top.recDocuments': 'Documents',
   'top.recStatements': 'Statements',
   'top.recHelp': 'Help center',
-  'top.askHint': 'AI assistant — answers from your records',
+  'top.askHint': 'Your assistant — answers from your records',
   'top.copyEmail': 'Copy my email',
   'top.shortcuts': 'Keyboard shortcuts',
   'top.shortcutsHint': 'See every shortcut (also: press ?)',

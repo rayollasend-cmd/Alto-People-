@@ -82,7 +82,7 @@ describe('<HomeTemplate>', () => {
     expect(screen.queryByTestId('needs-you-count')).not.toBeInTheDocument();
   });
 
-  it('Hugo is a full-width bar after the day’s content, not an aside beside an empty column', () => {
+  it('Hugo is a full-width bar right after Needs you, not an aside beside an empty column', () => {
     const { container } = renderHome(
       <HomeTemplate title="Hi" hero={null} decisions={{ title: 'Needs you', content: <p>rows</p> }} assistant={<div>Hugo bar</div>}>
         <p>the rest</p>
@@ -91,8 +91,8 @@ describe('<HomeTemplate>', () => {
     expect(container.querySelector('aside')).toBeNull();
     const seat = screen.getByRole('region', { name: 'Assistant' });
     expect(seat).toHaveTextContent('Hugo bar');
-    // In reading order: Needs you, the rest of the day, then Hugo.
-    const order = [screen.getByText('rows'), screen.getByText('the rest'), screen.getByText('Hugo bar')];
+    // In reading order: Needs you, Hugo, then the rest of the day — met, not scrolled past.
+    const order = [screen.getByText('rows'), screen.getByText('Hugo bar'), screen.getByText('the rest')];
     expect(order[0]!.compareDocumentPosition(order[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(order[1]!.compareDocumentPosition(order[2]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -127,14 +127,18 @@ describe('<HugoSeat>', () => {
     expect(api.apiFetch).not.toHaveBeenCalledWith('/hugo');
   });
 
-  it('Hugo’s card carries a line written for it, whole — his full introduction is in the panel', async () => {
+  it('Hugo’s card says he is your assistant and what he is up to, whole — his full introduction is in the panel', async () => {
     api.apiFetch.mockImplementation(async (path: string) =>
-      path === '/hugo' ? { name: 'Hugo', audience: 'staff', intro: "I'm Hugo, your AI assistant in Alto People — not a person. Ask me about your work here.", model: false, can: [{ key: 'DESK', label: 'Desk', example: 'What is waiting?' }] } : {},
+      path === '/hugo' ? { name: 'Hugo', audience: 'staff', intro: "I'm Hugo, your assistant in Alto People — not a person, but always here. Ask me about your work.", model: false, can: [{ key: 'DESK', label: 'Desk', example: 'What is waiting?' }] } : {},
     );
     renderHome(<HugoSeat />);
-    const line = await screen.findByText('Your AI assistant — not a person. Ask me anything, or hand me a task.');
-    // Never clamped mid-sentence ("Ask me about your work here, o…").
-    expect(line.className).not.toContain('line-clamp');
-    expect(screen.queryByText(/Ask me about your work here/)).toBeNull();
+    expect(await screen.findByText('Your assistant')).toBeInTheDocument();
+    // Nothing on his plate: a break, said in plain words, never clamped mid-sentence.
+    const mood = screen.getByTestId('hugo-mood');
+    expect(['coffee', 'reading']).toContain(mood.dataset.mood);
+    expect(mood.textContent).toMatch(/ask me anything$/);
+    expect(mood.className).not.toContain('line-clamp');
+    expect(screen.queryByText(/Ask me about your work/)).toBeNull();
+    expect(screen.queryByText(/\bAI\b/)).toBeNull();
   });
 });

@@ -11,7 +11,13 @@ import { useMediaQuery } from '@/lib/useViewport';
  * a navy collar on dark — each the one that stands out on its background.
  * The Alto lanyard says what he's doing: he wears it at work (working,
  * listening, thinking, reading, handoff, pointing, talking), not off duty
- * (hello, celebrate, coffee); greyed out when offline.
+ * (hello, celebrate, coffee); greyed out when offline. His headphones go on
+ * at work too, with a boom mic that lights up while he listens or talks;
+ * faceWork is the face in them, for a button while he's on a task.
+ *
+ * Each loop is a moment you'd recognise: he types and nods along, reads
+ * three lines and turns the page, lifts his coffee, sips with his eyes shut
+ * and sets it down.
  *
  * A still image paints first — sized, so nothing moves — and the motion strip
  * is fetched only once the page is idle, then played as CSS steps over the
@@ -21,10 +27,10 @@ import { useMediaQuery } from '@/lib/useViewport';
  * Only the platform's own assistant is Hugo: a tenant that renamed its
  * assistant gets its own words and no Alto mascot (isHugo).
  */
-export type HugoPose = 'hello' | 'working' | 'listening' | 'thinking' | 'handoff' | 'celebrate' | 'offline' | 'coffee' | 'reading' | 'pointing' | 'talking' | 'face';
+export type HugoPose = 'hello' | 'working' | 'listening' | 'thinking' | 'handoff' | 'celebrate' | 'offline' | 'coffee' | 'reading' | 'pointing' | 'talking' | 'face' | 'faceWork';
 export type HugoVariant = 'blue' | 'gold';
 
-const POSES: HugoPose[] = ['hello', 'working', 'listening', 'thinking', 'handoff', 'celebrate', 'offline', 'coffee', 'reading', 'pointing', 'talking', 'face'];
+const POSES: HugoPose[] = ['hello', 'working', 'listening', 'thinking', 'handoff', 'celebrate', 'offline', 'coffee', 'reading', 'pointing', 'talking', 'face', 'faceWork'];
 
 // Every image in both colourways: assets/hugo/<variant>/hugo-<pose>[-loop|-blink].webp.
 const FILES = import.meta.glob<string>('../../assets/hugo/*/hugo-*.webp', { eager: true, import: 'default' });
@@ -32,18 +38,19 @@ const file = (variant: HugoVariant, name: string): string => FILES[`../../assets
 
 /** Each pose's motion: a strip of frames, played as a loop or as an occasional blink. */
 const MOTION_SPEC: Partial<Record<HugoPose, { name: string; frames: number; kind: 'loop' | 'blink'; seconds: number }>> = {
-  hello: { name: 'hello-loop', frames: 12, kind: 'loop', seconds: 1.2 },
-  working: { name: 'working-loop', frames: 8, kind: 'loop', seconds: 0.8 },
-  listening: { name: 'listening-loop', frames: 12, kind: 'loop', seconds: 2.4 },
-  talking: { name: 'talking-loop', frames: 8, kind: 'loop', seconds: 0.9 },
-  reading: { name: 'reading-loop', frames: 12, kind: 'loop', seconds: 2.4 },
-  thinking: { name: 'thinking-loop', frames: 10, kind: 'loop', seconds: 1.8 },
-  celebrate: { name: 'celebrate-loop', frames: 10, kind: 'loop', seconds: 1 },
-  handoff: { name: 'handoff-loop', frames: 8, kind: 'loop', seconds: 1.4 },
-  offline: { name: 'offline-loop', frames: 8, kind: 'loop', seconds: 2.4 },
-  coffee: { name: 'coffee-loop', frames: 12, kind: 'loop', seconds: 2.6 },
-  pointing: { name: 'pointing-loop', frames: 8, kind: 'loop', seconds: 1.2 },
+  hello: { name: 'hello-loop', frames: 16, kind: 'loop', seconds: 1.6 },
+  working: { name: 'working-loop', frames: 16, kind: 'loop', seconds: 1.6 },
+  listening: { name: 'listening-loop', frames: 16, kind: 'loop', seconds: 2.4 },
+  talking: { name: 'talking-loop', frames: 12, kind: 'loop', seconds: 1.2 },
+  reading: { name: 'reading-loop', frames: 16, kind: 'loop', seconds: 4 },
+  thinking: { name: 'thinking-loop', frames: 12, kind: 'loop', seconds: 2.4 },
+  celebrate: { name: 'celebrate-loop', frames: 12, kind: 'loop', seconds: 1.2 },
+  handoff: { name: 'handoff-loop', frames: 12, kind: 'loop', seconds: 1.6 },
+  offline: { name: 'offline-loop', frames: 10, kind: 'loop', seconds: 3 },
+  coffee: { name: 'coffee-loop', frames: 16, kind: 'loop', seconds: 4.8 },
+  pointing: { name: 'pointing-loop', frames: 10, kind: 'loop', seconds: 1.4 },
   face: { name: 'face-blink', frames: 2, kind: 'blink', seconds: 5.6 },
+  faceWork: { name: 'faceWork-blink', frames: 2, kind: 'blink', seconds: 4.8 },
 };
 
 type Motion = { strip: string; frames: number; kind: 'loop' | 'blink'; seconds: number };

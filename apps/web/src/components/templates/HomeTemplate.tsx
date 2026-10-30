@@ -14,8 +14,8 @@ import { homeLabel } from '@/lib/navI18n';
  * Reading order is the principle "the system does the work; the person
  * sees decisions": banners that interrupt (emergency, onboarding), the
  * greeting, ONE hero (the number or state that defines this person's day),
- * then what needs them, then what changed and the rest of the day, then
- * the assistant's seat, then the ways into the product.
+ * then what needs them, then the assistant's seat, then what changed and
+ * the rest of the day, then the ways into the product.
  *
  *   <HomeTemplate
  *     title={`Good morning, ${firstName}`} topbarTitle="Home"
@@ -32,9 +32,10 @@ import { homeLabel } from '@/lib/navI18n';
  * is its rows plus `count` (the page's own cards); a card that is also a
  * queue row is named in `cardKeys` and counted once.
  *
- * Hugo's seat is a full-width bar after the day's content, the same place
- * on every home — not a third of the page that stayed empty below him; the
- * main column takes the full width.
+ * Hugo's seat is a full-width bar right after "Needs you", the same place
+ * on every home — not a third of the page that stayed empty below him, and
+ * not the bottom of a long phone page, where nobody met him; the main
+ * column takes the full width.
  */
 export interface HomeTemplateProps {
   title: React.ReactNode;
@@ -108,6 +109,15 @@ export function HomeTemplate({ title, topbarTitle: topbarTitleProp, subtitle, me
             {decisions.content}
           </section>
         )}
+        {/* Hugo renders nothing when nothing is switched on for this person,
+            so an empty seat never takes room. After what needs them — the
+            shift and the day's decisions come first — and before the rest of
+            the day, where he is met rather than scrolled past. */}
+        {assistant && (
+          <section aria-label={t('common.assistant')} className="empty:hidden">
+            {assistant}
+          </section>
+        )}
         {(changes || children) && (
           <div className="min-w-0 space-y-[var(--d-stack-lg)]">
             {changes && (
@@ -118,14 +128,6 @@ export function HomeTemplate({ title, topbarTitle: topbarTitleProp, subtitle, me
             )}
             {children}
           </div>
-        )}
-        {/* Hugo renders nothing when nothing is switched on for this person,
-            so an empty seat never takes room. After the day's own content —
-            a phone reads the next shift before the assistant. */}
-        {assistant && (
-          <section aria-label={t('common.assistant')} className="empty:hidden">
-            {assistant}
-          </section>
         )}
         {waysIn && <section aria-label={t('common.shortcuts')}>{waysIn}</section>}
       </div>

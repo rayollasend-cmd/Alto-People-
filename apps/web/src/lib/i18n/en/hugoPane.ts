@@ -2,7 +2,7 @@
 import { registerEnglish } from '../english';
 
 export const enHugoPane = {
-  'hugoPane.agent': 'AI agent',
+  'hugoPane.agent': 'Your assistant',
   'hugoPane.promise': 'Reads only your records · acts only when you confirm',
   'hugoPane.status.ready': 'Ready when you are',
   'hugoPane.status.listening': 'Listening…',

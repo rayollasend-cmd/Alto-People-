@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render } from '@testing-library/react';
 import { HugoMascot, isHugo } from '@/components/hugo/HugoMascot';
+import { hugoMoodOf, MOOD_POSE, moodFace } from '@/components/assistant/hugoMood';
 
 describe('isHugo', () => {
   it('is Hugo unless the tenant renamed its assistant', () => {
@@ -43,7 +44,7 @@ describe('HugoMascot', () => {
     await act(async () => {});
     const sprite = container.querySelector<HTMLElement>('.hugo-sprite')!;
     expect(sprite.dataset.kind).toBe('loop');
-    expect(sprite.style.getPropertyValue('--hugo-end')).toBe('-1152px');
+    expect(sprite.style.getPropertyValue('--hugo-end')).toBe('-1536px'); // 16 frames × 96 px
     expect(sprite.style.getPropertyValue('--hugo-iterations')).toBe('2');
     expect(container.querySelector('img')!.className).toContain('invisible');
   });
@@ -79,5 +80,26 @@ describe('his colourway follows the theme', () => {
 
     const fixed = render(<HugoMascot pose="hello" size={56} variant="blue" />);
     expect(fixed.container.querySelector<HTMLElement>('[data-hugo]')!.dataset.hugoVariant).toBe('blue');
+  });
+});
+
+describe('what he is up to, at a glance', () => {
+  const zero = { working: 0, needsYou: 0, unseenDone: 0, newNotes: 0 };
+  it('needing you outranks working; working puts his headphones on; idle is a coffee in the morning and at 3, reading otherwise', () => {
+    expect(hugoMoodOf({ ...zero, needsYou: 1, working: 2 }, 10)).toBe('needsYou');
+    expect(hugoMoodOf({ ...zero, working: 2, newNotes: 1 }, 10)).toBe('working');
+    expect(hugoMoodOf({ ...zero, unseenDone: 1, newNotes: 1 }, 10)).toBe('done');
+    expect(hugoMoodOf({ ...zero, newNotes: 3 }, 10)).toBe('news');
+    expect(hugoMoodOf(zero, 9)).toBe('coffee');
+    expect(hugoMoodOf(null, 15)).toBe('coffee');
+    expect(hugoMoodOf(zero, 13)).toBe('reading');
+    expect(MOOD_POSE.working).toBe('working');
+    expect(moodFace('working')).toBe('faceWork');
+    expect(moodFace('coffee')).toBe('face');
+  });
+
+  it('the working face has its own still and blink', () => {
+    const { container } = render(<HugoMascot pose="faceWork" size={40} play="still" />);
+    expect(container.querySelector('img')!.getAttribute('src')).toMatch(/hugo-faceWork\.webp/);
   });
 });

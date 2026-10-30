@@ -26,6 +26,7 @@ import { NotificationsBell } from './NotificationsBell';
 import { useAssistant } from '@/lib/assistantContext';
 import { HugoMascot, isHugo } from '@/components/hugo/HugoMascot';
 import { HugoBadge, useHugoBadgeLabel } from '@/components/assistant/HugoBadge';
+import { moodFace, useHugoMood } from '@/components/assistant/hugoMood';
 import { InstallAppButton } from './InstallAppButton';
 import { RoleSwitchItem, RoleSwitchSheet } from './RoleSwitcher';
 import { Logo } from '@/components/Logo';
@@ -492,7 +493,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
                     assistant.toggle();
                   }}
                 >
-                  {isHugo(assistant.me.name) ? <HugoMascot pose="face" size={18} play="still" /> : <Sparkles className="h-4 w-4" />}
+                  {isHugo(assistant.me.name) ? <HugoMascot pose="face" size={24} play="still" className="-my-1" /> : <Sparkles className="h-4 w-4" />}
                   {t('top.askAssistant', { name: assistant.me.name })}
                 </DropdownMenuItem>
               )}
@@ -572,13 +573,14 @@ export function backCrumbOf(crumbs: { label: string; to?: string }[] | null): { 
 function AssistantButton() {
   const { available, me, open, toggle } = useAssistant();
   const label = useHugoBadgeLabel(`Ask ${me?.name ?? ''}`);
+  const mood = useHugoMood();
   if (!available || !me) return null;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon"
           onClick={toggle}
           aria-label={label}
           aria-pressed={open}
@@ -586,10 +588,11 @@ function AssistantButton() {
           data-tour="assistant"
           className={open ? 'text-accent' : undefined}
         >
-          <span className="relative grid h-7 w-7 place-items-center">
+          <span className="relative grid h-9 w-9 place-items-center">
             {isHugo(me.name) ? (
-              // His colourway follows the theme, so he stands out on the bar as he is.
-              <HugoMascot pose="face" size={26} play="still" />
+              // His colourway follows the theme, so he stands out on the bar as he is: blinking,
+              // in his headphones while he works on something for you.
+              <HugoMascot pose={moodFace(mood)} size={36} />
             ) : (
               <Sparkles className="h-5 w-5" aria-hidden="true" />
             )}

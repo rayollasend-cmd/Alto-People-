@@ -341,7 +341,10 @@ export const WA_REPLY = {
     ),
   /** The assistant in the app (agent families step 3): who it is and what it can do here, in one breath. */
   /**
-   * Who he is, in one plain sentence — not the labels joined into a list
+   * Who he is, in one plain sentence — "your assistant", as the owner put it
+   * (2026-10-29), still saying he isn't a person; the WhatsApp intro and every
+   * message an agent sends keep the full AI disclosure (intro, whoAmI,
+   * agentDisclosure). Not the labels joined into a list
    * ("I can help with: find cover…; tell me when…; your next payday"),
    * which read as machine output and was cut off on every home card (F500
    * audit 2026-10-26). What he can do is shown as suggestions under it.
@@ -352,19 +355,19 @@ export const WA_REPLY = {
       can.length
         ? opts.tasks
           ? {
-              en: `I'm ${name}, your AI assistant in ${PRODUCT_NAME} — not a person. Ask me about your work here, or hand me a task and I'll tell you when it's done.`,
-              es: `Soy ${name}, tu asistente de IA en ${PRODUCT_NAME}; no soy una persona. Pregúntame sobre tu trabajo aquí o pásame una tarea y te aviso cuando esté lista.`,
-              tr: `Ben ${name}, ${PRODUCT_NAME}'ın yapay zeka asistanıyım; bir insan değilim. Buradaki işinle ilgili bana sor ya da bana bir görev ver, bitince haber veririm.`,
+              en: `I'm ${name}, your assistant in ${PRODUCT_NAME} — not a person, but always here. Ask me about your work, or hand me a task and I'll tell you when it's done.`,
+              es: `Soy ${name}, tu asistente en ${PRODUCT_NAME}; no soy una persona, pero siempre estoy aquí. Pregúntame sobre tu trabajo o pásame una tarea y te aviso cuando esté lista.`,
+              tr: `Ben ${name}, ${PRODUCT_NAME}'daki asistanınım; bir insan değilim ama hep buradayım. İşinle ilgili bana sor ya da bana bir görev ver, bitince haber veririm.`,
             }
           : {
-              en: `I'm ${name}, your AI assistant in ${PRODUCT_NAME} — not a person. Ask me about your work here; try one of these to start.`,
-              es: `Soy ${name}, tu asistente de IA en ${PRODUCT_NAME}; no soy una persona. Pregúntame sobre tu trabajo aquí; prueba una de estas para empezar.`,
-              tr: `Ben ${name}, ${PRODUCT_NAME}'ın yapay zeka asistanıyım; bir insan değilim. Buradaki işinle ilgili bana sor; başlamak için bunlardan birini dene.`,
+              en: `I'm ${name}, your assistant in ${PRODUCT_NAME} — not a person, but always here. Ask me about your work; try one of these to start.`,
+              es: `Soy ${name}, tu asistente en ${PRODUCT_NAME}; no soy una persona, pero siempre estoy aquí. Pregúntame sobre tu trabajo; prueba una de estas para empezar.`,
+              tr: `Ben ${name}, ${PRODUCT_NAME}'daki asistanınım; bir insan değilim ama hep buradayım. İşinle ilgili bana sor; başlamak için bunlardan birini dene.`,
             }
         : {
-            en: `I'm ${name}, your AI assistant in ${PRODUCT_NAME} — not a person. Nothing is switched on for me to help with here yet.`,
-            es: `Soy ${name}, tu asistente de IA en ${PRODUCT_NAME}; no soy una persona. Todavía no hay nada activado con lo que pueda ayudarte aquí.`,
-            tr: `Ben ${name}, ${PRODUCT_NAME}'ın yapay zeka asistanıyım; bir insan değilim. Burada yardımcı olabileceğim açık bir şey henüz yok.`,
+            en: `I'm ${name}, your assistant in ${PRODUCT_NAME} — not a person, but always here. Nothing is switched on for me to help with here yet.`,
+            es: `Soy ${name}, tu asistente en ${PRODUCT_NAME}; no soy una persona, pero siempre estoy aquí. Todavía no hay nada activado con lo que pueda ayudarte aquí.`,
+            tr: `Ben ${name}, ${PRODUCT_NAME}'daki asistanınım; bir insan değilim ama hep buradayım. Burada yardımcı olabileceğim açık bir şey henüz yok.`,
           },
       lang,
     ),

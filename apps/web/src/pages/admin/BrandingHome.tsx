@@ -176,7 +176,7 @@ export function BrandingHome() {
                 </Field>
                 <Field
                   label="Assistant’s name"
-                  hint={`What your team calls the AI assistant in ${PRODUCT_NAME}, on WhatsApp and in every message it sends. It always says it is an AI assistant and who answers for it.`}
+                  hint={`What your team calls its assistant in ${PRODUCT_NAME}: in the app, on WhatsApp and in every message it sends. Messages it sends still say an AI wrote them and who answers for it.`}
                 >
                   {(p) => <Input {...p} value={draft.assistantName} onChange={(e) => set('assistantName', e.target.value)} maxLength={60} placeholder={ASSISTANT_PLATFORM_NAME} disabled={off} />}
                 </Field>

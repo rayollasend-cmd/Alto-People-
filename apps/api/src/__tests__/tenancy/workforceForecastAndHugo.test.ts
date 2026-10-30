@@ -154,7 +154,8 @@ describe('Hugo in the app', () => {
     const me = await admin.get('/hugo');
     expect(me.status, JSON.stringify(me.body)).toBe(200);
     expect(me.body).toMatchObject({ name: 'Hugo', audience: 'admin' });
-    expect(me.body.intro).toMatch(/^I'm Hugo, your AI assistant in Alto People — not a person\./);
+    // "Your assistant" (the owner, 2026-10-29) — and still not a person.
+    expect(me.body.intro).toMatch(/^I'm Hugo, your assistant in Alto People — not a person, but always here\./);
     expect(me.body.can.map((c: { key: string }) => c.key)).toEqual(expect.arrayContaining(['DESK', 'COVERAGE']));
 
     const all = await admin.post('/hugo/ask').send({ text: 'Where are we short this week?' });

@@ -14,25 +14,26 @@ export const Hello: Story = {};
 
 const POSES: Array<[HugoPose, string]> = [
   ['hello', 'Say hi · off duty'],
-  ['working', 'Working · typing'],
+  ['working', 'Working · headphones on, typing'],
   ['listening', 'Listening'],
   ['thinking', 'Thinking'],
-  ['reading', 'Reading a document'],
+  ['reading', 'Reading · turns the page'],
   ['pointing', 'Pointing'],
   ['handoff', 'Handing you to a person'],
   ['celebrate', 'Celebrating'],
-  ['coffee', 'Coffee break'],
+  ['coffee', 'Coffee break · a sip'],
   ['offline', 'Offline · reconnecting'],
   ['face', 'Face (buttons, avatars)'],
+  ['faceWork', 'Face in his headphones (a button while he works)'],
 ];
 
-/** Every pose: the Alto lanyard when he's at work, none off duty, greyed out offline. Blue on light, gold on dark. */
+/** Every pose: the Alto lanyard and headphones when he's at work, neither off duty, greyed out offline. Blue on light, gold on dark. */
 export const AllPoses: Story = {
   render: () => (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
       {POSES.map(([pose, label]) => (
         <figure key={pose} className="flex flex-col items-center gap-1 rounded-lg border border-line bg-surface p-3">
-          <HugoMascot pose={pose} size={pose === 'face' ? 96 : 128} />
+          <HugoMascot pose={pose} size={pose === 'face' || pose === 'faceWork' ? 96 : 128} />
           <figcaption className="text-xs text-ink-muted">{label}</figcaption>
         </figure>
       ))}

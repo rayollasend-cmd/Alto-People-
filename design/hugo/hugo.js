@@ -23,8 +23,9 @@ const VARIANT = params.get('v') === 'gold' ? 'gold' : 'blue';
 
 // The two colourways, sampled from the reference images (sRGB).
 const LOOK = {
-  blue: { fur: 0x1f63b3, collar: 0xe9a81f, strap: 0x0b1832, stripe: 0xe9a81f, ears: true },
-  gold: { fur: 0xdea526, collar: 0x1f4780, strap: 0x0b1832, stripe: 0xf3c65a, ears: false },
+  // band: the headphones' headband — dark on the light theme's blue Hugo, light on the dark theme's gold one.
+  blue: { fur: 0x1f63b3, collar: 0xe9a81f, strap: 0x0b1832, stripe: 0xe9a81f, ears: true, band: 0x1d2533 },
+  gold: { fur: 0xdea526, collar: 0x1f4780, strap: 0x0b1832, stripe: 0xf3c65a, ears: false, band: 0xd5dce6 },
 }[VARIANT];
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -43,7 +44,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.55;
 
 const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
-if (POSE === 'face') { camera.position.set(0, 0.78, 4.1); camera.lookAt(0, 0.66, 0); }
+if (POSE === 'face' || POSE === 'faceWork') { camera.position.set(0, 0.78, 4.1); camera.lookAt(0, 0.66, 0); }
 else { camera.position.set(0, 0.45, 8.2); camera.lookAt(0, 0.08, 0); }
 if (BG) scene.background = new THREE.Color(BG);
 
@@ -56,7 +57,7 @@ const rim = new THREE.DirectionalLight(0xffffff, 1.4); rim.position.set(1, 3, -4
 scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 0.6));
 
 const FLOOR = -1.3;
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.ShadowMaterial({ opacity: POSE === 'face' ? 0 : 0.13 }));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.ShadowMaterial({ opacity: POSE === 'face' || POSE === 'faceWork' ? 0 : 0.13 }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = FLOOR; ground.receiveShadow = true; scene.add(ground);
 
 const offline = POSE === 'offline';
@@ -214,9 +215,13 @@ function place(mesh, x, y, lift = 0) {
   // x, y are on the face, from its centre; the mesh sits on the face's surface, facing out.
   const centre = new THREE.Vector3(FACE.cx, FACE.cy + HEAD.y, 0);
   const { p, n } = onSurface(faceMesh, centre.x + x, centre.y + y, lift);
-  mesh.position.copy(p);
+  // The face rides with the head (it nods, tilts over a page, tips back to sip): the
+  // feature is placed in the head's own space (unrotated at this point, so only the offset changes).
+  mesh.position.copy(headGroup.worldToLocal(p.clone()));
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
-  return add(mesh);
+  mesh.castShadow = true;
+  headGroup.add(mesh);
+  return mesh;
 }
 
 // Rosy cheeks: a soft radial blush.
@@ -234,27 +239,68 @@ const blush = () => new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.16), new THRE
 // at: wears the Alto lanyard — he's at work. Off duty (hello, celebrate, coffee, offline), no lanyard.
 const P = {
   hello: { at: false, eyes: 'open', look: [0.01, 0.01], mouth: 'smile', armL: 'rest', armR: 'wave' },
-  working: { at: true, eyes: 'focus', look: [0, -0.025], mouth: 'smile', armL: 'typeL', armR: 'typeR', laptop: true },
-  listening: { at: true, eyes: 'open', look: [-0.02, 0], mouth: 'smile', armL: 'rest', armR: 'ear', extra: 'sound' },
-  thinking: { at: true, eyes: 'open', look: [0.02, 0.03], mouth: 'hmm', armL: 'rest', armR: 'chin', extra: 'thought' },
-  handoff: { at: true, eyes: 'open', look: [0.03, 0], mouth: 'smile', armL: 'rest', armR: 'give', extra: 'envelope' },
+  working: { at: true, phones: true, eyes: 'focus', look: [0, -0.025], mouth: 'smile', armL: 'typeL', armR: 'typeR', laptop: true },
+  listening: { at: true, phones: true, mic: true, eyes: 'open', look: [-0.02, 0], mouth: 'smile', armL: 'rest', armR: 'ear', extra: 'sound' },
+  thinking: { at: true, phones: true, eyes: 'open', look: [0.02, 0.03], mouth: 'hmm', armL: 'rest', armR: 'chin', extra: 'thought' },
+  handoff: { at: true, phones: true, eyes: 'open', look: [0.03, 0], mouth: 'smile', armL: 'rest', armR: 'give', extra: 'envelope' },
   celebrate: { at: false, eyes: 'happy', mouth: 'open', armL: 'up', armR: 'up', extra: 'confetti' },
   offline: { at: false, eyes: 'closed', mouth: 'o', armL: 'down', armR: 'down', extra: 'zz', noCheeks: true },
   coffee: { at: false, eyes: 'content', mouth: 'smile', armL: 'rest', armR: 'mug', extra: 'coffee' },
-  reading: { at: true, eyes: 'open', look: [0.02, -0.03], mouth: 'smile', armL: 'holdL', armR: 'holdR', extra: 'document' },
-  pointing: { at: true, eyes: 'open', look: [0.035, 0.01], mouth: 'open', armL: 'rest', armR: 'point' },
+  reading: { at: true, phones: true, eyes: 'open', look: [0.02, -0.03], mouth: 'smile', armL: 'holdL', armR: 'holdR', extra: 'document' },
+  pointing: { at: true, phones: true, eyes: 'open', look: [0.035, 0.01], mouth: 'open', armL: 'rest', armR: 'point' },
   face: { at: true, eyes: 'open', look: [0.005, 0], mouth: 'smile', armL: null, armR: null },
-  talking: { at: true, eyes: 'open', look: [0, 0.008], mouth: 'talk', armL: 'rest', armR: 'gesture' },
+  // The face while he's working (the top bar and the phone launcher when he has a task in hand).
+  faceWork: { at: true, phones: true, eyes: 'open', look: [0.005, 0], mouth: 'smile', armL: null, armR: null },
+  talking: { at: true, phones: true, mic: true, eyes: 'open', look: [0, 0.008], mouth: 'talk', armL: 'rest', armR: 'gesture' },
 }[POSE];
-// Motion that reads at 56 px: each loop names its blink frame and its eyes' path.
+// Motion that reads at 56 px. Each loop is one clear action with a beginning and an end,
+// and the head moves with it (NECK, applied at the end): he nods along while he types,
+// follows the lines down a page and turns it, tips back to sip his coffee, nods while he
+// listens. Each names its blink frame.
 const F = (n) => FRAMES > 1 && FRAME === n;
-if (POSE === 'hello' && F(9)) P.eyes = 'closed';
-if (POSE === 'listening' && F(8)) P.eyes = 'closed';
-if (POSE === 'talking') { P.mouth = FRAME % 2 === 0 ? 'talk' : 'smile'; if (F(6)) P.eyes = 'closed'; }
-if (POSE === 'reading' && FRAMES > 1) { const line = Math.floor(PH * 3); const x = ((PH * 3) % 1) * 0.05 - 0.025; P.look = [x, -0.02 - line * 0.008]; if (F(9)) P.eyes = 'closed'; }
-if (POSE === 'thinking' && FRAMES > 1) P.look = [Math.sin(PH * TAU) * 0.03, 0.03];
-if (POSE === 'coffee' && FRAMES > 1) { const sip = Math.sin(PH * Math.PI); P.sip = sip; P.eyes = sip > 0.45 ? 'happy' : 'open'; P.look = [0.02, 0.01]; }
-if (POSE === 'face' && F(1)) P.eyes = 'closed';
+const ease = (t) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, t)));
+const NECK = { x: 0, y: 0, z: 0 };
+if (POSE === 'hello') { NECK.z = Math.sin(PH * TAU) * 0.07; if (F(13)) P.eyes = 'closed'; }
+if (POSE === 'working') {
+  // Eyes on the screen, nodding to whatever is in the headphones.
+  NECK.x = 0.09 + Math.sin(PH * TAU * 2) * 0.035;
+  if (F(11)) P.eyes = 'closed';
+}
+if (POSE === 'listening') { NECK.x = Math.sin(PH * TAU * 2) * 0.05; NECK.z = 0.07; if (F(9)) P.eyes = 'closed'; }
+if (POSE === 'talking') { P.mouth = FRAME % 2 === 0 ? 'talk' : 'smile'; NECK.x = Math.sin(PH * TAU * 2) * 0.03; NECK.z = Math.sin(PH * TAU) * 0.04; if (F(7)) P.eyes = 'closed'; }
+if (POSE === 'reading' && FRAMES > 1) {
+  // Three lines, left to right and down the page, then the page turns.
+  const reading = Math.min(PH / 0.75, 0.999);
+  if (PH < 0.75) {
+    const line = Math.floor(reading * 3);
+    const along = (reading * 3) % 1;
+    P.look = [along * 0.055 - 0.0275, -0.018 - line * 0.01];
+    NECK.y = -(along * 0.12 - 0.06);
+    NECK.x = 0.12 + line * 0.02;
+  } else {
+    P.flip = ease((PH - 0.75) / 0.25);
+    P.look = [0.02, -0.01];
+    NECK.x = 0.1; NECK.y = -0.04;
+    if (F(Math.round(FRAMES * 0.78))) P.eyes = 'closed';
+  }
+}
+if (POSE === 'reading' && FRAMES <= 1) NECK.x = 0.12;
+if (POSE === 'thinking' && FRAMES > 1) { P.look = [Math.sin(PH * TAU) * 0.03, 0.035]; NECK.z = 0.09 + Math.sin(PH * TAU) * 0.03; NECK.y = Math.sin(PH * TAU) * 0.05; }
+if (POSE === 'thinking' && FRAMES <= 1) NECK.z = 0.09;
+if (POSE === 'coffee' && FRAMES > 1) {
+  // Lift the mug, sip with eyes closed and the head tipped back, set it down, enjoy it.
+  const lift = PH < 0.3 ? ease(PH / 0.3) : PH < 0.55 ? 1 : PH < 0.8 ? 1 - ease((PH - 0.55) / 0.25) : 0;
+  P.sip = lift;
+  const sipping = PH >= 0.3 && PH < 0.55;
+  P.eyes = sipping ? 'happy' : 'open';
+  P.look = [0.02, 0.01];
+  NECK.x = -0.09 * lift;
+}
+if (POSE === 'handoff') { NECK.x = Math.max(0, Math.sin(PH * TAU)) * 0.06; NECK.y = -0.08; }
+if (POSE === 'pointing') { NECK.y = -0.14; NECK.z = -0.04; }
+if (POSE === 'celebrate') NECK.z = Math.sin(PH * TAU * 2) * 0.06;
+if (POSE === 'offline') NECK.x = 0.1;
+if ((POSE === 'face' || POSE === 'faceWork') && F(1)) P.eyes = 'closed';
 if (params.get('blink') === '1') P.eyes = 'closed';
 
 // Eyes: glossy black beads with two highlights, as in the references.
@@ -286,6 +332,35 @@ if (P.mouth === 'o') place(arc(0.018, 0.009, TAU, M.line), 0, -0.05, 0.006);
 if (P.mouth === 'talk') {
   place(ellipsoid(0.04, 0.032, 0.006, M.mouth), 0, -0.05, 0.003);
   place(ellipsoid(0.02, 0.009, 0.004, M.tongue), 0, -0.064, 0.008);
+}
+
+/* ----------------------------------------------------------- headphones */
+
+// Headphones on while he works (and a boom mic, lit while he listens or talks); off for
+// coffee, celebrations and hello. In the head's own space, so they move with it.
+if (P.phones) {
+  const band = new THREE.MeshPhysicalMaterial({ color: tint(LOOK.band), roughness: 0.35, metalness: POSE === 'offline' ? 0 : 0.25, clearcoat: 0.6, clearcoatRoughness: 0.2 });
+  const shell = new THREE.MeshPhysicalMaterial({ color: tint(LOOK.collar), roughness: 0.3, clearcoat: 0.7, clearcoatRoughness: 0.15 });
+  const cushion = new THREE.MeshPhysicalMaterial({ color: tint(0x262b36), roughness: 0.85, sheen: 0.5, sheenColor: new THREE.Color(0x4a5368) });
+  const cupX = HEAD.rx + FUR_LEN * 0.55 + 0.07;
+  const z = -0.04;
+  const onHead = (m) => { m.castShadow = true; headGroup.add(m); return m; };
+  for (const side of [-1, 1]) {
+    const cup = onHead(new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.13, 48), shell));
+    cup.rotation.z = Math.PI / 2; cup.position.set(side * cupX, -0.03, z);
+    const pad = onHead(new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.06, 16, 40), cushion));
+    pad.rotation.y = Math.PI / 2; pad.position.set(side * (cupX - 0.08), -0.03, z);
+    const cap = onHead(new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.03, 40), band));
+    cap.rotation.z = Math.PI / 2; cap.position.set(side * (cupX + 0.075), -0.03, z);
+  }
+  // Over the top, high enough to clear the ears.
+  const arc = [[-cupX, 0.06], [-cupX + 0.01, 0.5], [-0.6, 0.82], [0, 0.88], [0.6, 0.82], [cupX - 0.01, 0.5], [cupX, 0.06]].map(([x, y]) => [x, y, z]);
+  onHead(tube(arc, 0.042, band));
+  // The boom mic from the left cup to just below the mouth.
+  const micLit = !!P.mic;
+  onHead(tube([[-cupX + 0.02, -0.14, z + 0.08], [-0.55, -0.34, 0.36], [-0.22, -0.3, 0.6]], 0.016, band));
+  const tip = onHead(cap([-0.2, -0.29, 0.62], 0.045, micLit ? M.wave : band));
+  if (micLit) { const glow = new THREE.PointLight(0x2dd4bf, 0.15 + 0.1 * Math.sin(PH * TAU * 2), 0.35); glow.position.copy(tip.position).add(new THREE.Vector3(0, 0, 0.08)); headGroup.add(glow); }
 }
 
 /* -------------------------------------------------------------- lanyard */
@@ -359,14 +434,18 @@ const ARMS = {
 // Animation: the wave swings, typing hands bob in turn, celebrating arms pump.
 function animate(name, side, pts) {
   const [mid, hand] = pts;
-  if (name === 'wave') { const a = Math.sin(PH * TAU) * 0.26; return [[mid[0] + a * 0.3, mid[1], mid[2]], [hand[0] + a, hand[1] - Math.abs(a) * 0.25, hand[2]]]; }
+  if (name === 'wave') { const a = Math.sin(PH * TAU * 2) * 0.3; return [[mid[0] + a * 0.3, mid[1], mid[2]], [hand[0] + a, hand[1] - Math.abs(a) * 0.22, hand[2]]]; }
   if (name === 'gesture') { const d = Math.sin(PH * TAU * 2) * 0.08; return [mid, [hand[0] + d * 0.4, hand[1] + d, hand[2]]]; }
-  if (name === 'mug' && P.sip !== undefined) { const k = P.sip; return [[mid[0], mid[1] + k * 0.1, mid[2]], [hand[0] - k * 0.1, hand[1] + k * 0.16, hand[2] + k * 0.05]]; }
+  // The mug comes up to his mouth for the sip (the elbow rises with it), then back down.
+  if (name === 'mug' && P.sip !== undefined) { const k = P.sip; return [[mid[0] - k * 0.05, mid[1] + k * 0.32, mid[2] + k * 0.08], [hand[0] - k * 0.26, hand[1] + k * 0.5, hand[2] + k * 0.06]]; }
   if (name === 'give') { const d = Math.sin(PH * TAU) * 0.1; return [mid, [hand[0] + Math.max(0, d), hand[1], hand[2]]]; }
-  if (name === 'typeL' || name === 'typeR') { const d = Math.sin(PH * TAU * 2 + (side < 0 ? 0 : Math.PI)) * 0.04; return [mid, [hand[0], hand[1] + Math.max(0, d), hand[2]]]; }
+  // Typing: the hands take turns, quick and small, four strokes a loop.
+  // The hands are behind the lid, so the elbows show it: each arm pumps in turn.
+  if (name === 'typeL' || name === 'typeR') { const d = Math.max(0, Math.sin(PH * TAU * 4 + (side < 0 ? 0 : Math.PI))) * 0.09; return [[mid[0] + side * d * 0.25, mid[1] + d * 0.7, mid[2] - d * 0.2], [hand[0], hand[1] + d, hand[2]]]; }
   if (name === 'up') { const d = Math.sin(PH * TAU) * 0.1; return [[mid[0], mid[1] + d, mid[2]], [hand[0], hand[1] + d * 1.6, hand[2]]]; }
   if (name === 'point') { const d = Math.max(0, Math.sin(PH * TAU)) * 0.1; return [mid, [hand[0] + d, hand[1] + d * 0.4, hand[2]]]; }
-  if (name === 'ear') { const d = Math.sin(PH * TAU) * 0.02; return [mid, [hand[0], hand[1] + d, hand[2]]]; }
+  // Listening: a hand to the ear cup, pressing it to hear.
+  if (name === 'ear') { const d = Math.sin(PH * TAU * 2) * 0.025; return [mid, [hand[0] - 0.08, hand[1] + 0.06 + d, hand[2] - 0.05]]; }
   return pts;
 }
 for (const [name, side] of [['armL', -1], ['armR', 1]]) {
@@ -398,6 +477,9 @@ if (P.laptop) {
   const lidBox = add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.03), M.alu), lid); lidBox.position.set(0, 0.25, 0);
   const screen = add(new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.42), M.screen), lid); screen.position.set(0, 0.26, -0.016); screen.rotation.y = Math.PI;
   const emblem = altoEmblem(); emblem.scale.setScalar(0.0056); emblem.position.set(0, 0.26, 0.016); lid.add(emblem);
+  // The screen's light on his face, flickering a little as he types.
+  const screenLight = new THREE.PointLight(0xdcecff, 0.55 + 0.18 * Math.abs(Math.sin(PH * TAU * 4)), 0.95);
+  screenLight.position.set(0, 0.05, 0.95); scene.add(screenLight);
 }
 if (P.extra === 'sound') {
   // Listening: sound coming in, by the raised arm.
@@ -413,7 +495,7 @@ if (P.extra === 'thought') [[0.72, 1.18, 0.05], [0.9, 1.36, 0.07], [1.12, 1.56, 
 });
 if (P.extra === 'coffee') {
   const sip = P.sip ?? 0;
-  const mug = new THREE.Group(); mug.position.set(0.4 - sip * 0.14, -0.14 + sip * 0.16, 0.95 + sip * 0.04); mug.rotation.set(0.1, -0.3, sip * 0.5); mug.scale.setScalar(1.05); add(mug);
+  const mug = new THREE.Group(); mug.position.set(0.4 - sip * 0.3, -0.14 + sip * 0.52, 0.95 + sip * 0.06); mug.rotation.set(0.1 + sip * 0.25, -0.3, sip * 0.65); mug.scale.setScalar(1.05); add(mug);
   const cup = add(new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.14, 0.32, 40, 1, true), M.paper), mug); cup.material.side = THREE.DoubleSide;
   const coffee = add(new THREE.Mesh(new THREE.CircleGeometry(0.15, 32), new THREE.MeshPhysicalMaterial({ color: 0x5b3a22, roughness: 0.3 })), mug); coffee.rotation.x = -Math.PI / 2; coffee.position.y = 0.13;
   const handle = add(new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.025, 12, 24), M.paper), mug); handle.position.set(0.18, 0, 0); handle.rotation.y = Math.PI / 2;
@@ -421,7 +503,8 @@ if (P.extra === 'coffee') {
   for (let i = 0; i < 3; i++) {
     const t = (PH + i / 3) % 1;
     const wisp = tube([[0, 0, 0], [0.04 * Math.sin(t * TAU), 0.12, 0], [-0.04, 0.24, 0], [0.03, 0.34, 0]], 0.016, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 * (1 - t) }));
-    wisp.position.set(0.38 + (i - 1) * 0.07, 0.04 + t * 0.3, 0.98); float(wisp);
+    // The steam rises from the mug, wherever the mug is.
+    wisp.position.set(mug.position.x - 0.02 + (i - 1) * 0.07, mug.position.y + 0.18 + t * 0.3, mug.position.z + 0.03); float(wisp);
   }
 }
 if (P.extra === 'document') {
@@ -429,6 +512,13 @@ if (P.extra === 'document') {
   add(new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.78, 0.012), M.paper), doc);
   [0.24, 0.14, 0.05, -0.04, -0.13].forEach((y, i) => { const l = add(new THREE.Mesh(new THREE.BoxGeometry(i === 0 ? 0.34 : 0.45, 0.024, 0.004), i === 0 ? M.gold : M.cardLine), doc); l.position.set(i === 0 ? -0.04 : 0, y, 0.01); });
   const seal = add(new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.016, 32), M.gold), doc); seal.rotation.x = Math.PI / 2; seal.position.set(0.18, -0.27, 0.012);
+  if (P.flip !== undefined) {
+    // The page turns on its left edge once the last line is read.
+    const hinge = new THREE.Group(); hinge.position.set(-0.31, 0, 0.02); doc.add(hinge);
+    const page = add(new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.78, 0.006), M.paper), hinge); page.position.set(0.31, 0, 0);
+    [0.24, 0.14, 0.05].forEach((y, i) => { const l = add(new THREE.Mesh(new THREE.BoxGeometry(i === 0 ? 0.34 : 0.45, 0.024, 0.004), i === 0 ? M.gold : M.cardLine), page); l.position.set(i === 0 ? -0.04 : 0, y, 0.006); });
+    hinge.rotation.y = -P.flip * Math.PI;
+  }
 }
 if (P.extra === 'envelope') {
   const out = Math.max(0, Math.sin(PH * TAU)) * 0.1;
@@ -448,14 +538,21 @@ if (P.extra === 'confetti') {
 }
 
 // Whole-body motion.
-if (POSE === 'working') { hugo.position.y = Math.abs(Math.sin(PH * TAU * 2)) * 0.025; hugo.rotation.x = Math.sin(PH * TAU * 2) * 0.02; }
+if (POSE === 'working') { hugo.position.y = Math.abs(Math.sin(PH * TAU * 2)) * 0.015; }
 if (POSE === 'celebrate') hugo.position.y = Math.abs(Math.sin(PH * TAU)) * 0.14;
-if (POSE === 'listening') hugo.rotation.z = Math.sin(PH * TAU) * 0.04;
+if (POSE === 'listening') hugo.rotation.z = Math.sin(PH * TAU) * 0.025;
 if (POSE === 'talking') { hugo.position.y = Math.abs(Math.sin(PH * TAU * 2)) * 0.02; hugo.rotation.z = Math.sin(PH * TAU) * 0.025; }
-if (POSE === 'hello') hugo.position.y = Math.abs(Math.sin(PH * TAU)) * 0.025;
+if (POSE === 'hello') hugo.position.y = Math.abs(Math.sin(PH * TAU * 2)) * 0.03;
 if (POSE === 'offline') hugo.scale.setScalar(1 + Math.sin(PH * TAU) * 0.012);
 
-hugo.rotation.y = POSE === 'face' ? -0.08 : -0.2; // a gentle three-quarter view, as in the references
+// The head turns on its neck (the hood meets the collar there), carrying the face and headphones.
+const neck = new THREE.Group();
+neck.position.set(0, 0.24, 0.02);
+hugo.add(neck);
+neck.attach(headGroup);
+neck.rotation.set(NECK.x, NECK.y, NECK.z);
+
+hugo.rotation.y = POSE === 'face' || POSE === 'faceWork' ? -0.08 : -0.2; // a gentle three-quarter view, as in the references
 
 async function finish() {
   if (P.extra === 'zz') {

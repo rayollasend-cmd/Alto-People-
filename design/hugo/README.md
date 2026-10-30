@@ -15,16 +15,36 @@ The owner's reference images are in `sources/` (`hugo-blue.png`,
 Each stands out on the background it's made for. The colours are sampled from
 the reference images.
 
-**The Alto lanyard means he's at work:** a navy strap, a clip, and a white
-card with the Alto mark. It replaces the old headphones.
+**The Alto lanyard and his headphones mean he's at work** (2026-10-29: the
+owner wanted him "wearing headphones while working"). The lanyard is a navy
+strap, a clip and a white card with the Alto mark. The headphones have a band
+over his head (dark on blue, light on gold, so it shows on navy), cups in the
+collar colour, and a boom mic whose tip lights up teal while he listens or
+talks.
 
-- **Off duty:** no lanyard. Poses: `hello` (waving), `celebrate`, `coffee`.
-- **At work:** lanyard on. Poses: `working` (typing at a laptop with the Alto
-  logo on the lid), `listening` (a hand to his ear, sound coming in),
-  `thinking`, `reading`, `pointing`, `handoff` (passing you to a person),
-  `talking`.
+- **Off duty:** no lanyard, no headphones. Poses: `hello` (waving),
+  `celebrate`, `coffee`.
+- **At work:** lanyard and headphones on. Poses: `working` (typing at a
+  laptop with the Alto logo on the lid), `listening` (a hand pressing the
+  cup, mic lit), `thinking`, `reading`, `pointing`, `handoff` (passing you to
+  a person), `talking` (mic lit).
 - **Offline:** greyed out, asleep (`offline`).
-- `face`: the close-up for buttons and avatars.
+- `face`: the close-up for buttons and avatars; `faceWork` is the same face
+  in his headphones, for a button while he's on a task.
+
+**Each loop is a moment you'd recognise**, not a twitch:
+
+| Pose | Frames | What happens |
+| --- | --- | --- |
+| `working` | 16 | Elbows pump in turn as he types, the screen's glow on his face flickers, a small nod along to the music, a blink |
+| `reading` | 16 | His eyes and head follow three lines, then he turns the page |
+| `coffee` | 16 | He lifts the mug to his mouth, sips with his eyes shut, sets it down; the steam follows the mug |
+| `listening` | 16 | A nod and a tilt, his hand on the cup |
+| `hello` | 16 | A wave with a sway |
+| `talking` | 12 | His mouth moves; he nods |
+
+The head turns on a neck pivot (`NECK` in `hugo.js`), so the face, hood,
+ears and headphones move together.
 
 The Figma file has every concept and board: [Alto People — Agents](https://www.figma.com/design/ORAbiUtCOGvrPOKrKzFsAr)
 (page "Hugo — mascot concepts").
@@ -37,6 +57,24 @@ The Figma file has every concept and board: [Alto People — Agents](https://www
 <HugoMascot pose="hello" size={56} play={2} />
 <HugoMascot pose="face" size={26} variant="gold" />   // a fixed colourway, for a background that doesn't follow the theme
 ```
+
+**What he's up to shows everywhere** (`components/assistant/hugoMood.ts`):
+the same mood on the top bar, the phone button and the Home card, from the
+badge's summary.
+
+| Mood | When | Home card | Button face | Status line |
+| --- | --- | --- | --- | --- |
+| `needsYou` | one of his tasks waits on the person | `pointing` | `face` | I need a quick answer from you |
+| `working` | a task is running | `working` | `faceWork` | Headphones on — working on something for you |
+| `done` | finished, not yet seen | `celebrate` (3 times) | `face` | Finished something for you |
+| `news` | he noticed something | `handoff` | `face` | I noticed something for you |
+| `coffee` | nothing going on, before 11 or at 3 pm | `coffee` | `face` | On a coffee break — ask me anything |
+| `reading` | nothing going on, otherwise | `reading` | `face` | Catching up on my reading — ask me anything |
+
+He's "your assistant" in every language (the owner, 2026-10-29), and his
+introduction still says he isn't a person. On WhatsApp, and in every message
+an agent sends, the full AI disclosure stays (`whatsappContent.ts` intro and
+whoAmI, `agentDisclosure.ts`).
 
 - The colourway follows `<html data-theme>`: blue on light, gold on dark (`useHugoVariant`).
 
@@ -52,12 +90,12 @@ Where he is today:
 
 | Place | Pose and size |
 | --- | --- |
-| Top-bar button (md and up) | `face` 26 |
-| Phone launcher, above the tab bar | `face` 44 |
+| Top-bar button (md and up) | his mood's face, blinking, 36 |
+| Phone launcher, above the tab bar | his mood's face, blinking, 56 |
 | Assistant panel header | his live state, 52 |
 | Assistant panel, empty state | `hello`, then his live state, 128 |
 | Next to each of his answers | `face` 28 |
-| Home card (HugoSeat) | `hello` 56 |
+| Home card (HugoSeat), right after "Needs you" | his mood's pose, 88 |
 | Birthday and anniversary banner | `celebrate` 56, with a bounce |
 
 ### In the panel he acts out what he is doing
@@ -68,16 +106,16 @@ typing.
 
 | State | Pose | Status line |
 | --- | --- | --- |
-| Panel open, idle | `listening` (lanyard on, a hand to his ear, sound coming in, a sway, a blink) | Ready when you are |
+| Panel open, idle | `listening` (headphones on, a hand on the cup, mic lit, a nod, a blink) | Ready when you are |
 | You type, or the cursor is in the box | `listening` | Listening… |
 | You tap the microphone | `listening` | I'm listening — go ahead |
-| The question is out, first 1.5 s | `reading` (his eyes scan the page) | Reading your records… |
+| The question is out, first 1.5 s | `reading` (his eyes follow the lines, he turns the page) | Reading your records… |
 | Still working, or a confirmed action is running | `working` (typing at his laptop) | Working on it… |
 | The answer lands | `talking` | Here's what I found |
 | Reading the answer aloud | `talking` | Reading it out loud |
 | An action is done, or the hand-off was sent | `celebrate` | Done — all set |
 | A hand-off is offered | `handoff` | Ready to pass this to a person |
-| A minute with no activity | `coffee` (off duty, no lanyard, sipping) | On a coffee break — ask me anything |
+| A minute with no activity | `coffee` (off duty, no lanyard or headphones, sipping) | On a coffee break — ask me anything |
 | No connection | `offline` | Reconnecting… |
 
 ## Changing him
@@ -102,12 +140,12 @@ node design/hugo/assets.mjs --stills blue             # a quick look: one colour
 `assets.mjs` writes four kinds of file, in each colourway's folder:
 
 - **Stills:** 256 px, about 7 KB each.
-- **The face:** 128 px, about 4 KB.
-- **Animation loops:** 240 px frames, 33–59 KB each, one per pose (blinks built in).
-- **A blink pair** for the face.
+- **The faces** (`face`, `faceWork`): 128 px, about 4 KB.
+- **Animation loops:** 240 px frames, 10–16 frames, one per pose (blinks built in).
+- **A blink pair** for each face.
 
 Each frame is a cold render in headless Chromium (SwiftShader), about 2–3 s
-each, so a full run of both colourways takes about ten minutes.
+each, so a full run of both colourways takes about twenty minutes.
 
 `2d/hugo-v2.mjs` is the flat SVG version of the first (vinyl) Hugo. The vinyl
 model itself is in git history before 2026-10-28.

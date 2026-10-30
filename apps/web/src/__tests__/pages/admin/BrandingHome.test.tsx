@@ -38,7 +38,7 @@ describe('Branding: the assistant\'s name', () => {
     const coco = (await screen.findByLabelText('Assistant’s name')) as HTMLInputElement;
     await waitFor(() => expect(coco.value).toBe('Coco'));
     // A plain label and a third-person hint — the field used to speak as the assistant ("call me") (F500 2026-10-26).
-    expect(screen.getByText(/What your team calls the AI assistant in Alto People/)).toBeInTheDocument();
+    expect(screen.getByText(/What your team calls its assistant in Alto People/)).toBeInTheDocument();
     expect(screen.queryByText(/call me/i)).toBeNull();
     // The leftover "Looking for something that used to be here?" note is gone; the logo size reads in MB.
     expect(screen.queryByText(/used to be here/)).toBeNull();

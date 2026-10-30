@@ -13,13 +13,19 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { useAssistant } from '@/lib/assistantContext';
 import { useAuth } from '@/lib/auth';
+import { MOOD_POSE, useHugoMood, type HugoMood } from '@/components/assistant/hugoMood';
+import { cn } from '@/lib/cn';
 import '@/lib/i18n/en/hugoSeat';
 import '@/lib/i18n/en/hugoWork';
 
 /**
  * Hugo's seat on a home (design system §4.1): the same place on every
- * role's first screen — a full-width bar after "Needs you" (it used to own
- * the right third of the page, which stayed empty below him). He offers
+ * role's first screen — a full-width bar right after "Needs you" (it used
+ * to own the right third of the page, which stayed empty below him, then
+ * sat at the bottom where nobody scrolled to him). He is drawn big and
+ * doing what he is doing — at his laptop in headphones while a task runs,
+ * pointing when one needs you, on a coffee break or reading when nothing
+ * does — with a line that says it in plain words (hugoMood). He offers
  * only what is switched on for this organization and this person (the
  * server's registry), takes a question, and answers in place. Switched
  * off, or nothing to offer: renders nothing, so the home never shows an
@@ -60,6 +66,7 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
   // asked there, where the thread lives. Outside the provider (a test
   // rendering a home alone) it answers in place, as it first did.
   const assistant = useAssistant();
+  const mood = useHugoMood();
   const me = useQuery({
     queryKey: ['hugo', 'me'],
     queryFn: getHugo,
@@ -103,18 +110,21 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
     <Card className={className} data-testid="hugo-seat">
       <CardContent className="space-y-3 p-[var(--d-card)]">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-6">
-          <div className="flex min-w-0 items-center gap-2 lg:w-80 lg:shrink-0">
+          <div className="flex min-w-0 items-center gap-3 lg:w-80 lg:shrink-0">
             {isHugo(me.data.name) ? (
-              <HugoMascot pose="hello" size={56} play={2} />
+              <HugoMascot pose={MOOD_POSE[mood]} size={88} play={mood === 'done' ? 3 : 'loop'} className="-my-2" />
             ) : (
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
                 <Sparkles className="h-4 w-4" />
               </span>
             )}
             <div className="min-w-0">
-              <div className="text-base font-medium text-ink">{me.data.name}</div>
-              {/* A line written for the card; his full introduction is in the panel. */}
-              <div className="text-xs2 text-ink-muted">{isHugo(me.data.name) ? t('hugoSeat.tagline') : me.data.intro}</div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="text-lg font-semibold text-ink">{me.data.name}</span>
+                {isHugo(me.data.name) && <span className="rounded-full border border-accent/40 bg-accent-fill/10 px-2 py-px text-xs font-medium text-accent">{t('hugoSeat.tagline')}</span>}
+              </div>
+              {/* What he is up to, written for the card; his full introduction is in the panel. */}
+              {isHugo(me.data.name) ? <HugoMoodLine mood={mood} /> : <div className="text-xs2 text-ink-muted">{me.data.intro}</div>}
             </div>
           </div>
           <form
@@ -157,6 +167,24 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** The seat's status line: a dot and his mood in plain words. */
+function HugoMoodLine({ mood }: { mood: HugoMood }) {
+  const { t } = useI18n();
+  const { summary } = useAssistant();
+  const working = summary?.working ?? 0;
+  const line =
+    mood === 'working' ? (working > 1 ? t('hugoSeat.mood.workingMany', { count: working }) : t('hugoSeat.mood.working')) : t(`hugoSeat.mood.${mood}` as const);
+  return (
+    <div className="mt-0.5 flex items-center gap-1.5 text-sm text-ink-muted" data-testid="hugo-mood" data-mood={mood}>
+      <span
+        className={cn('h-2 w-2 shrink-0 rounded-full', mood === 'needsYou' ? 'bg-accent-fill' : mood === 'coffee' || mood === 'reading' ? 'bg-caution' : 'bg-positive', mood === 'working' && 'animate-pulse')}
+        aria-hidden="true"
+      />
+      <span>{line}</span>
+    </div>
   );
 }
 

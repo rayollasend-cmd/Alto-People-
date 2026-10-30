@@ -53,7 +53,8 @@ async function encode(frames, size, file, type = 'image/webp', quality = 0.82, o
 
 const report = [];
 const STILL = 256, SPRITE = 240;
-const LOOPS = { hello: 12, working: 8, listening: 12, talking: 8, reading: 12, thinking: 10, celebrate: 10, handoff: 8, offline: 8, coffee: 12, pointing: 8 };
+// Long enough to read as a moment, not a twitch: reading scans three lines and turns the page, coffee lifts, sips and sets down.
+const LOOPS = { hello: 16, working: 16, listening: 16, talking: 12, reading: 16, thinking: 12, celebrate: 12, handoff: 12, offline: 10, coffee: 16, pointing: 10 };
 // One folder per colourway: blue/ for light mode, gold/ for dark mode (HugoMascot picks by the theme).
 for (const v of VARIANTS) {
   V = v;
@@ -63,10 +64,11 @@ for (const v of VARIANTS) {
   for (const pose of Object.keys(LOOPS).filter(wanted)) {
     report.push([`${v}/hugo-${pose}.webp`, await encode([await frame(pose, STILL)], STILL, `hugo-${pose}.webp`)]);
   }
-  // The face for buttons and avatars: open, and the blink pair.
-  if (wanted('face')) report.push([`${v}/hugo-face.webp`, await encode([await frame('face', 128)], 128, 'hugo-face.webp')]);
+  // The face for buttons and avatars: open, and the blink pair. faceWork is the same face in his headphones, for while he's on a task.
+  const FACES = ['face', 'faceWork'].filter(wanted);
+  for (const f of FACES) report.push([`${v}/hugo-${f}.webp`, await encode([await frame(f, 128)], 128, `hugo-${f}.webp`)]);
   if (STILLS_ONLY) continue;
-  if (wanted('face')) report.push([`${v}/hugo-face-blink.webp`, await encode([await frame('face', 128), await frame('face', 128, { blink: '1' })], 128, 'hugo-face-blink.webp')]);
+  for (const f of FACES) report.push([`${v}/hugo-${f}-blink.webp`, await encode([await frame(f, 128), await frame(f, 128, { blink: '1' })], 128, `hugo-${f}-blink.webp`)]);
   // Loops: one strip per motion — big enough to read at 56 px — with its blink baked in where it has one.
   for (const [pose, n] of Object.entries(LOOPS).filter(([pose]) => wanted(pose))) {
     const frames = [];
