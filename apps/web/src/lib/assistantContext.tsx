@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { HugoSummary } from '@alto-people/shared';
+import type { HugoStep, HugoSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { getHugo, getHugoSummary, type AssistantPage, type HugoMe } from '@/lib/hugoApi';
@@ -60,6 +60,13 @@ export interface AssistantValue {
   clearFocus: () => void;
   /** What Hugo is doing in the background — the badge. Null until known. */
   summary: HugoSummary | null;
+  /** He is answering a question right now (the pane sets it): the step he is on, once he says. */
+  live: HugoLive | null;
+  setLive: (live: HugoLive | null) => void;
+}
+
+export interface HugoLive {
+  step: HugoStep | null;
 }
 
 const INERT: AssistantValue = {
@@ -79,6 +86,8 @@ const INERT: AssistantValue = {
   focusTaskId: null,
   clearFocus: () => {},
   summary: null,
+  live: null,
+  setLive: () => {},
 };
 
 const AssistantContext = createContext<AssistantValue>(INERT);
@@ -93,6 +102,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const [tab, setTab] = useState<AssistantTab>('chat');
   const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
   const [record, setRecord] = useState<AssistantRecord | null>(null);
+  const [live, setLive] = useState<HugoLive | null>(null);
   const queued = useRef<string | null>(null);
   const [queueTick, setQueueTick] = useState(0);
 
@@ -213,10 +223,12 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       focusTaskId,
       clearFocus,
       summary: summary.data ?? null,
+      live,
+      setLive,
     }),
     // queueTick is in the list so a repeated `ask` of the same text re-renders the pane.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [available, me.data, open, toggle, ask, takeQueued, page, queueTick, tab, openTasks, focusTaskId, clearFocus, summary.data],
+    [available, me.data, open, toggle, ask, takeQueued, page, queueTick, tab, openTasks, focusTaskId, clearFocus, summary.data, live],
   );
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;

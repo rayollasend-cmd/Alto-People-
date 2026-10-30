@@ -10,8 +10,10 @@ import type {
   HugoTaskListResponse,
   HugoTaskOffer,
   HugoTaskView,
+  HugoAskEvent,
+  HugoTier,
 } from '@alto-people/shared';
-import { apiFetch } from './api';
+import { ApiError, apiFetch, apiStream, canStream } from './api';
 
 /**
  * The assistant's API. One registry answers everywhere (payday, ride,
@@ -45,6 +47,8 @@ export interface HugoAnswer {
   /** The assistant offered to pass this to a person; confirm with `handoffToPerson`. */
   handoff?: { summary: string; who: string | null } | null;
   source?: 'model' | 'rules';
+  /** How it was made: the registry at once, the quick model, or the strongest. */
+  tier?: HugoTier;
   /** Actions the assistant set up — nothing happens until the person confirms one. */
   actions?: AssistantActionCard[];
   /** Tables a numbers question produced (the report builder, within the person's reach). */
@@ -94,8 +98,43 @@ export function getHugo(): Promise<HugoMe> {
   return apiFetch<HugoMe>('/hugo');
 }
 
-export function askHugo(text: string, opts: { page?: AssistantPage | null; history?: AssistantTurn[] } = {}): Promise<HugoAnswer> {
-  return apiFetch<HugoAnswer>('/hugo/ask', { method: 'POST', body: { text, page: opts.page ?? null, history: opts.history ?? [] } });
+/**
+ * Ask. With `onEvent` the answer is shown as it is made (POST
+ * /hugo/ask/stream): each step and the words as they come, then the whole
+ * answer resolves as before. A browser or server that can't stream asks the
+ * plain way (POST /hugo/ask) — same answer, all at once.
+ */
+export function askHugo(
+  text: string,
+  opts: { page?: AssistantPage | null; history?: AssistantTurn[]; onEvent?: (e: Exclude<HugoAskEvent, { t: 'done' | 'error' }>) => void } = {},
+): Promise<HugoAnswer> {
+  const body = { text, page: opts.page ?? null, history: opts.history ?? [] };
+  if (opts.onEvent && canStream()) return askLive(body, opts.onEvent);
+  return apiFetch<HugoAnswer>('/hugo/ask', { method: 'POST', body });
+}
+
+async function askLive(body: { text: string; page: AssistantPage | null; history: AssistantTurn[] }, onEvent: (e: Exclude<HugoAskEvent, { t: 'done' | 'error' }>) => void): Promise<HugoAnswer> {
+  let answer: HugoAnswer | null = null;
+  let failed: string | null = null;
+  let heard = false;
+  try {
+    await apiStream('/hugo/ask/stream', body, (line) => {
+      const e = line as HugoAskEvent;
+      heard = true;
+      if (e.t === 'done') answer = e.answer as unknown as HugoAnswer;
+      else if (e.t === 'error') failed = e.message;
+      else onEvent(e);
+    });
+  } catch (err) {
+    // Nothing said yet and the stream itself is the problem (an older server
+    // without it, a browser or proxy that can't read one): ask the plain way.
+    // A refusal (403, 409, a bad question) is the answer either way.
+    const plain = !heard && (!(err instanceof ApiError) || err.status === 404);
+    if (plain) return apiFetch<HugoAnswer>('/hugo/ask', { method: 'POST', body });
+    throw err;
+  }
+  if (answer) return answer;
+  throw new ApiError(502, 'stream_cut', failed ?? 'The answer was cut off. Ask again.');
 }
 
 /** The person's tap on a confirmation card (or Cancel). Runs once, as them. */

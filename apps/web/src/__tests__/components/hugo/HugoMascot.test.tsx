@@ -93,6 +93,9 @@ describe('what he is up to, at a glance', () => {
     expect(hugoMoodOf(zero, 9)).toBe('coffee');
     expect(hugoMoodOf(null, 15)).toBe('coffee');
     expect(hugoMoodOf(zero, 13)).toBe('reading');
+    // A question in front of him comes first, in his headphones.
+    expect(hugoMoodOf({ ...zero, needsYou: 1 }, 10, true)).toBe('answering');
+    expect(moodFace('answering')).toBe('faceWork');
     expect(MOOD_POSE.working).toBe('working');
     expect(moodFace('working')).toBe('faceWork');
     expect(moodFace('coffee')).toBe('face');

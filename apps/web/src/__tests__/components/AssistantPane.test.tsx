@@ -203,6 +203,35 @@ describe('Hugo, the agent', () => {
     expect(screen.getByText('From your schedule')).toBeInTheDocument();
   });
 
+  it('as the answer is made: the step he is on, then his words as he writes them, then the answer', async () => {
+    let answer!: (v: unknown) => void;
+    let emit!: (e: unknown) => void;
+    askHugo.mockImplementation((_q: string, opts: { onEvent?: (e: unknown) => void }) => {
+      emit = opts.onEvent!;
+      return new Promise((r) => (answer = r));
+    });
+    mount();
+    fireEvent.click(screen.getByText('spark'));
+    const pane = await screen.findByTestId('assistant-pane');
+    const input = screen.getByLabelText(/ask hugo/i);
+    fireEvent.change(input, { target: { value: 'why is Saturday off?' } });
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() => expect(askHugo).toHaveBeenCalled());
+    await act(async () => emit({ t: 'step', step: 'schedule' }));
+    expect(pane.dataset.hugoStatus).toBe('reading');
+    expect(screen.getByTestId('hugo-status')).toHaveTextContent('Checking the schedule…');
+    await act(async () => emit({ t: 'text', d: 'You asked ' }));
+    await act(async () => emit({ t: 'text', d: 'for Saturday off.' }));
+    expect(screen.getByTestId('hugo-live')).toHaveTextContent('You asked for Saturday off.');
+    expect(pane.dataset.hugoStatus).toBe('answered');
+    // A lead-in dropped ("let me check") empties the bubble back to the step line.
+    await act(async () => emit({ t: 'clear' }));
+    expect(screen.getByTestId('hugo-live')).not.toHaveTextContent('You asked');
+    await act(async () => answer({ intent: 'MODEL', reply: 'You asked for Saturday off, and it was approved.', linkUrl: null, handoff: null, source: 'model', tier: 'fast' }));
+    await screen.findByText('You asked for Saturday off, and it was approved.');
+    expect(screen.queryByTestId('hugo-live')).toBeNull();
+  });
+
   it('asks out loud where the browser can listen: what was said goes as the question, in the person’s language', async () => {
     (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition = FakeRecognition;
     askHugo.mockResolvedValue({ intent: 'PAYDAY', reply: 'Friday.', linkUrl: null, handoff: null, source: 'rules' });

@@ -13,6 +13,7 @@ import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { invalidateTenantProfile } from '../../lib/tenantProfile.js';
 import { fmtDay } from '../../lib/humanDates.js';
 import { dueWords } from '../../lib/roleDecisions.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 
 /**
  * Agent families step 4 — the Compliance agent: document.chase and
@@ -198,6 +199,9 @@ describe('i9.section2', () => {
   const utcDay = (offset: number) => new Date(`${new Date(Date.now() + offset * DAY).toISOString().slice(0, 10)}T00:00:00Z`);
 
   it('the verifier desk gets a dated worklist, earliest first, with the E-Verify reason', async () => {
+    // Midweek noon: from 5 PM Pacific the UTC day the hires are seeded on is
+    // already tomorrow, and "late" read as "due today" (severity high).
+    pinMidweekNoon();
     const w = await world();
     const recent = await hire('Eve', utcDay(-1));
     const early = await hire('Dan', utcDay(-6));

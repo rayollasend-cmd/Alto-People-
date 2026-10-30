@@ -60,6 +60,18 @@ export const enHugoPane = {
   'hugoPane.source.DRIVER_RUN_RIDERS': 'From your runs',
   'hugoPane.error.answer': 'I couldn’t answer that just now. Try again in a moment.',
   'hugoPane.error.action': 'That didn’t go through. Try again.',
+  'hugoPane.step.records': 'Reading your records…',
+  'hugoPane.step.schedule': 'Checking the schedule…',
+  'hugoPane.step.pay': 'Looking at your pay…',
+  'hugoPane.step.ride': 'Checking the rides…',
+  'hugoPane.step.documents': 'Checking documents…',
+  'hugoPane.step.desk': 'Going through what’s waiting…',
+  'hugoPane.step.coverage': 'Checking coverage…',
+  'hugoPane.step.help': 'Searching the help center…',
+  'hugoPane.step.report': 'Running the numbers…',
+  'hugoPane.step.team': 'Finding the right person…',
+  'hugoPane.step.action': 'Setting it up for you to confirm…',
+  'hugoPane.step.person': 'Getting ready to pass this to a person…',
 } as const;
 
 registerEnglish(enHugoPane);

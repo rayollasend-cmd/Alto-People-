@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { internalSites } from '../lib/scope.js';
 import type { SessionUser } from '../types/express.js';
 import { z } from 'zod';
-import { HugoNoteSettingInputSchema, HugoSeenInputSchema, HugoTaskRespondInputSchema, HugoTaskStartSchema, ROLE_LABELS, termsIn, type HugoSummary, type Role, can, redactSensitiveNumbers } from '@alto-people/shared';
+import { HugoNoteSettingInputSchema, HugoSeenInputSchema, HugoTaskRespondInputSchema, HugoTaskStartSchema, ROLE_LABELS, termsIn, type HugoAskEvent, type HugoStep, type HugoSummary, type HugoTier, type Role, can, redactSensitiveNumbers } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -24,6 +24,7 @@ import { helpCenterReply, helpCenterToolText, searchHelpCenter } from '../lib/he
 import { WA_REPLY, toWaLang, type WaLang } from '../lib/whatsappContent.js';
 import { ActionError, actionTools, decideAction, type ActionContext } from '../lib/assistantActions.js';
 import { hugoTaskTurn } from '../lib/hugoTaskChat.js';
+import { instantIntent, pickTier } from '../lib/hugoRouting.js';
 import { toHugoLang } from '../lib/hugoWorkCopy.js';
 import { cancelHugoTask, getHugoTask, hugoTaskCounts, listHugoTasks, markHugoTasksSeen, respondToHugoTask, startHugoTask } from '../lib/hugoTasks.js';
 import { acceptHugoNote, countNewHugoNotes, dismissHugoNote, hugoNoteSettings, listHugoNotes, markHugoNotesSeen, setHugoNoteKind } from '../lib/hugoNotes.js';
@@ -32,7 +33,8 @@ import { acceptHugoNote, countNewHugoNotes, dismissHugoNote, hugoNoteSettings, l
  * The assistant in the app (agent families step 3; docs/agent-families-investigation.md §4.5).
  *
  *   GET  /hugo          who it is and what it can do for this person, here
- *   POST /hugo/ask      { text, page?, history? } → { intent, reply, linkUrl, handoff?, source }
+ *   POST /hugo/ask      { text, page?, history? } → { intent, reply, linkUrl, handoff?, source, tier }
+ *   POST /hugo/ask/stream  the same, as it is made: one JSON line per step, the words, then the answer
  *   POST /hugo/handoff  { text } → passes an associate's question to a person
  *
  *   Hugo works for you (lib/hugoTasks, lib/hugoNotes) — the caller's own rows only:
@@ -54,12 +56,16 @@ import { acceptHugoNote, countNewHugoNotes, dismissHugoNote, hugoNoteSettings, l
  *   coverage and what the agents have waiting on it. Only what is on is
  *   offered. With a model key set, Claude answers with those same answers
  *   as its tools and knows the page the person is on (lib/assistantModel);
- *   without one, the registry answers alone. Either way the key into
+ *   without one, the registry answers alone. The quickest way that
+ *   answers well is used (lib/hugoRouting): a tapped suggestion or a
+ *   worker's plain question about their own records is the registry's
+ *   answer at once, everyday questions go to a quick model, actions and
+ *   numbers to the strongest. Either way the key into
  *   anyone's records is the session, never the request, and a question the
  *   assistant cannot answer is said so — an associate is OFFERED a hand-off
  *   to a person and confirms it; nothing is sent behind their back. Every
- *   answer is on the assistant's trail (the intent and the tools, never the
- *   words asked).
+ *   answer is on the assistant's trail (the intent, the tools and the tier,
+ *   never the words asked).
  */
 
 export const hugoRouter = Router();
@@ -317,14 +323,45 @@ hugoRouter.get('/', requireAuth, async (req, res) => {
   res.json({ name, audience, intro: WA_REPLY.appIntro(lang, name, can.map((c) => c.label.toLowerCase()), { tasks: can.some((c) => c.key.startsWith('TASK_')) }), can, model: modelAvailable() });
 });
 
-hugoRouter.post('/ask', requireAuth, async (req, res) => {
+type AskBody = z.infer<typeof AskSchema>;
+
+/** The step line for a tool: the kind of record it reads (the app words it, hugoPane.step.*). */
+const STEP_OF: Record<string, HugoStep> = {
+  SCHEDULE: 'schedule',
+  DRIVER_NEXT_RUN: 'schedule',
+  ACT_OPEN_SHIFTS: 'schedule',
+  ACT_CREW_SHIFTS: 'schedule',
+  PAYDAY: 'pay',
+  PAYSTUB: 'pay',
+  W4_CHECK: 'pay',
+  RIDE: 'ride',
+  DRIVER_RUN_RIDERS: 'ride',
+  DRIVER_VAN_ISSUE: 'ride',
+  RENEW: 'documents',
+  DESK: 'desk',
+  ACT_TIME_OFF_LIST: 'desk',
+  ACT_TIMESHEET_LIST: 'desk',
+  COVERAGE: 'coverage',
+  HELP_CENTER: 'help',
+  ACT_REPORT: 'report',
+  ACT_FIND_PERSON: 'team',
+  ESCALATE: 'person',
+};
+export const stepOf = (key: string): HugoStep => STEP_OF[key] ?? (key.startsWith('ACT_') ? 'action' : 'records');
+
+/**
+ * One question, answered the quickest way that answers it well (lib/hugoRouting):
+ * the registry outright, the quick model, or the strongest. `live` streams the
+ * answer as it is made (POST /hugo/ask/stream); without it the whole answer
+ * comes back at once (POST /hugo/ask).
+ */
+async function answerAsk(req: Request, body: AskBody, live?: { emit: (e: HugoAskEvent) => void; signal: AbortSignal }): Promise<Record<string, unknown>> {
   const user = req.user! as Asker;
-  const parsed = AskSchema.parse(req.body);
   // An SSN or account number never reaches the model, a hand-off or a log
   // (the app stops them first; this is the backstop — shared/sensitiveText).
-  const text = redactSensitiveNumbers(parsed.text);
-  const page = parsed.page;
-  const history = parsed.history?.map((h) => ({ ...h, text: redactSensitiveNumbers(h.text) }));
+  const text = redactSensitiveNumbers(body.text);
+  const page = body.page;
+  const history = body.history?.map((h) => ({ ...h, text: redactSensitiveNumbers(h.text) }));
   const { tenantId, audience, ctx, lang, name, profile } = await contextFor(user);
   const now = new Date();
   const terms = termsIn(profile, lang);
@@ -335,24 +372,36 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
   // without the model: what Hugo will do for someone is never a guess.
   const taskTurn = await hugoTaskTurn(text, req.user!, ctx, toHugoLang(user.language), now);
   if (taskTurn) {
-    await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.reply', entityType: 'User', entityId: user.id, metadata: { intent: taskTurn.intent, tools: [], source: 'rules', channel: 'app', audience, lang, offers: taskTurn.offers.map((o) => o.task.kind) } });
-    enqueueAudit({ actorUserId: user.id, clientId: user.clientId, action: 'hugo.asked', entityType: 'Hugo', entityId: taskTurn.intent, metadata: { intent: taskTurn.intent, tools: [], source: 'rules', channel: 'app', audience } }, 'hugo');
-    res.json({ intent: taskTurn.intent, reply: taskTurn.reply, linkUrl: null, handoff: null, source: 'rules', actions: [], tables: [], offers: taskTurn.offers, view: taskTurn.view ?? null });
-    return;
+    await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.reply', entityType: 'User', entityId: user.id, metadata: { intent: taskTurn.intent, tools: [], source: 'rules', tier: 'instant', channel: 'app', audience, lang, offers: taskTurn.offers.map((o) => o.task.kind) } });
+    enqueueAudit({ actorUserId: user.id, clientId: user.clientId, action: 'hugo.asked', entityType: 'Hugo', entityId: taskTurn.intent, metadata: { intent: taskTurn.intent, tools: [], source: 'rules', tier: 'instant', channel: 'app', audience } }, 'hugo');
+    return { intent: taskTurn.intent, reply: taskTurn.reply, linkUrl: null, handoff: null, source: 'rules', tier: 'instant', actions: [], tables: [], offers: taskTurn.offers, view: taskTurn.view ?? null };
   }
 
-  let intent: string;
-  let out: Answer;
-  let offer: { summary: string; who: string | null } | null;
+  let intent = '';
+  let out: Answer | null = null;
+  let offer: { summary: string; who: string | null } | null = null;
   let source: 'model' | 'rules' = 'rules';
+  let tier: HugoTier = 'instant';
   let toolsUsed: string[] = [];
+
+  // A suggestion tapped, or a worker's plain question about their own records: the registry's answer, now.
+  const quick = instantIntent(text, ctx, canList(tools, lang));
+  const quickRun = quick ? mk(quick) : null;
+  if (quick && quickRun) {
+    live?.emit({ t: 'step', step: stepOf(quick) });
+    intent = quick;
+    out = await quickRun();
+    offer = user.associateId ? (out.handoff ?? null) : null;
+  }
 
   // What the model may propose (never do): confirmation cards and tables collected as it works.
   const acting: ActionContext = { req, user: req.user!, proposals: [], tables: [] };
-  if (modelAvailable()) {
+  if (!out && modelAvailable()) {
     source = 'model';
     const escalation = audience === 'associate' ? await escalationFor(user) : null;
     const actTools = actionTools(acting);
+    const canPropose = actTools.some((t) => t.name.startsWith('propose_'));
+    tier = pickTier(text, { canPropose, canReport: actTools.some((t) => t.key === 'ACT_REPORT') });
     try {
       const answer = await answerWithModel({
         text,
@@ -368,9 +417,16 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
           lang,
           terms: { worker: terms.worker, workers: terms.workers, site: terms.site, sites: terms.sites, manager: terms.manager, managers: terms.managers },
           escalation,
-          canPropose: actTools.some((t) => t.name.startsWith('propose_')),
+          canPropose,
         },
         now,
+        tier,
+        live: live && {
+          onTool: (key) => live.emit({ t: 'step', step: stepOf(key) }),
+          onText: (d) => live.emit({ t: 'text', d }),
+          onClear: () => live.emit({ t: 'clear' }),
+          signal: live.signal,
+        },
       });
       intent = 'MODEL';
       toolsUsed = answer.toolsUsed;
@@ -379,18 +435,61 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
     } catch (err) {
       // The model is a convenience over the registry, never a dependency:
       // a timeout or an outage falls back to the rules path below.
-      console.warn('[assistant] model answer failed; answering from the registry:', err instanceof Error ? err.message : err);
+      if (!live?.signal.aborted) console.warn('[assistant] model answer failed; answering from the registry:', err instanceof Error ? err.message : err);
+      live?.emit({ t: 'clear' });
       source = 'rules';
-      ({ intent, out, offer } = await rulesAnswer(text, user, ctx, lang, name, mk, tools));
+      tier = 'instant';
+      out = null;
     }
-  } else {
-    ({ intent, out, offer } = await rulesAnswer(text, user, ctx, lang, name, mk, tools));
   }
+  if (!out) ({ intent, out, offer } = await rulesAnswer(text, user, ctx, lang, name, mk, tools));
 
-  // On the assistant's trail and the audit log: the intent and the tools, never the words.
-  await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.reply', entityType: 'User', entityId: user.id, metadata: { intent, tools: toolsUsed, source, channel: 'app', audience, lang } });
-  enqueueAudit({ actorUserId: user.id, clientId: user.clientId, action: 'hugo.asked', entityType: 'Hugo', entityId: intent, metadata: { intent, tools: toolsUsed, source, channel: 'app', audience } }, 'hugo');
-  res.json({ intent, reply: out.reply, linkUrl: out.linkUrl, handoff: offer, source, actions: acting.proposals, tables: acting.tables, offers: [], view: null });
+  // On the assistant's trail and the audit log: the intent, the tools and the tier, never the words.
+  await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.reply', entityType: 'User', entityId: user.id, metadata: { intent, tools: toolsUsed, source, tier, channel: 'app', audience, lang } });
+  enqueueAudit({ actorUserId: user.id, clientId: user.clientId, action: 'hugo.asked', entityType: 'Hugo', entityId: intent, metadata: { intent, tools: toolsUsed, source, tier, channel: 'app', audience } }, 'hugo');
+  return { intent, reply: out.reply, linkUrl: out.linkUrl, handoff: offer, source, tier, actions: acting.proposals, tables: acting.tables, offers: [], view: null };
+}
+
+hugoRouter.post('/ask', requireAuth, async (req, res) => {
+  res.json(await answerAsk(req, AskSchema.parse(req.body)));
+});
+
+/**
+ * POST /hugo/ask/stream — the same answer, shown as it is made: one JSON
+ * object per line (HugoAskEvent: a step, words, a clear, then `done` with
+ * the body /ask returns). The stream opens with its first line, so a
+ * refusal before anything is said (no assistant here, switched off, a bad
+ * body) is an ordinary JSON error with its status.
+ */
+hugoRouter.post('/ask/stream', requireAuth, async (req, res) => {
+  const body = AskSchema.parse(req.body);
+  const stop = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) stop.abort();
+  });
+  const emit = (e: HugoAskEvent) => {
+    if (stop.signal.aborted) return;
+    if (!res.headersSent) {
+      res.status(200);
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      // no-transform: compression() passes it through unbuffered; the proxy is asked not to hold it either.
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+    }
+    res.write(`${JSON.stringify(e)}\n`);
+  };
+  try {
+    const answer = await answerAsk(req, body, { emit, signal: stop.signal });
+    emit({ t: 'done', answer });
+    res.end();
+  } catch (err) {
+    if (!res.headersSent) throw err;
+    // Words already on the screen: say it failed in the stream itself.
+    console.warn('[assistant] streamed answer failed:', err instanceof Error ? err.message : err);
+    emit({ t: 'error', message: err instanceof HttpError ? err.message : 'The assistant could not answer.' });
+    res.end();
+  }
 });
 
 const ConfirmSchema = z.object({ token: z.string().min(10).max(400), decision: z.enum(['confirm', 'cancel']).default('confirm') });

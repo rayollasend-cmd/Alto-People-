@@ -184,28 +184,102 @@ export async function apiFetch<T = unknown>(
     /* empty body, ignore */
   }
 
-  if (!res.ok) {
-    const err = (parsed as {
-      error?: { code?: string; message?: string; details?: unknown; requestId?: string };
-    } | null)?.error;
-    // Prefer the body's requestId (always present on server-side errors)
-    // but fall back to the X-Request-Id response header — covers cases
-    // where helmet / CORS preflights respond without our error envelope.
-    const requestId = err?.requestId ?? res.headers.get('x-request-id') ?? undefined;
-    // Session death signal. Auth-flow endpoints are excluded: a 401 from
-    // login / reset / invite / passkey verification is a normal
-    // wrong-credentials outcome, not an expired session.
-    if (res.status === 401 && !isAuthFlowPath(path)) {
-      emitApiAuthFailure(path);
-    }
-    throw new ApiError(
-      res.status,
-      err?.code ?? `http_${res.status}`,
-      err?.message ?? `Request failed (${res.status})`,
-      err?.details,
-      requestId,
-    );
-  }
+  if (!res.ok) throw refusal(res, parsed, path);
 
   return parsed as T;
+}
+
+/** The ApiError for a refused response, from its error envelope. */
+function refusal(res: Response, parsed: unknown, path: string): ApiError {
+  const err = (parsed as {
+    error?: { code?: string; message?: string; details?: unknown; requestId?: string };
+  } | null)?.error;
+  // Prefer the body's requestId (always present on server-side errors)
+  // but fall back to the X-Request-Id response header — covers cases
+  // where helmet / CORS preflights respond without our error envelope.
+  const requestId = err?.requestId ?? res.headers.get('x-request-id') ?? undefined;
+  // Session death signal. Auth-flow endpoints are excluded: a 401 from
+  // login / reset / invite / passkey verification is a normal
+  // wrong-credentials outcome, not an expired session.
+  if (res.status === 401 && !isAuthFlowPath(path)) {
+    emitApiAuthFailure(path);
+  }
+  return new ApiError(
+    res.status,
+    err?.code ?? `http_${res.status}`,
+    err?.message ?? `Request failed (${res.status})`,
+    err?.details,
+    requestId,
+  );
+}
+
+/** Whether this browser can read a response as it arrives. */
+export function canStream(): boolean {
+  return typeof ReadableStream !== 'undefined' && typeof TextDecoder !== 'undefined' && typeof Response !== 'undefined' && 'body' in Response.prototype;
+}
+
+/**
+ * POST a body and read the answer as it is made: newline-delimited JSON,
+ * each line handed to `onLine` as it lands (POST /hugo/ask/stream). A
+ * refusal before the stream opens throws an ApiError, as apiFetch does;
+ * the whole exchange is bounded by `timeoutMs`.
+ */
+export async function apiStream(path: string, body: unknown, onLine: (line: unknown) => void, opts: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<void> {
+  const controller = new AbortController();
+  const external = opts.signal;
+  if (external) {
+    if (external.aborted) controller.abort(external.reason);
+    else external.addEventListener('abort', () => controller.abort(external.reason), { once: true });
+  }
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, opts.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  try {
+    let res: Response;
+    try {
+      res = await fetch(`/api${path}`, {
+        method: 'POST',
+        credentials: 'include',
+        signal: controller.signal,
+        headers: { Accept: 'application/x-ndjson', 'Content-Type': 'application/json', ...nativeHeaders() },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      if (timedOut) {
+        emitApiConnectivity('offline');
+        throw new TimeoutError();
+      }
+      if (!external?.aborted) emitApiConnectivity('offline');
+      throw new NetworkError(err);
+    }
+    emitApiConnectivity('online');
+    if (!res.ok || !res.body) {
+      let parsed: unknown = null;
+      try {
+        parsed = await res.json();
+      } catch {
+        /* empty body, ignore */
+      }
+      throw refusal(res, parsed, path);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      for (let cut = buffer.indexOf('\n'); cut >= 0; cut = buffer.indexOf('\n')) {
+        const line = buffer.slice(0, cut).trim();
+        buffer = buffer.slice(cut + 1);
+        if (line) onLine(JSON.parse(line));
+      }
+    }
+    const rest = (buffer + decoder.decode()).trim();
+    if (rest) onLine(JSON.parse(rest));
+  } finally {
+    clearTimeout(timer);
+  }
 }

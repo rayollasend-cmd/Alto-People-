@@ -252,6 +252,34 @@ export function hugoBadgeCount(s: HugoSummary | null | undefined): number {
   return s ? s.needsYou + s.unseenDone + s.newNotes : 0;
 }
 
+/**
+ * What Hugo is doing while he answers, for the step line ("Checking your
+ * schedule…"): one per kind of record a tool reads, so the words are the
+ * app's (hugoPane.step.*) and the tools' names never reach the screen.
+ */
+export const HUGO_STEPS = ['records', 'schedule', 'pay', 'ride', 'documents', 'desk', 'coverage', 'help', 'report', 'team', 'action', 'person'] as const;
+export type HugoStep = (typeof HUGO_STEPS)[number];
+
+/**
+ * How an answer was made, fastest first: `instant` is the registry's own
+ * answer (no model), `fast` a quick model for everyday questions, `deep`
+ * the strongest one for actions and numbers (routes/hugo, pickTier).
+ */
+export type HugoTier = 'instant' | 'fast' | 'deep';
+
+/**
+ * POST /hugo/ask/stream: one JSON object per line while Hugo answers.
+ * `text` adds to the reply as it is written; `clear` drops what was written
+ * so far (he said "let me check" and is now checking); `done` carries the
+ * whole answer, the same body POST /hugo/ask returns — the one to keep.
+ */
+export type HugoAskEvent =
+  | { t: 'step'; step: HugoStep }
+  | { t: 'text'; d: string }
+  | { t: 'clear' }
+  | { t: 'done'; answer: Record<string, unknown> }
+  | { t: 'error'; message: string };
+
 /** A task the chat offers to start: the person taps Start, or doesn't. */
 export interface HugoTaskOffer {
   task: HugoTaskCreateInput;

@@ -67,6 +67,21 @@ export interface ModelAnswer {
   handoff: { summary: string; who: string | null } | null;
 }
 
+/** Which model answers (lib/hugoRouting pickTier): the quick one, or the strongest. */
+export type ModelTier = 'fast' | 'deep';
+
+/** Hooks for an answer shown as it is made (POST /hugo/ask/stream). */
+export interface AssistantLive {
+  /** A tool is about to run: its key (the registry's intent, a pay tool, an ACT_*, or ESCALATE). */
+  onTool?: (key: string) => void;
+  /** Words of the reply, as they are written. */
+  onText?: (delta: string) => void;
+  /** What was written so far led in to a tool call ("let me check"): drop it. */
+  onClear?: () => void;
+  /** The person went away: stop. */
+  signal?: AbortSignal;
+}
+
 export function modelAvailable(): boolean {
   return Boolean(env.ANTHROPIC_API_KEY);
 }
@@ -120,6 +135,10 @@ export async function answerWithModel(input: {
   tools: AssistantTool[];
   identity: AssistantIdentity;
   now: Date;
+  /** The strongest model (the default) or the quick one. */
+  tier?: ModelTier;
+  /** Given: the answer streams, step by step. */
+  live?: AssistantLive;
 }): Promise<ModelAnswer> {
   const used: string[] = [];
   let linkUrl: string | null = null;
@@ -135,6 +154,7 @@ export async function answerWithModel(input: {
         description: t.description,
         inputSchema: { type: 'object', properties: (t.input?.properties ?? {}) as never, ...(t.input?.required ? { required: t.input.required } : {}), additionalProperties: false },
         run: async (args) => {
+          input.live?.onTool?.(t.key);
           const r = await t.run((args ?? {}) as Record<string, unknown>);
           used.push(t.key);
           if (r.linkUrl) linkUrl = r.linkUrl;
@@ -155,6 +175,7 @@ export async function answerWithModel(input: {
           additionalProperties: false,
         },
         run: async (args) => {
+          input.live?.onTool?.('ESCALATE');
           const summary = String((args as { summary?: unknown }).summary ?? '').slice(0, 300);
           handoff = { summary, who };
           return `Offer recorded. Tell them you can pass this to ${who ?? 'a person'} if they confirm; nothing has been sent.`;
@@ -174,18 +195,37 @@ export async function answerWithModel(input: {
     history.push({ role: t.role, content: text });
   }
 
-  const final = await anthropic().beta.messages.toolRunner({
-    model: env.ASSISTANT_MODEL,
-    max_tokens: 1200,
-    thinking: { type: 'adaptive' },
-    output_config: { effort: 'medium' },
+  // The strongest model thinks first; the quick one answers straight off —
+  // a shift or a payday needs a tool call, not deliberation.
+  const deep = (input.tier ?? 'deep') === 'deep';
+  const params = {
+    model: deep ? env.ASSISTANT_MODEL : env.ASSISTANT_FAST_MODEL,
+    max_tokens: deep ? 1200 : 800,
+    ...(deep ? { thinking: { type: 'adaptive' as const }, output_config: { effort: 'medium' as const } } : {}),
     system: [
-      { type: 'text', text: stableSystem(input.identity), cache_control: { type: 'ephemeral' } },
-      { type: 'text', text: liveSystem(input.identity, input.page, input.now) },
+      { type: 'text' as const, text: stableSystem(input.identity), cache_control: { type: 'ephemeral' as const } },
+      { type: 'text' as const, text: liveSystem(input.identity, input.page, input.now) },
     ],
     tools,
-    messages: [...history, { role: 'user', content: input.text }],
-  });
+    messages: [...history, { role: 'user' as const, content: input.text }],
+  };
+
+  let final: Anthropic.Beta.BetaMessage | null = null;
+  const live = input.live;
+  if (live) {
+    // One stream per turn of the loop: its words go out as they come; a turn
+    // that ends in a tool call was a lead-in, so the screen drops it.
+    const runner = anthropic().beta.messages.toolRunner({ ...params, stream: true }, { signal: live.signal });
+    for await (const stream of runner) {
+      stream.on('text', (delta: string) => live.onText?.(delta));
+      const message = await stream.finalMessage();
+      if (message.stop_reason === 'tool_use') live.onClear?.();
+      final = message;
+    }
+  } else {
+    final = await anthropic().beta.messages.toolRunner(params);
+  }
+  if (!final) throw new Error('The model sent no answer.');
 
   const reply = final.content
     .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')

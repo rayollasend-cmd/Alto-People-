@@ -259,7 +259,11 @@ const EnvSchema = z.object({
   // Set: Claude answers with the same intents as tools, knowing the page
   // the person is on (lib/assistantModel).
   ANTHROPIC_API_KEY: z.string().optional(),
-  ASSISTANT_MODEL: z.string().default('claude-opus-5'),
+  // Two models, picked per question (routes/hugo pickTier): the strongest
+  // for actions and numbers, a quick one for everyday questions. A plain
+  // question the registry answers outright ("when is payday?") uses neither.
+  ASSISTANT_MODEL: z.string().default('claude-opus-5-5'),
+  ASSISTANT_FAST_MODEL: z.string().default('claude-haiku-5-5'),
   // Call-outs by phone and text (lib/callOuts, routes/voice): Twilio's
   // webhooks are verified with the auth token. Unset: the voice/SMS
   // webhooks answer 503 and nothing else changes.

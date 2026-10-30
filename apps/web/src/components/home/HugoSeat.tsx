@@ -16,6 +16,7 @@ import { useAuth } from '@/lib/auth';
 import { MOOD_POSE, useHugoMood, type HugoMood } from '@/components/assistant/hugoMood';
 import { cn } from '@/lib/cn';
 import '@/lib/i18n/en/hugoSeat';
+import '@/lib/i18n/en/hugoPane';
 import '@/lib/i18n/en/hugoWork';
 
 /**
@@ -173,14 +174,24 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
 /** The seat's status line: a dot and his mood in plain words. */
 function HugoMoodLine({ mood }: { mood: HugoMood }) {
   const { t } = useI18n();
-  const { summary } = useAssistant();
+  const { summary, live } = useAssistant();
   const working = summary?.working ?? 0;
   const line =
-    mood === 'working' ? (working > 1 ? t('hugoSeat.mood.workingMany', { count: working }) : t('hugoSeat.mood.working')) : t(`hugoSeat.mood.${mood}` as const);
+    mood === 'answering'
+      ? t(`hugoPane.step.${live?.step ?? 'records'}` as const)
+      : mood === 'working'
+        ? working > 1
+          ? t('hugoSeat.mood.workingMany', { count: working })
+          : t('hugoSeat.mood.working')
+        : t(`hugoSeat.mood.${mood}` as const);
   return (
     <div className="mt-0.5 flex items-center gap-1.5 text-sm text-ink-muted" data-testid="hugo-mood" data-mood={mood}>
       <span
-        className={cn('h-2 w-2 shrink-0 rounded-full', mood === 'needsYou' ? 'bg-accent-fill' : mood === 'coffee' || mood === 'reading' ? 'bg-caution' : 'bg-positive', mood === 'working' && 'animate-pulse')}
+        className={cn(
+          'h-2 w-2 shrink-0 rounded-full',
+          mood === 'needsYou' ? 'bg-accent-fill' : mood === 'coffee' || mood === 'reading' ? 'bg-caution' : 'bg-positive',
+          (mood === 'working' || mood === 'answering') && 'animate-pulse',
+        )}
         aria-hidden="true"
       />
       <span>{line}</span>

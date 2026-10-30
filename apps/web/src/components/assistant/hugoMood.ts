@@ -6,6 +6,7 @@ import { useAssistant } from '@/lib/assistantContext';
  * What Hugo is up to, outside his panel — the same on every way in to him
  * (the top bar, the phone button, the home seat), so a glance says it:
  *
+ *   answering a question asked right now               → reads the records (the step he is on)
  *   needsYou  a task of his is waiting on the person   → points at them
  *   working   a task is running                         → headphones on, at the laptop
  *   done      finished something they haven't seen     → a small celebration
@@ -13,11 +14,13 @@ import { useAssistant } from '@/lib/assistantContext';
  *   coffee / reading   nothing going on: on a break — a morning or 3 o'clock
  *                      coffee, otherwise catching up on his reading
  *
- * Needing the person outranks working: what they can unblock comes first.
+ * The question in front of him comes first; then needing the person
+ * outranks working: what they can unblock comes before what he's doing.
  */
-export type HugoMood = 'needsYou' | 'working' | 'done' | 'news' | 'coffee' | 'reading';
+export type HugoMood = 'answering' | 'needsYou' | 'working' | 'done' | 'news' | 'coffee' | 'reading';
 
-export function hugoMoodOf(summary: HugoSummary | null | undefined, hour: number): HugoMood {
+export function hugoMoodOf(summary: HugoSummary | null | undefined, hour: number, answering = false): HugoMood {
+  if (answering) return 'answering';
   if (summary?.needsYou) return 'needsYou';
   if (summary?.working) return 'working';
   if (summary?.unseenDone) return 'done';
@@ -27,6 +30,7 @@ export function hugoMoodOf(summary: HugoSummary | null | undefined, hour: number
 
 /** The whole figure, for the home seat. */
 export const MOOD_POSE: Record<HugoMood, HugoPose> = {
+  answering: 'reading',
   needsYou: 'pointing',
   working: 'working',
   done: 'celebrate',
@@ -36,9 +40,9 @@ export const MOOD_POSE: Record<HugoMood, HugoPose> = {
 };
 
 /** The face, for a button: his headphones on while he works. */
-export const moodFace = (mood: HugoMood): HugoPose => (mood === 'working' ? 'faceWork' : 'face');
+export const moodFace = (mood: HugoMood): HugoPose => (mood === 'working' || mood === 'answering' ? 'faceWork' : 'face');
 
 export function useHugoMood(): HugoMood {
-  const { summary } = useAssistant();
-  return hugoMoodOf(summary, new Date().getHours());
+  const { summary, live } = useAssistant();
+  return hugoMoodOf(summary, new Date().getHours(), live !== null);
 }

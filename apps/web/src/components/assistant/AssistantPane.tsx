@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { findSensitiveNumbers } from '@alto-people/shared';
-import { hugoBadgeCount, type HugoTaskOffer } from '@alto-people/shared';
+import { hugoBadgeCount, type HugoStep, type HugoTaskOffer } from '@alto-people/shared';
 import {
   ArrowLeftRight,
   ArrowRight,
@@ -169,7 +169,7 @@ const isPhone = () => typeof window !== 'undefined' && window.matchMedia?.('(max
 export function AssistantPane() {
   const { user, isOffline } = useAuth();
   const { t, lang } = useI18n();
-  const { available, me, open, setOpen, takeQueued, page, tab, setTab, openTasks, summary } = useAssistant();
+  const { available, me, open, setOpen, takeQueued, page, tab, setTab, openTasks, summary, setLive } = useAssistant();
   const userId = user?.id ?? '';
   const [turns, setTurns] = useState<Turn[]>(() => (userId ? readThread(userId) : []));
   const [text, setText] = useState('');
@@ -183,6 +183,9 @@ export function AssistantPane() {
   const [answeredAt, setAnsweredAt] = useState(0);
   const [doneAt, setDoneAt] = useState(0);
   const [activeAt, setActiveAt] = useState(() => Date.now());
+  // The answer as it is made (POST /hugo/ask/stream): the step he is on, and the words so far.
+  const [liveStep, setLiveStep] = useState<HugoStep | null>(null);
+  const [liveText, setLiveText] = useState('');
   const askedByVoice = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -195,12 +198,30 @@ export function AssistantPane() {
   const ask = useMutation({
     mutationFn: (q: string) => {
       const history: AssistantTurn[] = turns.slice(-10).map((x) => ({ role: x.role, text: x.text }));
-      return askHugo(q, { page, history });
+      return askHugo(q, {
+        page,
+        history,
+        onEvent: (e) => {
+          if (e.t === 'step') {
+            setLiveStep(e.step);
+            setLive({ step: e.step });
+          } else if (e.t === 'text') setLiveText((x) => x + e.d);
+          else setLiveText('');
+        },
+      });
     },
     onMutate: (q) => {
       setTurns((x) => [...x, { id: `${Date.now()}-u`, role: 'user', text: q }]);
       setText('');
       setAskedAt(Date.now());
+      setLiveStep(null);
+      setLiveText('');
+      setLive({ step: null });
+    },
+    onSettled: () => {
+      setLiveStep(null);
+      setLiveText('');
+      setLive(null);
     },
     onSuccess: (a: HugoAnswer) => {
       setTurns((x) => [...x, { id: `${Date.now()}-a`, role: 'assistant', text: a.reply, intent: a.intent, linkUrl: a.linkUrl, handoff: a.handoff ?? null, actions: a.actions ?? [], tables: a.tables ?? [], offers: a.offers ?? [] }]);
@@ -277,7 +298,7 @@ export function AssistantPane() {
   useEffect(() => {
     if (!turns.length && !ask.isPending) return;
     listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: 'smooth' });
-  }, [turns, ask.isPending]);
+  }, [turns, ask.isPending, liveText]);
 
   useEffect(() => {
     if (!open) return;
@@ -302,13 +323,18 @@ export function AssistantPane() {
   const draft = voiceIn.listening ? voiceIn.interim : text;
   const sensitive = findSensitiveNumbers(text).length > 0;
 
+  // While the answer streams he says what he is doing: reading a kind of
+  // record, setting something up (at the laptop), then the words.
+  const liveStatus: Status | null = !ask.isPending ? null : liveText ? 'answered' : liveStep ? (liveStep === 'action' ? 'working' : 'reading') : null;
   const status: Status = isOffline
     ? 'offline'
     : voiceIn.listening
       ? 'hearing'
       : voiceOut.speaking
         ? 'speaking'
-        : ask.isPending || handoff.isPending || decide.isPending
+        : liveStatus
+          ? liveStatus
+          : ask.isPending || handoff.isPending || decide.isPending
           ? now - askedAt < READING_MS && ask.isPending
             ? 'reading'
             : 'working'
@@ -328,7 +354,13 @@ export function AssistantPane() {
   const background = working > 0 && (status === 'ready' || status === 'coffee');
   const pose = background ? 'working' : POSE_OF[status];
   const heroPose: HugoPose = status === 'ready' && now - openedAt < HELLO_MS ? 'hello' : pose;
-  const statusText = background ? (working === 1 ? t('hugoWork.bg.one') : t('hugoWork.bg.many', { count: working })) : t(`hugoPane.status.${status}` as MessageKey);
+  const statusText = background
+    ? working === 1
+      ? t('hugoWork.bg.one')
+      : t('hugoWork.bg.many', { count: working })
+    : ask.isPending && liveStep && !liveText
+      ? t(`hugoPane.step.${liveStep}` as const)
+      : t(`hugoPane.status.${status}` as MessageKey);
   const badge = hugoBadgeCount(summary);
   const hour = new Date(now).getHours();
   const greeting = user?.firstName
@@ -564,17 +596,30 @@ export function AssistantPane() {
                 );
               })}
               {ask.isPending && (
-                <li className="flex justify-start gap-2">
-                  <span className="w-7 shrink-0" aria-hidden="true" />
-                  <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-line bg-surface-raised px-3.5 py-2.5 text-sm text-ink-muted">
-                    <span className="sr-only">{t('hugoPane.thinking', { name })}</span>
-                    <span aria-hidden="true">{statusText}</span>
-                    <span className="hugo-dots" aria-hidden="true">
-                      <span />
-                      <span />
-                      <span />
-                    </span>
-                  </div>
+                <li className="flex justify-start gap-2" data-testid="hugo-live">
+                  <span className="w-7 shrink-0 pt-0.5" aria-hidden="true">
+                    {liveText && (hugo ? <HugoMascot pose="face" size={28} play="still" /> : <Sparkles className="h-5 w-5 text-accent" />)}
+                  </span>
+                  {liveText ? (
+                    // His words as he writes them; the finished answer replaces them (and is what a screen reader hears).
+                    <div className="max-w-[86%] rounded-2xl rounded-bl-md border border-line bg-surface-raised px-3.5 py-2.5 text-sm leading-relaxed text-ink">
+                      <span className="sr-only">{t('hugoPane.thinking', { name })}</span>
+                      <p className="whitespace-pre-wrap" aria-hidden="true">
+                        {liveText}
+                        <span className="hugo-caret" />
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-line bg-surface-raised px-3.5 py-2.5 text-sm text-ink-muted">
+                      <span className="sr-only">{t('hugoPane.thinking', { name })}</span>
+                      <span aria-hidden="true">{statusText}</span>
+                      <span className="hugo-dots" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                    </div>
+                  )}
                 </li>
               )}
             </ol>

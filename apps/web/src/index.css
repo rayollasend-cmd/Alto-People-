@@ -1307,6 +1307,13 @@ input[type='checkbox']:disabled {
 @media (prefers-reduced-motion: reduce) {
   .hugo-working-ring { animation: none; }
 }
+/* The end of his words while he is still writing them. */
+.hugo-caret {
+  display: inline-block; width: 2px; height: 1em; margin-left: 2px;
+  vertical-align: -0.15em; background: currentColor; opacity: 0.6;
+  animation: hugo-caret 1s step-end infinite;
+}
+@keyframes hugo-caret { 50% { opacity: 0; } }
 
 .hugo-mic-live { position: relative; }
 .hugo-mic-live::after {
@@ -1319,5 +1326,5 @@ input[type='checkbox']:disabled {
   100% { box-shadow: 0 0 0 10px rgb(var(--color-accent) / 0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .hugo-sprite, .hugo-bounce, .hugo-dots > span, .hugo-mic-live::after { animation: none !important; }
+  .hugo-sprite, .hugo-bounce, .hugo-dots > span, .hugo-mic-live::after, .hugo-caret { animation: none !important; }
 }

@@ -13,7 +13,7 @@ vi.mock('@anthropic-ai/sdk', () => {
   return { default: Anthropic };
 });
 vi.mock('../../config/env.js', () => ({
-  env: { ANTHROPIC_API_KEY: 'test-key', ASSISTANT_MODEL: 'claude-opus-5' },
+  env: { ANTHROPIC_API_KEY: 'test-key', ASSISTANT_MODEL: 'claude-opus-5', ASSISTANT_FAST_MODEL: 'claude-haiku-5-5' },
 }));
 
 const { answerWithModel, modelAvailable } = await import('../../lib/assistantModel.js');
@@ -100,4 +100,58 @@ describe('answerWithModel', () => {
     const params = toolRunner.mock.calls[0]![0] as { tools: Array<{ name: string }> };
     expect(params.tools.map((t) => t.name)).not.toContain('escalate_to_person');
   });
+
+  it('the quick model answers everyday questions straight off — no thinking, a shorter answer', async () => {
+    toolRunner.mockResolvedValue({ content: [{ type: 'text', text: 'Tomorrow 6–2.' }], stop_reason: 'end_turn' });
+    await answerWithModel({ text: 'when do I work?', history: [], page: null, tools: [], identity, now: new Date(), tier: 'fast' });
+    const fast = toolRunner.mock.calls[0]![0] as { model: string; thinking?: unknown; output_config?: unknown; max_tokens: number };
+    expect(fast.model).toBe('claude-haiku-5-5');
+    expect(fast.thinking).toBeUndefined();
+    expect(fast.output_config).toBeUndefined();
+    await answerWithModel({ text: 'approve it', history: [], page: null, tools: [], identity, now: new Date(), tier: 'deep' });
+    const deep = toolRunner.mock.calls[1]![0] as { model: string; thinking?: unknown; max_tokens: number };
+    expect(deep.model).toBe('claude-opus-5');
+    expect(deep.thinking).toEqual({ type: 'adaptive' });
+    expect(deep.max_tokens).toBeGreaterThan(fast.max_tokens);
+  });
+
+  it('live: says each step, streams the words, drops a lead-in that ended in a tool call, and returns the last turn', async () => {
+    // Two turns, as the SDK's streaming runner gives them: "let me check" + a tool call, then the answer.
+    toolRunner.mockImplementation((params: { stream?: boolean; tools: Array<{ name: string; run: () => Promise<string> }> }) => {
+      expect(params.stream).toBe(true);
+      const turn = (words: string[], stop: string) => {
+        const listeners: Array<(d: string) => void> = [];
+        return {
+          on: (event: string, cb: (d: string) => void) => event === 'text' && listeners.push(cb),
+          finalMessage: async () => {
+            for (const w of words) listeners.forEach((l) => l(w));
+            return { content: [{ type: 'text', text: words.join('') }], stop_reason: stop };
+          },
+        };
+      };
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield turn(['Let me ', 'check.'], 'tool_use');
+          await params.tools.find((t) => t.name === 'my_next_shifts')!.run();
+          yield turn(['Tomorrow ', '6–2.'], 'end_turn');
+        },
+      };
+    });
+    const events: string[] = [];
+    const out = await answerWithModel({
+      text: 'when do I work?',
+      history: [],
+      page: null,
+      tools: [{ key: 'SCHEDULE', name: 'my_next_shifts', description: 'shifts', run: async () => ({ reply: 'Fri 6–2', linkUrl: '/scheduling' }) }],
+      identity,
+      now: new Date(),
+      tier: 'fast',
+      live: { onTool: (k) => events.push(`tool:${k}`), onText: (d) => events.push(`text:${d}`), onClear: () => events.push('clear') },
+    });
+    expect(events).toEqual(['text:Let me ', 'text:check.', 'clear', 'tool:SCHEDULE', 'text:Tomorrow ', 'text:6–2.']);
+    expect(out.reply).toBe('Tomorrow 6–2.');
+    expect(out.linkUrl).toBe('/scheduling');
+    expect(out.toolsUsed).toEqual(['SCHEDULE']);
+  });
 });
+
