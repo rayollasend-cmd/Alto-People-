@@ -63,6 +63,10 @@ import { ALTO_TENANT_ID, runWithTenant } from '../../lib/tenant.js';
 import { setWhatsAppSenderForTests, type WaPayload } from '../../lib/whatsapp.js';
 import { handleInbound } from '../../lib/whatsappAssistant.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { associatesOffTheModel, letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 const H = 3_600_000;
 const savedValve = env.HUGO_WA_MODEL_TENANT_DAILY;
@@ -284,6 +288,16 @@ describe('the registry, whenever the model can’t answer', () => {
     expect(r.intent).toBe('HANDOFF');
     expect(r.reply).toContain('I have passed this to');
     expect(model.asks).toEqual([]);
+    expect(await hugoOf(w.ana.associate.id)).toEqual({ route: 'rules' });
+  });
+
+  it('an associate’s Hugo never calls the model by default: a judgment question gets the registry’s answer', async () => {
+    associatesOffTheModel();
+    const w = await world();
+    const r = await ask(ANA, 'why is my schedule wrong this week?');
+    expect(r.intent).toBe('SCHEDULE');
+    expect(r.reply).toContain('Nothing is on your schedule yet');
+    expect(model.asks).toHaveLength(0);
     expect(await hugoOf(w.ana.associate.id)).toEqual({ route: 'rules' });
   });
 

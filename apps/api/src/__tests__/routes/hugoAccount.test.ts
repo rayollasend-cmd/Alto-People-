@@ -37,6 +37,10 @@ import { __resetJobsForTests, runJobNow } from '../../lib/jobs.js';
 import { resetTenantCache } from '../../lib/tenantJobs.js';
 import { ALTO_TENANT_ID, runWithTenant } from '../../lib/tenant.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 const app = () => createApp();
 const DAY = 86_400_000;

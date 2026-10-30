@@ -55,6 +55,10 @@ import { flushPendingNotifications } from '../../lib/notify.js';
 import { ALTO_TENANT_ID, runWithTenant } from '../../lib/tenant.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { pinMidweekNoon } from '../../../test/clock.js';
+import { associatesOffTheModel, letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 const app = () => createApp();
 const H = 3_600_000;
@@ -508,6 +512,27 @@ describe('only the person, only their reach, only with a model', () => {
     const { id } = (await startGoal(ana, 'More hours')).body.task;
     // No longer an associate: Hugo has nothing of hers to work with.
     await prisma.user.update({ where: { id: s.ana.user.id }, data: { associateId: null } });
+    await sweep(new Date(Date.now() + 2 * H));
+    expect(model.calls).toHaveLength(1);
+    const row = await prisma.hugoTask.findUniqueOrThrow({ where: { id }, include: { events: true } });
+    expect(row.status).toBe('FAILED');
+    expect(row.events.find((e) => e.code === 'FAILED')?.data).toEqual({ reason: 'no_access' });
+    expect(await prisma.hugoTask.count({ where: { parentId: id, status: { in: ['WORKING', 'WAITING', 'NEEDS_YOU'] } } })).toBe(0);
+  });
+
+  it('an associate’s Hugo takes on no goal by default: a plain 409, and one already open stops at its next step — no model call', async () => {
+    const s = await store();
+    const ana = await loginAs(s.ana.user.email);
+    model.steps.push(async (tools) => {
+      await tools.get('start_watch')!({ kind: 'WATCH_PAYCHECK' });
+      await tools.get('check_back')!({ hours: 1 });
+    });
+    const { id } = (await startGoal(ana, 'More hours')).body.task;
+    expect(model.calls).toHaveLength(1);
+    associatesOffTheModel();
+    const refused = await ana.post('/hugo/tasks').send({ task: { kind: 'GOAL', goal: 'Get Friday off' } });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe('hugo_no_model');
     await sweep(new Date(Date.now() + 2 * H));
     expect(model.calls).toHaveLength(1);
     const row = await prisma.hugoTask.findUniqueOrThrow({ where: { id }, include: { events: true } });

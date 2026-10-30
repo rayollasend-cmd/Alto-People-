@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 /**
  * One step of a goal on the shared model loop (lib/hugoGoalModel): what the

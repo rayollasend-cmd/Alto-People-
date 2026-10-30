@@ -67,6 +67,28 @@ The body is the same as `POST /hugo/ask`. The response is newline-delimited JSON
   then reads "Checking the schedule…", and the top-bar and phone faces put his
   headphones on (`hugoMood` → `answering`).
 
+## Associates' Hugo never calls the model
+
+The owner, 2026-10-30: "the associates Hugo should not be connected to deep seek".
+An account whose role, or the hat it is wearing, is in `HUGO_MODEL_OFF_ROLES`
+(`ASSOCIATE` by default) is answered by the registry everywhere: the app's chat
+(plain and streamed), WhatsApp, and their repeats. Nothing of theirs reaches the
+provider.
+
+- **Every way in asks** `modelAvailableFor(user)` (`lib/hugoModelGate.ts`):
+  `GET /hugo` answers `model: false`, so the app offers no goals, no free-question
+  repeats, no allowance meter and no "What Hugo knows". `/hugo/allowance` answers
+  `on: false`.
+- **The hard stop:** `runModelLoop` refuses the call with `HugoNoModelError` before
+  anything is sent, and an account that can't be found counts as an associate's.
+- **What was set up before the change:** an associate's open goal stops at its next
+  step (`FAILED`, `no_access`), and a free-question repeat at its next run
+  (`FAILED`, `not_available`, with the "I've stopped" notice). Their other repeats
+  (payday, shifts, hours) carry on, because the registry answers them.
+- **Memory:** an associate can't add or change facts (409 `hugo_no_memory`), but
+  can still read and remove what is already kept.
+- **Supervisors, drivers and the office** keep the model and their allowances.
+
 ## Each person's allowance (`lib/hugoAllowance.ts`)
 
 Every account has its own Hugo, and every model call is charged to the person it
@@ -76,7 +98,7 @@ dollar, never the words.
 
 | Who | Allowance | Period |
 | --- | --- | --- |
-| Associates, drivers, floor and shift supervisors | $1 | A 30-day cycle that begins with their first use (`HugoProfile.allowanceCycleStartedAt`); used up, they wait for the cycle to end |
+| Drivers, floor and shift supervisors (associates have no model calls) | $1 | A 30-day cycle that begins with their first use (`HugoProfile.allowanceCycleStartedAt`); used up, they wait for the cycle to end |
 | Everyone else Hugo serves (the office) | $10 | The company's calendar month; used up, they wait for the next month |
 
 - **Before each call:** `assertAllowance` refuses the call with `HugoAllowanceError`
@@ -100,6 +122,7 @@ dollar, never the words.
 - `ASSISTANT_FAST_MODEL`: the quick model, for everyday questions.
 - `HUGO_PRICE_FAST`, `HUGO_PRICE_DEEP`: the prices the allowance is charged at.
 - `HUGO_ALLOWANCE_FLOOR_USD` (1) and `HUGO_ALLOWANCE_STAFF_USD` (10): the monthly allowances.
+- `HUGO_MODEL_OFF_ROLES` (`ASSOCIATE`): roles whose Hugo never calls the model, comma-separated.
 
 ## Tuning
 

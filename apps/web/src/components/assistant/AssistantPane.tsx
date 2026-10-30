@@ -526,10 +526,13 @@ export function AssistantPane() {
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
               {t('hugoPane.startOver')}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setMemoryOpen(true)} data-testid="hugo-memory-open">
-              <Bookmark className="h-4 w-4" aria-hidden="true" />
-              {t('hugoPane.memory.title', { name })}
-            </DropdownMenuItem>
+            {/* Facts are for the model to read: none for a Hugo that answers without it (an associate's). */}
+            {me.model && (
+              <DropdownMenuItem onSelect={() => setMemoryOpen(true)} data-testid="hugo-memory-open">
+                <Bookmark className="h-4 w-4" aria-hidden="true" />
+                {t('hugoPane.memory.title', { name })}
+              </DropdownMenuItem>
+            )}
             {/* Their own allowance for his thinking, and how long the conversation is kept — on every device. */}
             <DropdownMenuSeparator />
             <div className="w-[17rem] max-w-full">
@@ -578,15 +581,17 @@ export function AssistantPane() {
                   {hugo && <HugoMascot pose={heroPose} size={128} eager />}
                   <p className="font-display text-2xl text-ink">{greeting}</p>
                   <p className="max-w-[34ch] text-sm leading-relaxed text-ink-muted">{me.intro}</p>
-                  <button
-                    type="button"
-                    onClick={() => setMemoryOpen(true)}
-                    className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-ink-muted underline-offset-2 hover:text-ink hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-                    data-testid="hugo-memory-peek"
-                  >
-                    <Bookmark className="h-4 w-4 text-accent" aria-hidden="true" />
-                    {t('hugoPane.memory.peek', { name })}
-                  </button>
+                  {me.model && (
+                    <button
+                      type="button"
+                      onClick={() => setMemoryOpen(true)}
+                      className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-ink-muted underline-offset-2 hover:text-ink hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                      data-testid="hugo-memory-peek"
+                    >
+                      <Bookmark className="h-4 w-4 text-accent" aria-hidden="true" />
+                      {t('hugoPane.memory.peek', { name })}
+                    </button>
+                  )}
                 </div>
                 {page.record && (
                   <p className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink-muted">

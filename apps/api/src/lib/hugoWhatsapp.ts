@@ -4,7 +4,8 @@ import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
-import { WHATSAPP_MAX_CHARS, answerWithModel, modelAvailable, type AssistantTurn } from './assistantModel.js';
+import { WHATSAPP_MAX_CHARS, answerWithModel, type AssistantTurn } from './assistantModel.js';
+import { modelAvailableFor } from './hugoModelGate.js';
 import { getBrandingSync } from './branding.js';
 import { appLink, publicBaseUrl } from './emailLayout.js';
 import { HugoAllowanceError, allowanceUsedLine } from './hugoAllowance.js';
@@ -246,8 +247,8 @@ export async function answerOnWhatsApp(turn: WaTurn): Promise<HandledInbound> {
   // 2. A plain question about their own records: the registry's answer, at once.
   if (instantIntent(text, reg.ctx, canList(reg.tools, lang))) return registry({ route: 'instant' });
 
-  // 3. The model — when it is on and the tenant's valve has room.
-  if (!modelAvailable()) return registry({ route: 'rules' });
+  // 3. The model — when it is on for this person (never for an associate: lib/hugoAllowance modelServes) and the tenant's valve has room.
+  if (!modelAvailableFor(user)) return registry({ route: 'rules' });
   if (env.HUGO_WA_MODEL_TENANT_DAILY <= 0 || (await modelAnswersToday(db, now)) >= env.HUGO_WA_MODEL_TENANT_DAILY) return registry({ route: 'rules', valve: true });
 
   const tier = pickTier(text, { canPropose: false, canReport: false });

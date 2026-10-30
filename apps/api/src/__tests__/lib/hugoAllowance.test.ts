@@ -1,6 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { HugoAllowanceError, MICROS_PER_USD, allowanceClassOf, allowanceStatus, allowanceUsedLine, assertAllowance, chargeModelCall, costMicrosOf } from '../../lib/hugoAllowance.js';
+import { HugoAllowanceError, HugoNoModelError, MICROS_PER_USD, allowanceClassOf, allowanceStatus, allowanceUsedLine, assertAllowance, chargeModelCall, costMicrosOf, modelServes } from '../../lib/hugoAllowance.js';
 import { createAssociate, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { associatesOffTheModel, letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 /**
  * Each person's allowance for Hugo's thinking (owner, 2026-10-29): $1 for
@@ -33,6 +37,24 @@ describe('who gets what', () => {
     // flash: $0.30 in, $0.006 cached, $1.20 out per million → millionths of a dollar per token.
     expect(costMicrosOf(flash(1000, 100, 2000))).toBe(Math.ceil(1000 * 0.3 + 2000 * 0.006 + 100 * 1.2));
     expect(costMicrosOf({ tier: 'deep', inputTokens: 1, cachedTokens: 0, outputTokens: 0 })).toBe(2); // 1.32 → 2
+  });
+});
+
+describe('whose Hugo never calls the model (owner, 2026-10-30)', () => {
+  it('an associate’s, by default — refused before anything is sent, and so is an account that can’t be found; a supervisor’s and the office’s are not', async () => {
+    associatesOffTheModel();
+    expect(modelServes('ASSOCIATE')).toBe(false);
+    // The hat worn counts as much as the account's own role.
+    expect(modelServes('SHIFT_SUPERVISOR', 'ASSOCIATE')).toBe(false);
+    expect(modelServes('SHIFT_SUPERVISOR', 'DRIVER')).toBe(true);
+    expect(modelServes('HR_ADMINISTRATOR')).toBe(true);
+    const ana = await floorUser();
+    await expect(assertAllowance(ana.id)).rejects.toBeInstanceOf(HugoNoModelError);
+    await expect(assertAllowance('00000000-0000-4000-8000-0000000000aa')).rejects.toBeInstanceOf(HugoNoModelError);
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', email: 'sup-model@example.com' });
+    await expect(assertAllowance(sup.id)).resolves.toMatchObject({ allowanceClass: 'floor', exhausted: false });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR', email: 'hr-model@example.com' });
+    await expect(assertAllowance(hr.id)).resolves.toMatchObject({ allowanceClass: 'staff', exhausted: false });
   });
 });
 

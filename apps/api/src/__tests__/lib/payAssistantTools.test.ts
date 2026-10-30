@@ -1,4 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 /**
  * The assistant's pay tools: each reads only the asking worker's own

@@ -22,6 +22,7 @@ import type { SessionUser } from '../types/express.js';
 import { logBuiltInAgentAction, type AgentContext } from './agents.js';
 import { computeAssociateEarnings } from './associateEarnings.js';
 import { answerWithModel, modelAvailable } from './assistantModel.js';
+import { modelAvailableFor } from './hugoModelGate.js';
 import { enqueueAudit } from './audit.js';
 import { getBrandingSync } from './branding.js';
 import { detectHugoIntent } from './hugo.js';
@@ -195,9 +196,10 @@ export function recurringKey(input: RecurringCreate): string {
 }
 
 /** Can this person have this answer repeated, here and now? Throws the plain reason when not. */
-export async function assertCanHave(user: Pick<SessionUser, 'id' | 'associateId'>, what: HugoRecurringWhat, now: Date): Promise<void> {
+export async function assertCanHave(user: Pick<SessionUser, 'id' | 'associateId' | 'role' | 'primaryRole'>, what: HugoRecurringWhat, now: Date): Promise<void> {
   if (what === 'ASK') {
-    if (!modelAvailable()) throw new HttpError(409, 'hugo_no_model', 'Free questions aren’t on here right now. Pick one of the answers I can repeat.');
+    // An associate's Hugo never calls the model (lib/hugoAllowance modelServes): no free questions.
+    if (!modelAvailableFor(user)) throw new HttpError(409, 'hugo_no_model', 'Free questions aren’t on here right now. Pick one of the answers I can repeat.');
     return;
   }
   if (what === 'MY_HOURS') {
@@ -210,10 +212,10 @@ export async function assertCanHave(user: Pick<SessionUser, 'id' | 'associateId'
 }
 
 /** What this person can have on a schedule, right now (the chat lists them; the web works it out from GET /hugo). */
-export async function recurringWhatsFor(user: Pick<SessionUser, 'id' | 'associateId'>, now: Date = new Date()): Promise<HugoRecurringWhat[]> {
+export async function recurringWhatsFor(user: Pick<SessionUser, 'id' | 'associateId' | 'role' | 'primaryRole'>, now: Date = new Date()): Promise<HugoRecurringWhat[]> {
   const reg = await registryForUser(user.id, { now });
   const keys = new Set(reg?.tools.map((t) => t.key) ?? []);
-  return [...REGISTRY_WHATS.filter((w) => keys.has(w)), ...(user.associateId ? (['MY_HOURS'] as const) : []), ...(modelAvailable() ? (['ASK'] as const) : [])];
+  return [...REGISTRY_WHATS.filter((w) => keys.has(w)), ...(user.associateId ? (['MY_HOURS'] as const) : []), ...(modelAvailableFor(user) ? (['ASK'] as const) : [])];
 }
 
 /** The tap on Start (lib/hugoTasks prepare): checks, the schedule on their clock, the first run. */
@@ -312,6 +314,8 @@ async function makeBrief(t: HugoTask, s: HugoRecurringSchedule, c: RecurringCtx)
     return { text: out.reply, linkUrl: out.linkUrl };
   };
   if (!modelAvailable()) return { kind: 'skip', reason: 'no_model', model: false };
+  // An associate's free question (set before their Hugo stopped using the model): it can't be answered, so it stops.
+  if (!modelAvailableFor(reg.user)) return { kind: 'stop', reason: 'not_available' };
   if ((await modelRunsToday(t.tenantId, c.now)) >= env.HUGO_RECURRING_DAILY_MODEL) return { kind: 'defer' };
   try {
     // A variable, not a literal: the call's input is the model module's to grow.

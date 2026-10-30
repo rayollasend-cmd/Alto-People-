@@ -21,9 +21,10 @@ import type { SessionUser } from '../types/express.js';
 import { logBuiltInAgentAction } from './agents.js';
 import { dispatchAsUser } from './assistantActions.js';
 import { modelAvailable, type AssistantTool } from './assistantModel.js';
+import { modelAvailableFor } from './hugoModelGate.js';
 import { enqueueAudit } from './audit.js';
 import { getBrandingSync } from './branding.js';
-import { allowanceStatus, HugoAllowanceError } from './hugoAllowance.js';
+import { allowanceStatus, HugoAllowanceError, modelServes } from './hugoAllowance.js';
 import { GOAL_NOTICE, GOAL_STEP_WORDS } from './hugoGoalCopy.js';
 import { GoalActionRefusal, describeGoalActions, goalActionOptions, goalActionsFor, judgeGoalCall, prepareGoalAction, type GoalActionCtx, type GoalRun } from './hugoGoalActions.js';
 import { runGoalStep } from './hugoGoalModel.js';
@@ -162,6 +163,8 @@ export function goalKey(goal: string): string {
 /** The checks and the capture for a new goal (lib/hugoTasks prepare). */
 export async function prepareGoal(user: SessionUser, input: Extract<HugoTaskCreate, { kind: 'GOAL' }>, now: Date): Promise<HugoPrepared> {
   if (!modelAvailable()) throw new HttpError(409, 'hugo_no_model', 'Goals need my thinking, and that isn’t switched on here yet. I can still watch things for you and answer questions.');
+  // An associate's Hugo never calls the model (lib/hugoAllowance modelServes).
+  if (!modelAvailableFor(user)) throw new HttpError(409, 'hugo_no_model', 'Goals aren’t something I take on here. I can still watch things for you and answer questions.');
   const left = await allowanceStatus(user.id, now);
   if (left.exhausted) throw new HttpError(409, 'hugo_allowance', 'You’ve used this month’s thinking time. Goals can start again when it renews.', { renewsAt: left.renewsAt.toISOString() });
   const open = await prisma.hugoTask.count({ where: { userId: user.id, kind: 'GOAL', status: { in: ['WORKING', 'WAITING', 'NEEDS_YOU'] } } });
@@ -589,6 +592,11 @@ export async function stepGoal(t: HugoTask, c: HugoCtx): Promise<HugoOutcome> {
     return { status: 'FAILED', events: [{ code: 'FAILED', data: { reason: 'no_access' } }] };
   }
   const user = reg.user;
+  // An associate's goal (one set before their Hugo stopped using the model) stops: it can't take a step.
+  if (!modelServes(user.role, user.primaryRole)) {
+    await stopChildTasks(t.id, now);
+    return { status: 'FAILED', events: [{ code: 'FAILED', data: { reason: 'no_access' } }] };
+  }
   const ac: GoalActionCtx = { user, lang: c.lang, now, moduleOn: reg.ctx.moduleOn };
   const [events, kids] = await Promise.all([
     prisma.hugoTaskEvent.findMany({ where: { taskId: t.id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: 200 }),

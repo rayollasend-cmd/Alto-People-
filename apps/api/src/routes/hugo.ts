@@ -7,7 +7,8 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { inProcessAgent, logBuiltInAgentAction } from '../lib/agents.js';
-import { answerWithModel, modelAvailable, type AssistantPage } from '../lib/assistantModel.js';
+import { answerWithModel, type AssistantPage } from '../lib/assistantModel.js';
+import { modelAvailableFor } from '../lib/hugoModelGate.js';
 import { payTools } from '../lib/payAssistantTools.js';
 import { getBrandingSync } from '../lib/branding.js';
 import { hugoAudienceOf } from '../lib/hugo.js';
@@ -114,7 +115,7 @@ hugoRouter.get('/', requireAuth, async (req, res) => {
   await ensureHugoProfileOnSignIn(user.id);
   const sitesNoun = termsIn(profile, lang).sites.toLowerCase();
   const can = canList(registryFor(user, tenantId, lang, sitesNoun, new Date(), name, ctx).tools, lang, ctx);
-  res.json({ name, audience, intro: WA_REPLY.appIntro(lang, name, can.map((c) => c.label.toLowerCase()), { tasks: can.some((c) => c.key.startsWith('TASK_')) }), can, model: modelAvailable() });
+  res.json({ name, audience, intro: WA_REPLY.appIntro(lang, name, can.map((c) => c.label.toLowerCase()), { tasks: can.some((c) => c.key.startsWith('TASK_')) }), can, model: modelAvailableFor(req.user!) });
 });
 
 type AskBody = z.infer<typeof AskSchema>;
@@ -203,11 +204,13 @@ async function answerAsk(req: Request, body: AskBody, live?: { emit: (e: HugoAsk
   let memory: HugoMemoryTurn | null = null;
   // The person's own allowance for Hugo's thinking (lib/hugoAllowance): used up, the registry answers and says until when.
   let allowance: { exhausted: true; renewsAt: string } | null = null;
-  if (!out && modelAvailable()) {
+  // An associate's Hugo never calls the model (lib/hugoAllowance modelServes): the registry answers.
+  const modelOn = modelAvailableFor(req.user!);
+  if (!out && modelOn) {
     const left = await allowanceStatus(user.id, now);
     if (left.exhausted) allowance = { exhausted: true, renewsAt: left.renewsAt.toISOString() };
   }
-  if (!out && modelAvailable() && !allowance) {
+  if (!out && modelOn && !allowance) {
     source = 'model';
     const escalation = audience === 'associate' ? await escalationFor(user) : null;
     const actTools = actionTools(acting);
@@ -283,7 +286,7 @@ hugoRouter.get('/allowance', requireAuth, async (req, res) => {
   // Anything used shows as at least 1% — "0% used" after a few answers reads as broken.
   const usedPercent = s.capMicros ? Math.min(100, s.spentMicros > 0 ? Math.max(1, Math.round((s.spentMicros / s.capMicros) * 100)) : 0) : 100;
   res.json({
-    on: modelAvailable(),
+    on: modelAvailableFor(req.user!),
     allowanceClass: s.allowanceClass,
     usedPercent,
     exhausted: s.exhausted,

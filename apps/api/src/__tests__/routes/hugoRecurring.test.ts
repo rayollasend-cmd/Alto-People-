@@ -46,6 +46,10 @@ import { flushPendingNotifications } from '../../lib/notify.js';
 import { ALTO_TENANT_ID, runWithTenant } from '../../lib/tenant.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { pinMidweekNoon } from '../../../test/clock.js';
+import { associatesOffTheModel, letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 const app = () => createApp();
 const MIN = 60_000;
@@ -292,6 +296,24 @@ describe('a brief runs on its schedule', () => {
     const v = await view(ana, task.id);
     expect(v.events.at(-1)).toMatchObject({ code: 'DELIVERED', data: { what: 'ASK', tier: 'fast', source: 'model', model: 1 } });
     expect((await inApp(s.user.id))[0]).toMatchObject({ subject: 'Your question: Anything new for [number removed] this week?' });
+  });
+
+  it('an associate’s Hugo takes no free question by default, and one already set stops at its next run — no model call', async () => {
+    pinMidweekNoon();
+    const s = await store();
+    const ana = await loginAs(s.user.email);
+    calls.model = true;
+    const { task } = (await ana.post('/hugo/tasks').send({ task: { kind: 'RECURRING', what: 'ASK', cadence: 'DAILY', time: '07:00', question: 'What is new?' } })).body;
+    associatesOffTheModel();
+    const refused = await ana.post('/hugo/tasks').send({ task: { kind: 'RECURRING', what: 'ASK', cadence: 'DAILY', time: '08:00', question: 'Who is on with me?' } });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe('hugo_no_model');
+    await sweep(new Date(new Date(task.result.recurring.nextAt).getTime() + MIN));
+    await flushPendingNotifications();
+    expect(calls.inputs).toHaveLength(0);
+    const row = await prisma.hugoTask.findUniqueOrThrow({ where: { id: task.id }, include: { events: true } });
+    expect(row.status).toBe('FAILED');
+    expect(row.events.find((e) => e.code === 'FAILED')!.data).toEqual({ reason: 'not_available' });
   });
 
   it('the safety valve: over the tenant’s model runs for the day, "I’ll answer this one tomorrow" — same time tomorrow', async () => {

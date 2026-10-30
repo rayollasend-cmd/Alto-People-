@@ -14,7 +14,8 @@ import { zonedWallTimeToUtcInstant } from './timezone.js';
  *
  *   floor  associates, drivers, floor and shift supervisors: $1 a cycle of
  *          30 days, the cycle beginning with their first use — used up,
- *          they wait for the cycle to end.
+ *          they wait for the cycle to end. (An associate's Hugo makes no
+ *          model calls at all: modelServes below.)
  *   staff  everyone else Hugo serves (the office): $10 a calendar month in
  *          the company's zone — used up, they wait for the next month.
  *
@@ -36,6 +37,28 @@ export interface ModelMeter {
 
 const FLOOR_ROLES: ReadonlySet<Role> = new Set<Role>(['ASSOCIATE', 'DRIVER', 'SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR']);
 export const allowanceClassOf = (role: Role): AllowanceClass => (FLOOR_ROLES.has(role) ? 'floor' : 'staff');
+
+/**
+ * Whose Hugo never calls the model (owner, 2026-10-30: "the associates Hugo
+ * should not be connected to deep seek"): an account whose role, or the hat
+ * it is wearing, is in HUGO_MODEL_OFF_ROLES — associates by default. The
+ * registry answers them everywhere (the app, WhatsApp, their repeats) and
+ * nothing of theirs reaches the provider. Every way in checks it
+ * (modelAvailableFor), and runModelLoop again before any call
+ * (HugoNoModelError). Read per call, so a changed setting applies at once.
+ */
+export function modelServes(...roles: Array<Role | null | undefined>): boolean {
+  const off = new Set(env.HUGO_MODEL_OFF_ROLES.split(',').map((r) => r.trim()).filter(Boolean));
+  return !roles.some((r) => r && off.has(r));
+}
+
+/** Thrown before a model call for someone whose Hugo never uses it (modelServes); nothing was sent. */
+export class HugoNoModelError extends Error {
+  constructor() {
+    super('This person’s Hugo answers without the model.');
+    this.name = 'HugoNoModelError';
+  }
+}
 
 const CYCLE_MS = 30 * 86_400_000;
 /** One US dollar, in the ledger's unit (millionths). */
@@ -91,8 +114,14 @@ export async function allowanceStatus(userId: string, now: Date = new Date()): P
   return { allowanceClass, capMicros, spentMicros, periodStart, renewsAt, exhausted: spentMicros >= capMicros };
 }
 
-/** Before a model call: anything left? Throws HugoAllowanceError (with when it renews) if not. */
+/**
+ * Before a model call: may this person's Hugo use it at all (HugoNoModelError
+ * if not), and is anything left (HugoAllowanceError, with when it renews)?
+ */
 export async function assertAllowance(userId: string, now: Date = new Date()): Promise<AllowanceStatus> {
+  // No account found reads as an associate's, as allowanceStatus does: closed by default.
+  const who = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, activeRole: true } });
+  if (!modelServes((who?.role ?? 'ASSOCIATE') as Role, who?.activeRole as Role | null | undefined)) throw new HugoNoModelError();
   const status = await allowanceStatus(userId, now);
   if (status.exhausted) throw new HugoAllowanceError(status.renewsAt);
   return status;

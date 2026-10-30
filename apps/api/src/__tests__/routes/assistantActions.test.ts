@@ -36,6 +36,10 @@ import { createApp } from '../../app.js';
 import { ensureBuiltInAgents } from '../../lib/agents.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 const app = () => createApp();
 const H = 3_600_000;

@@ -59,6 +59,10 @@ import { eraseAssociate } from '../../lib/erasure.js';
 import { factsMatching, memoryForChannel } from '../../lib/hugoMemory.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { associatesOffTheModel, letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 beforeEach(async () => {
   await truncateAll();
@@ -155,6 +159,24 @@ describe('in the chat: kept only through the remember tool, when told', () => {
     // An associate's Hugo knows none of it.
     const ana = await loginAs(w.anaUser.email);
     expect((await ana.get('/hugo/memory')).body.facts).toEqual([]);
+  });
+
+  it('an associate’s Hugo keeps nothing new by default (no model reads it); what is already kept can still be read and removed', async () => {
+    const w = await world();
+    const ana = await loginAs(w.anaUser.email);
+    const kept = (await ana.post('/hugo/memory').send({ text: 'I prefer morning shifts', kind: 'PREFERENCE' })).body.fact;
+    associatesOffTheModel();
+    calls.remember = { text: 'I take the van from Main St', kind: 'TRAVEL' };
+    const asked = await ana.post('/hugo/ask').send({ text: ASK });
+    expect(asked.body.source).toBe('rules');
+    expect(calls.inputs).toEqual([]);
+    const add = await ana.post('/hugo/memory').send({ text: 'I take the van from Main St', kind: 'TRAVEL' });
+    expect(add.status).toBe(409);
+    expect(add.body.error.code).toBe('hugo_no_memory');
+    expect((await ana.patch(`/hugo/memory/${kept.id}`).send({ text: 'I prefer evenings' })).status).toBe(409);
+    expect((await ana.get('/hugo/memory')).body.facts).toMatchObject([{ text: 'I prefer morning shifts' }]);
+    expect((await ana.delete(`/hugo/memory/${kept.id}`)).status).toBe(200);
+    expect(await prisma.hugoMemory.count()).toBe(0);
   });
 
   it('the instant (registry) path is unchanged: no model, no memory', async () => {

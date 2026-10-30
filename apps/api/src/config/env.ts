@@ -278,6 +278,10 @@ const EnvSchema = z.object({
   // still answers the basics until it renews.
   HUGO_ALLOWANCE_FLOOR_USD: z.coerce.number().min(0).default(1),
   HUGO_ALLOWANCE_STAFF_USD: z.coerce.number().min(0).default(10),
+  // Roles whose Hugo never calls the model, comma-separated (owner,
+  // 2026-10-30: "the associates Hugo should not be connected to deep seek").
+  // The registry answers them everywhere: the app, WhatsApp, their repeats.
+  HUGO_MODEL_OFF_ROLES: z.string().default('ASSOCIATE'),
   // Call-outs by phone and text (lib/callOuts, routes/voice): Twilio's
   // webhooks are verified with the auth token. Unset: the voice/SMS
   // webhooks answer 503 and nothing else changes.

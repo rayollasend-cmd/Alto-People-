@@ -24,6 +24,7 @@ const fact = (id: string, text: string, kind: Fact['kind'], source: Fact['source
 });
 
 const api = vi.hoisted(() => ({
+  getHugo: vi.fn(async () => ({ name: 'Hugo', audience: 'associate', intro: 'I’m your assistant.', can: [], model: true })),
   askHugo: vi.fn(),
   getHugoMemory: vi.fn(),
   addHugoMemory: vi.fn(),
@@ -33,7 +34,6 @@ const api = vi.hoisted(() => ({
   setHugoMemoryOn: vi.fn(),
 }));
 vi.mock('@/lib/hugoApi', () => ({
-  getHugo: vi.fn(async () => ({ name: 'Hugo', audience: 'associate', intro: 'I’m your assistant.', can: [], model: true })),
   getHugoSummary: vi.fn(async () => ({ working: 0, needsYou: 0, unseenDone: 0, newNotes: 0 })),
   listHugoTasks: vi.fn(async () => ({ tasks: [] })),
   listHugoNotes: vi.fn(async () => ({ notes: [] })),
@@ -236,5 +236,16 @@ describe('in the panel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'More options' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'What Hugo knows' }));
     expect(await screen.findByText('I prefer morning shifts')).toBeInTheDocument();
+  });
+
+  it('a Hugo that answers without the model (an associate’s) offers no What Hugo knows: no line, no menu item', async () => {
+    api.getHugo.mockResolvedValueOnce({ name: 'Hugo', audience: 'associate', intro: 'I’m your assistant.', can: [], model: false });
+    mountPane();
+    fireEvent.click(await screen.findByText('spark'));
+    await screen.findByText('I’m your assistant.');
+    expect(screen.queryByTestId('hugo-memory-peek')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'More options' }));
+    await screen.findByRole('menuitem', { name: /start over/i });
+    expect(screen.queryByRole('menuitem', { name: 'What Hugo knows' })).toBeNull();
   });
 });

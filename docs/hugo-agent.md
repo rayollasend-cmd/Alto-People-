@@ -12,6 +12,9 @@ Every phase keeps Hugo's rules:
 - Every notice carries the AI disclosure.
 - Words are never logged.
 - Every model call is charged to the person it was for.
+- An associate's Hugo never calls the model (owner, 2026-10-30): none of the model
+  phases below reach them. See "Associates' Hugo never calls the model" in
+  [hugo-speed.md](hugo-speed.md).
 
 ## Goals (phase 3): `lib/hugoGoals.ts`, `hugoGoalActions.ts`, `hugoGoalModel.ts`
 
@@ -61,8 +64,10 @@ schedule-change request to the lead. The planning step cost about $0.013.
 **Storage.** Facts the person told Hugo about themselves, in `HugoMemory`: at most
 50, 200 characters each, of kinds PREFERENCE, AVAILABILITY, TRAVEL, WORK or OTHER.
 The on/off switch is in `HugoMemorySetting`, and is on by default.
-Everyone Hugo serves has it, internal staff as well as associates and
-supervisors (owner, 2026-10-30); each person sees and changes only their own.
+Internal staff have it as well as supervisors (owner, 2026-10-30); each person
+sees and changes only their own. An associate's Hugo answers without the model,
+the only reader of these facts, so they can't add any (they can still read and
+remove what is already kept).
 
 **Saving.** Every save goes through one guard, `checkHugoMemoryText`, in six
 languages. It refuses:
@@ -119,7 +124,10 @@ START, language and "who are you" are handled as before.
 2. A plain question about the person's own records gets the registry's answer at once.
 3. Anything else goes to the model (`meter.purpose 'whatsapp'`, the WhatsApp
    instruction: plain text, at most 900 characters, full app links), with the last
-   8 messages of the past 24 h and what the person told Hugo.
+   8 messages of the past 24 h and what the person told Hugo. Not for an
+   associate: their questions get the registry's answer (route `rules`). The
+   model only answers someone on WhatsApp whose account isn't an associate's, such
+   as a shift supervisor with their own shifts.
 
 **Escalation.** A model escalation goes to the supervisor at once, and the reply
 says it was passed on only when it was.

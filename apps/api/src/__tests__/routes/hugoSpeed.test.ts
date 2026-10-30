@@ -48,6 +48,10 @@ import { flushPendingAudits } from '../../lib/audit.js';
 import { chargeModelCall } from '../../lib/hugoAllowance.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { associatesOffTheModel, letAssociatesUseTheModel } from '../../../test/hugoModel.js';
+
+// The model's machinery, driven by an associate: allowed for this file (by default an associate's Hugo never calls it).
+letAssociatesUseTheModel();
 
 const app = () => createApp();
 
@@ -114,6 +118,31 @@ describe('the quickest way that answers well', () => {
     await flushPendingAudits();
     const trail = await prisma.auditLog.findMany({ where: { action: 'hugo.asked' }, select: { metadata: true } });
     expect(trail.map((t) => (t.metadata as { tier?: string }).tier).sort()).toEqual(['deep', 'fast']);
+  });
+});
+
+describe('an associate’s Hugo never calls the model (owner, 2026-10-30)', () => {
+  it('by default every question gets the registry’s answer, streamed or not, and GET /hugo and the allowance say so — a shift supervisor and the office keep the model', async () => {
+    associatesOffTheModel();
+    const w = await world();
+    const ana = await loginAs(w.anaUser.email);
+    expect((await ana.get('/hugo')).body.model).toBe(false);
+    const why = await ana.post('/hugo/ask').send({ text: 'Why was my check short?' });
+    expect(why.status, JSON.stringify(why.body)).toBe(200);
+    expect(why.body.source).toBe('rules');
+    const streamed = await ana.post('/hugo/ask/stream').send({ text: 'Why was my check short?' }).buffer(true).parse(raw);
+    expect(lines(streamed.body as string).at(-1)).toMatchObject({ t: 'done', answer: { source: 'rules' } });
+    expect((await ana.get('/hugo/allowance')).body.on).toBe(false);
+    expect(calls.tiers).toEqual([]);
+
+    const sam = await createAssociate({ firstName: 'Sam', lastName: 'Reed' });
+    const { user: samUser } = await createUser({ role: 'SHIFT_SUPERVISOR', associateId: sam.id, email: `sam${worlds}@example.com` });
+    const sup = await loginAs(samUser.email);
+    expect((await sup.get('/hugo')).body.model).toBe(true);
+    expect((await sup.post('/hugo/ask').send({ text: 'Why was my check short?' })).body.source).toBe('model');
+    const hr = await loginAs(w.hr.email);
+    expect((await hr.get('/hugo')).body.model).toBe(true);
+    expect(calls.tiers).toEqual(['fast']);
   });
 });
 

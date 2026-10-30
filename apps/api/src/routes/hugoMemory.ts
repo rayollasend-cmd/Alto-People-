@@ -2,7 +2,9 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { HUGO_MEMORY_MAX, HugoMemoryInputSchema, HugoMemoryPatchSchema, HugoMemorySettingsInputSchema, type HugoMemoryListResponse } from '@alto-people/shared';
 import { requireAuth } from '../middleware/auth.js';
+import { HttpError } from '../middleware/error.js';
 import { type Asker, contextFor } from '../lib/hugoRegistry.js';
+import { modelServes } from '../lib/hugoAllowance.js';
 import { addHugoMemory, editHugoMemory, forgetAllHugoMemory, hugoMemoryFor, memoryOnFor, removeHugoMemory, setHugoMemoryOn } from '../lib/hugoMemory.js';
 
 /**
@@ -21,6 +23,8 @@ import { addHugoMemory, editHugoMemory, forgetAllHugoMemory, hugoMemoryFor, memo
  * and removing work whenever the person is signed in — their right to see
  * and erase what is kept doesn't depend on the assistant being switched on;
  * adding, changing and the switch need the assistant to serve them.
+ * An associate's Hugo answers without the model, which is the only reader
+ * of these facts: adding and changing are 409 hugo_no_memory for them.
  * Every change is audited with kinds and counts, never the words.
  */
 
@@ -34,6 +38,11 @@ async function served(req: Request) {
   return req.user!;
 }
 
+/** Facts are for the model to read: an associate's Hugo never uses it (lib/hugoAllowance modelServes), so it keeps nothing new. */
+function keepsFacts(req: Request): void {
+  if (!modelServes(req.user!.role, req.user!.primaryRole)) throw new HttpError(409, 'hugo_no_memory', 'Hugo doesn’t keep notes for you here.');
+}
+
 hugoMemoryRouter.get('/', requireAuth, async (req, res) => {
   const user = req.user!;
   const [memoryOn, facts] = await Promise.all([memoryOnFor(user.id), hugoMemoryFor(user.id)]);
@@ -43,6 +52,7 @@ hugoMemoryRouter.get('/', requireAuth, async (req, res) => {
 
 hugoMemoryRouter.post('/', requireAuth, async (req, res) => {
   const user = await served(req);
+  keepsFacts(req);
   const { text, kind } = HugoMemoryInputSchema.parse(req.body ?? {});
   const out = await addHugoMemory(user, text, kind);
   res.status(out.existing ? 200 : 201).json(out);
@@ -56,6 +66,7 @@ hugoMemoryRouter.put('/settings', requireAuth, async (req, res) => {
 
 hugoMemoryRouter.patch('/:id', requireAuth, async (req, res) => {
   const user = await served(req);
+  keepsFacts(req);
   const { id } = IdParam.parse(req.params);
   const patch = HugoMemoryPatchSchema.parse(req.body ?? {});
   res.json({ fact: await editHugoMemory(user, id, patch) });
