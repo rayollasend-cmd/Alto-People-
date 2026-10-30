@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
@@ -116,9 +116,10 @@ async function overnight(
 
 describe('the store manager reads a live day', () => {
   it('shows the overnight that is still on the floor this morning', async () => {
+    // 7 AM Eastern: opened eight hours ago, it crosses into a day the shift
+    // is not filed under.
+    vi.setSystemTime(pinMidweekNoon().getTime() - 5 * H);
     const { client, loc, sup, manager } = await store();
-    // Opened eight hours ago, which on any clock crosses into a day the
-    // shift is not filed under.
     const opened = new Date(Date.now() - 8 * H);
     const shift = await overnight({
       clientId: client.id,
@@ -137,7 +138,10 @@ describe('the store manager reads a live day', () => {
       period: 'OVERNIGHT',
       runBy: 'Tori Banks',
     });
-    expect(res.body.summary.running).toBeGreaterThanOrEqual(1);
+    // Live now, but counted on the night it started: this day's "running"
+    // sits under "Submitted n/m" for this day's checklists.
+    expect(res.body.runs.find((r: { id: string }) => r.id === shift.id)).toMatchObject({ carried: true });
+    expect(res.body.summary.running).toBe(0);
   });
 
   it('files an overnight that finished this morning under the night it started — once', async () => {

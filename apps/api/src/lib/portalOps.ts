@@ -683,9 +683,9 @@ export async function buildStoreOps(
       // the table and was never submitted (LEAD-2: "Submitted 1/1").
       submitted: dayRuns.filter((r) => r.status === 'CLOSED' && !r.expired).length,
       expired: dayRuns.filter((r) => r.expired).length,
-      // On the floor right now — an overnight carried from yesterday included: at 1 AM
-      // its crew is running, though its counts stay with the night it started (LEAD-2).
-      running: runs.filter((r) => r.status === 'ACTIVE').length,
+      // This day's runs only: it reads under "Submitted n/m", so a carried overnight
+      // (shown in the live list) stays counted on the night it started (LEAD-2).
+      running: dayRuns.filter((r) => r.status === 'ACTIVE').length,
       notStarted: expected.filter((e) => !e.started && Date.parse(e.startsAt) + NOT_STARTED_GRACE_MS <= now.getTime())
         .length,
       completionPct: sopTotal ? Math.round((sopDone / sopTotal) * 100) : null,
