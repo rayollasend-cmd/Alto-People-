@@ -670,7 +670,7 @@ export async function aggregatePayrollProjection(
   // Jan 8 starts the new year's wage bases and limits.
   const payDate = input.payDate ?? periodEndExclusive;
   // Prior checks count when paid in the tax year up to this check's pay day.
-  const { taxYear, yearStart, before: ytdBefore } = taxYearWindow(payDate);
+  const { taxYear, yearStart, before: ytdBefore, paidFrom, paidBefore } = taxYearWindow(payDate);
 
   // PERF: batched pre-loads. The per-associate loop below used to issue up
   // to six queries per associate — ~1,800 sequential round-trips at 300
@@ -826,7 +826,7 @@ export async function aggregatePayrollProjection(
   if (universeIds.length > 0 && tx.payrollItemTaxLine) {
     const priorWhere: Prisma.PayrollItemWhereInput = {
       associateId: { in: universeIds },
-      ...priorChecksInTaxYear({ yearStart, before: ytdBefore, periodStart, runId: input.runId }),
+      ...priorChecksInTaxYear({ yearStart, before: ytdBefore, paidFrom, paidBefore, periodStart, runId: input.runId }),
     };
     const [programRows, suppRows] = await Promise.all([
       tx.payrollItemTaxLine.findMany({

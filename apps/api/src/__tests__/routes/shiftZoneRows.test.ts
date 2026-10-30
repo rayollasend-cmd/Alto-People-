@@ -6,6 +6,7 @@ import { modifiedDutyMatches } from '../../lib/workersComp.js';
 import { buildExpirationRisk } from '../../lib/expirationRisk.js';
 import { shiftTimezone } from '../../lib/shiftZone.js';
 import { companyWorkweek } from '../../lib/timeAnomalies.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 
 /**
  * One shift, one time (ops walk 2, the wave-2 sweep): every API row that
@@ -45,6 +46,9 @@ describe('shiftTimezone', () => {
 
 describe('rows that carry a shift or punch time carry the store zone', () => {
   it('the manager’s today-on-your-team and team timesheets', async () => {
+    // Noon UTC is "today" only while UTC's day is the company's: after 8 PM Eastern it is
+    // tomorrow's 8 AM. Midweek noon keeps the shift on today's list at any hour.
+    pinMidweekNoon();
     const { client, store } = await laStore();
     const mgrA = await createAssociate({ firstName: 'Mia', lastName: 'Grant' });
     const { user: mgr } = await createUser({ role: 'MANAGER', associateId: mgrA.id });

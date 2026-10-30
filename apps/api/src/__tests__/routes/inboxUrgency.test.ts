@@ -10,6 +10,8 @@ import {
   truncateAll,
 } from '../../../test/db.js';
 import { agent, loginAs } from '../../../test/http.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
+import { addDaysToKey } from '../../lib/timezone.js';
 
 /**
  * GET /me/inbox ranks by what it costs to be late (role walk HR 4): every
@@ -56,8 +58,11 @@ describe('GET /me/inbox — urgency and deadlines', () => {
 
   it('a queue with a deadline carries the soonest one; an empty queue carries none', async () => {
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    const soon = new Date(Date.now() + 2 * 86_400_000);
-    const later = new Date(Date.now() + 3 * 86_400_000);
+    // Due days on the company's calendar, as the desk counts "within 3 days" of its today
+    // (from UTC's day, "in 3 days" was 4 after 8 PM Eastern and fell outside).
+    const today = orgDateKey(new Date());
+    const soon = addDaysToKey(today, 2);
+    const later = addDaysToKey(today, 3);
     const a = await createAssociate({ firstName: 'Lena', lastName: 'Ortiz' });
     const b = await createAssociate({ firstName: 'Omar', lastName: 'Diaz' });
     for (const [who, due] of [
@@ -71,7 +76,7 @@ describe('GET /me/inbox — urgency and deadlines', () => {
           reason: 'OWN_HEALTH',
           status: 'PENDING_CERTIFICATION',
           startDate: new Date(),
-          certificationDueAt: new Date(dayKey(due) + 'T00:00:00.000Z'),
+          certificationDueAt: new Date(`${due}T00:00:00.000Z`),
         },
       });
     }
@@ -79,7 +84,7 @@ describe('GET /me/inbox — urgency and deadlines', () => {
     const { byKey } = await inboxFor(user.email);
     const leave = byKey.get('leave-desk')!;
     expect(leave.count).toBe(2);
-    expect(leave.dueAt && dayKey(new Date(leave.dueAt))).toBe(dayKey(soon));
+    expect(leave.dueAt && dayKey(new Date(leave.dueAt))).toBe(soon);
     // Nothing waiting: no deadline to show, whatever the band.
     const claims = byKey.get('ui-claims')!;
     expect(claims.count).toBe(0);

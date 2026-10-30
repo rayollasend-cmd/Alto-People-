@@ -101,16 +101,27 @@ describe('the deploy transition (a UTC-cut run before a site-day run)', () => {
 });
 
 describe('the tax year is the pay date’s (CODE-2)', () => {
+  // Calendar days (UTC midnight) for DATE columns; the paid-at bounds are midnights on the
+  // company's calendar (Eastern: 05:00 UTC in winter, 04:00 in summer).
   it('the Jan 8, 2027 check for Dec 19 – Jan 1 is a 2027 check', () => {
     const w = taxYearWindow(new Date('2027-01-08T00:00:00Z'));
     expect(w.taxYear).toBe(2027);
     expect(w.yearStart.toISOString()).toBe('2027-01-01T00:00:00.000Z');
     expect(w.before.toISOString()).toBe('2027-01-09T00:00:00.000Z');
+    expect(w.paidFrom.toISOString()).toBe('2027-01-01T05:00:00.000Z');
+    expect(w.paidBefore.toISOString()).toBe('2027-01-09T05:00:00.000Z');
   });
   it('a Dec 31 pay date counts the whole year and never spills into the next', () => {
     const w = taxYearWindow(new Date('2026-12-31T00:00:00Z'));
     expect(w.taxYear).toBe(2026);
     expect(w.before.toISOString()).toBe('2027-01-01T00:00:00.000Z');
+    expect(w.paidBefore.toISOString()).toBe('2027-01-01T05:00:00.000Z');
+  });
+  it('a check paid at 11:30 PM Eastern on the pay day was paid that day, not the next', () => {
+    const w = taxYearWindow(new Date('2026-10-29T00:00:00Z'));
+    const paid = new Date('2026-10-30T03:30:00Z'); // Thu Oct 29, 11:30 PM EDT
+    expect(paid >= w.paidFrom && paid < w.paidBefore).toBe(true);
+    expect(w.paidBefore.toISOString()).toBe('2026-10-30T04:00:00.000Z');
   });
 });
 

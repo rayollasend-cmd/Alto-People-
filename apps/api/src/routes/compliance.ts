@@ -51,7 +51,8 @@ import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { everifyRouter } from './everify.js';
 import { drugTestsRouter } from './drugTests.js';
 import { fmtDay } from '../lib/humanDates.js';
-import { orgDateKey } from '../lib/timeAnomalies.js';
+import { companyWorkweek, orgDateKey, utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
+import { addDaysToKey } from '../lib/timezone.js';
 
 export const complianceRouter = Router();
 
@@ -951,9 +952,12 @@ complianceRouter.get('/eeo/applicant-report', MANAGE, async (req, res, next) => 
       })
       .parse(req.query);
     const to = q.to ?? orgDateKey(new Date()); // the company's today, not UTC's
-    const from = q.from ?? ymd(new Date(new Date(`${to}T00:00:00.000Z`).getTime() - 365 * 86_400_000));
-    const start = new Date(`${from}T00:00:00.000Z`);
-    const end = new Date(new Date(`${to}T00:00:00.000Z`).getTime() + 86_400_000);
+    const from = q.from ?? addDaysToKey(to, -365);
+    // The days are the company's, so the window runs midnight to midnight on its calendar:
+    // UTC midnights cut off the evening (an answer at 9 PM Eastern fell outside "today").
+    const tz = companyWorkweek().timezone;
+    const start = utcInstantOfLocalMidnight(from, tz);
+    const end = utcInstantOfLocalMidnight(addDaysToKey(to, 1), tz);
     const tenantId = tenantIdForWrite();
     const [rows, candidates, applications] = await Promise.all([
       prisma.eeoSelfIdentification.findMany({

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -98,13 +98,16 @@ describe('<AdminTimeView> live board — a supervisor opens on their shift', () 
   it('shows their crew (walk-ins by clock-in), and the whole store one tap away', async () => {
     const user = renderBoard();
     expect(await screen.findByRole('radio', { name: /My shift · Swing/ })).toHaveAttribute('aria-checked', 'true');
-    expect(await screen.findByText('Ann Lee')).toBeInTheDocument();
+    // A supervisor's names open the crew card, which loads on first use: the plain name
+    // shows first and is swapped for the card's button, so query afresh each time rather
+    // than hold the first match (it can be detached by the time it is checked).
+    await waitFor(() => expect(screen.getByText('Ann Lee')).toBeInTheDocument());
     expect(screen.getByText('Wes Park')).toBeInTheDocument();
     expect(screen.queryByText('Zed Old')).not.toBeInTheDocument();
     expect(screen.queryByText('Pat Oh')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: 'Whole store' }));
-    expect(await screen.findByText('Zed Old')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Zed Old')).toBeInTheDocument());
     expect(screen.getByText('Pat Oh')).toBeInTheDocument();
   });
 
@@ -114,6 +117,6 @@ describe('<AdminTimeView> live board — a supervisor opens on their shift', () 
     expect(await screen.findByText('No one on your shift is clocked in')).toBeInTheDocument();
     expect(screen.getByText('1 clocked in on other shifts.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Show the whole store' }));
-    expect(await screen.findByText('Zed Old')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Zed Old')).toBeInTheDocument());
   });
 });

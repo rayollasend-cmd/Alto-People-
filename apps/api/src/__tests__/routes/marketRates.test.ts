@@ -43,7 +43,8 @@ async function world() {
   const client = await createClient('Coastal Resorts');
   const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
   await prisma.site.update({ where: { id: store.id }, data: { name: 'Front Beach', zip: '32541', city: 'Destin', state: 'FL' } });
-  await prisma.shiftRateDefault.create({ data: { clientId: client.id, position: 'Stocker', payRate: 14.5, billRate: 21 } });
+  // effectiveFrom explicit: CURRENT_DATE is the database's (UTC) day — tomorrow on the company's calendar after 8 PM Eastern.
+  await prisma.shiftRateDefault.create({ data: { clientId: client.id, position: 'Stocker', payRate: 14.5, billRate: 21, effectiveFrom: new Date('2026-01-01T00:00:00.000Z') } });
   const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR', email: 'hr@example.com' });
   const a = await loginAs(agent(), hr.email);
   return { client, store, hr, a };
@@ -161,7 +162,7 @@ describe('the desk', () => {
 
     const other = await createClient('North Co');
     const otherStore = await prisma.site.findFirstOrThrow({ where: { clientId: other.id } });
-    await prisma.shiftRateDefault.create({ data: { clientId: other.id, position: 'Stocker', payRate: 15, billRate: 22 } });
+    await prisma.shiftRateDefault.create({ data: { clientId: other.id, position: 'Stocker', payRate: 15, billRate: 22, effectiveFrom: new Date('2026-01-01T00:00:00.000Z') } });
     const { user: ops } = await createUser({ role: 'OPERATIONS_MANAGER', email: 'ops@example.com' });
     await prisma.user.update({ where: { id: ops.id }, data: { scopeSiteIds: [store.id] } });
     const o = await loginAs(agent(), ops.email);

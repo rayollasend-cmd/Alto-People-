@@ -160,7 +160,7 @@ export async function loadDeferralContexts(
   const thisYearWhere: Prisma.PayrollItemWhereInput = payBasis
     ? (() => {
         const w = taxYearWindow(periodStart);
-        return priorChecksInTaxYear({ yearStart: w.yearStart, before: w.before, periodStart: payBasis.periodStart, runId: payBasis.runId });
+        return priorChecksInTaxYear({ yearStart: w.yearStart, before: w.before, paidFrom: w.paidFrom, paidBefore: w.paidBefore, periodStart: payBasis.periodStart, runId: payBasis.runId });
       })()
     : { status: { not: 'VOIDED' }, payrollRun: { status: { notIn: ['CANCELLED', 'DRAFT'] }, periodStart: { gte: yearStart, lt: periodStart } } };
   const [people, thisYear, lastYear] = await Promise.all([

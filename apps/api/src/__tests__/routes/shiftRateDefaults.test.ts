@@ -31,6 +31,11 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
   return a;
 }
 
+// A card seeded without effectiveFrom takes the column's CURRENT_DATE: the
+// database's (UTC) day, tomorrow on the company's calendar from 8 PM Eastern,
+// so "today's card" was not yet in force. Seed a start well in the past.
+const CARD_FROM = new Date('2026-01-01T00:00:00.000Z');
+
 /** 8-hour shift starting tomorrow (well inside the default KPI week). */
 function shiftWindow() {
   const startsAt = new Date();
@@ -116,7 +121,7 @@ describe('rate-default CRUD', () => {
 
     // Foreign default is invisible to the bounded caller even by id.
     const otherDefault = await prisma.shiftRateDefault.create({
-      data: { clientId: other.id, position: 'Greeter', payRate: 17 },
+      data: { clientId: other.id, position: 'Greeter', payRate: 17, effectiveFrom: CARD_FROM },
     });
     const delForeign = await a.delete(`/scheduling/rate-defaults/${otherDefault.id}`);
     expect(delForeign.status).toBe(404);
@@ -138,7 +143,7 @@ describe('effectivePayRate resolution', () => {
     const { startsAt, endsAt } = shiftWindow();
 
     await prisma.shiftRateDefault.create({
-      data: { clientId: client.id, position: 'Stocker', payRate: 20 },
+      data: { clientId: client.id, position: 'Stocker', payRate: 20, effectiveFrom: CARD_FROM },
     });
     // 8h shift: explicit rate 30 → effective 30 (explicit wins over default).
     await prisma.shift.create({
@@ -192,7 +197,7 @@ describe('effectivePayRate resolution', () => {
     const { user: admin } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(admin.email);
     await prisma.shiftRateDefault.create({
-      data: { clientId: client.id, position: 'Stocker', payRate: 19.25 },
+      data: { clientId: client.id, position: 'Stocker', payRate: 19.25, effectiveFrom: CARD_FROM },
     });
     const { startsAt, endsAt } = shiftWindow();
 
@@ -212,7 +217,7 @@ describe('effectivePayRate resolution', () => {
     const associate = await createAssociate();
     const { user } = await createUser({ role: 'ASSOCIATE', associateId: associate.id });
     await prisma.shiftRateDefault.create({
-      data: { clientId: client.id, position: 'Stocker', payRate: 20 },
+      data: { clientId: client.id, position: 'Stocker', payRate: 20, effectiveFrom: CARD_FROM },
     });
     const { startsAt, endsAt } = shiftWindow();
     await prisma.shift.create({

@@ -8,7 +8,8 @@ import { rolesHolding } from './approvalPolicy.js';
 import { applyBillRateChange, applyPayRateChange } from './payChanges.js';
 import { calendarDay, fmtDay, sentenceFromCode } from './humanDates.js';
 import { subjectInReach, subjectReachWhere } from './scope.js';
-import { orgDateKey } from './timeAnomalies.js';
+import { companyWorkweek, orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 import type { SessionUser } from '../types/express.js';
 
 /**
@@ -516,8 +517,10 @@ export async function listApprovalRequests(db: PrismaClient, user: Decider, opts
       ...(f.kind ? { kind: f.kind } : {}),
       ...(f.requesterUserId ? { requesterUserId: f.requesterUserId } : {}),
       ...(f.approverUserId ? { OR: [{ decidedById: f.approverUserId }, { approverUserId: f.approverUserId }] } : {}),
+      // From/to are days on the company's calendar: midnight to midnight there, not UTC
+      // (a request made at 9 PM Eastern belongs to that day, not the next).
       ...(f.from || f.to
-        ? { createdAt: { ...(f.from ? { gte: new Date(`${f.from}T00:00:00.000Z`) } : {}), ...(f.to ? { lt: new Date(new Date(`${f.to}T00:00:00.000Z`).getTime() + 86_400_000) } : {}) } }
+        ? { createdAt: { ...(f.from ? { gte: utcInstantOfLocalMidnight(f.from, companyWorkweek().timezone) } : {}), ...(f.to ? { lt: utcInstantOfLocalMidnight(addDaysToKey(f.to, 1), companyWorkweek().timezone) } : {}) } }
         : {}),
     };
   }

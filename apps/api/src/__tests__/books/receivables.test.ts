@@ -5,6 +5,7 @@ import { accountBalance, accountByKey } from '../../lib/books/ledger.js';
 import { agingReport, bucketFor, recordClientPayment, undoClientPayment } from '../../lib/books/posting/receivables.js';
 import { postStatement } from '../../lib/books/posting/statements.js';
 import { flushPendingBooks } from '../../lib/books/posting/common.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 
 /**
  * Receivables: payments apply to statements and mark the ones they finish
@@ -151,7 +152,8 @@ describe('GET /books/receivables/dso — the two numbers Receivables leads with'
     await paidStatement(3, 200, 120);
     // Cash this month: two payments, one undone.
     const cash = await accountByKey(prisma, 'CASH_OPERATING');
-    const today = new Date().toISOString().slice(0, 10);
+    // The company's today: receivedOn is a DATE the route reads on the company's calendar (the UTC day is tomorrow after 8 PM Eastern).
+    const today = orgDateKey(new Date());
     await prisma.clientPayment.create({ data: { clientId: client.id, receivedOn: new Date(`${today}T00:00:00Z`), amount: 1250.5, method: 'ACH', depositAccountId: cash.id } });
     await prisma.clientPayment.create({ data: { clientId: client.id, receivedOn: new Date(`${today}T00:00:00Z`), amount: 300, method: 'CHECK', depositAccountId: cash.id, voidedAt: new Date() } });
     const r = await a.get('/books/receivables/dso?months=6');

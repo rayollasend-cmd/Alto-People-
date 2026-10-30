@@ -21,6 +21,8 @@
 
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { findInChunks } from './chunkedIn.js';
+import { companyWorkweek, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 type Tx = PrismaClient | Prisma.TransactionClient;
 
@@ -118,11 +120,35 @@ export async function computeYtdWagesBatch(
  * The check for Sat Dec 19, 2026 – Fri Jan 1, 2027, paid Fri Jan 8, 2027,
  * is a 2027 check: it starts 2027's wage bases and limits.
  */
-export function taxYearWindow(payDate: Date): { taxYear: number; yearStart: Date; before: Date } {
+export interface TaxYearWindow {
+  taxYear: number;
+  /** Jan 1 and the day after the pay day, as calendar days (UTC midnight) — for DATE columns (periods, sick-pay dates). */
+  yearStart: Date;
+  before: Date;
+  /**
+   * The same two days as instants, midnight on the COMPANY's calendar — for
+   * a paid-at timestamp. A check paid at 9 PM Eastern on the pay day was paid
+   * that day (UTC already calls it tomorrow: a second run that evening left
+   * it out of the year-to-date), and one paid the evening of Dec 31 is that
+   * year's.
+   */
+  paidFrom: Date;
+  paidBefore: Date;
+}
+
+export function taxYearWindow(payDate: Date): TaxYearWindow {
   const taxYear = payDate.getUTCFullYear();
   const yearStart = new Date(Date.UTC(taxYear, 0, 1));
   const endOfPayDay = Date.UTC(taxYear, payDate.getUTCMonth(), payDate.getUTCDate()) + 86_400_000;
-  return { taxYear, yearStart, before: new Date(Math.min(endOfPayDay, Date.UTC(taxYear + 1, 0, 1))) };
+  const before = new Date(Math.min(endOfPayDay, Date.UTC(taxYear + 1, 0, 1)));
+  const tz = companyWorkweek().timezone;
+  return {
+    taxYear,
+    yearStart,
+    before,
+    paidFrom: utcInstantOfLocalMidnight(dateColumnKey(yearStart), tz),
+    paidBefore: utcInstantOfLocalMidnight(dateColumnKey(before), tz),
+  };
 }
 
 /**
@@ -132,12 +158,13 @@ export function taxYearWindow(payDate: Date): { taxYear: number; yearStart: Date
  * in the year (a run in flight still uses up the limits). Never the run's
  * own checks, voided checks or cancelled runs.
  */
-export function priorChecksInTaxYear(input: { yearStart: Date; before: Date; periodStart: Date; runId?: string | null }): Prisma.PayrollItemWhereInput {
+export function priorChecksInTaxYear(input: Omit<TaxYearWindow, 'taxYear'> & { periodStart: Date; runId?: string | null }): Prisma.PayrollItemWhereInput {
+  const paid = { gte: input.paidFrom, lt: input.paidBefore };
   return {
     ...(input.runId ? { payrollRunId: { not: input.runId } } : {}),
     OR: [
-      { status: 'DISBURSED', disbursedAt: { gte: input.yearStart, lt: input.before }, payrollRun: { status: { not: 'CANCELLED' } } },
-      { status: 'DISBURSED', disbursedAt: null, payrollRun: { status: { not: 'CANCELLED' }, disbursedAt: { gte: input.yearStart, lt: input.before } } },
+      { status: 'DISBURSED', disbursedAt: paid, payrollRun: { status: { not: 'CANCELLED' } } },
+      { status: 'DISBURSED', disbursedAt: null, payrollRun: { status: { not: 'CANCELLED' }, disbursedAt: paid } },
       // A paid check with no paid date anywhere (imported history): its period's end stands in.
       { status: 'DISBURSED', disbursedAt: null, payrollRun: { status: { not: 'CANCELLED' }, disbursedAt: null, periodEnd: { gte: input.yearStart, lt: input.before } } },
       { status: { in: ['PENDING', 'HELD'] }, payrollRun: { status: 'FINALIZED', periodStart: { gte: input.yearStart, lt: input.periodStart } } },
@@ -158,7 +185,8 @@ export async function computeYtdWagesPaidBatch(
   excludeRunId?: string | null,
 ): Promise<Map<string, number>> {
   if (associateIds.length === 0) return new Map();
-  const { yearStart, before } = taxYearWindow(payDate);
+  const { yearStart, before, paidFrom, paidBefore } = taxYearWindow(payDate);
+  const paid = { gte: paidFrom, lt: paidBefore };
   const groups = await findInChunks(associateIds, (chunk) =>
     tx.payrollItem.groupBy({
       by: ['associateId'],
@@ -169,8 +197,8 @@ export async function computeYtdWagesPaidBatch(
         payrollRun: { status: { not: 'CANCELLED' } },
         // The check's own paid date; a check marked paid without one takes its run's.
         OR: [
-          { disbursedAt: { gte: yearStart, lt: before } },
-          { disbursedAt: null, payrollRun: { disbursedAt: { gte: yearStart, lt: before } } },
+          { disbursedAt: paid },
+          { disbursedAt: null, payrollRun: { disbursedAt: paid } },
           // No paid date anywhere (imported history): its period's end stands in.
           { disbursedAt: null, payrollRun: { disbursedAt: null, periodEnd: { gte: yearStart, lt: before } } },
         ],

@@ -46,7 +46,9 @@ describe('GET /scheduling/labor-costs', () => {
     const client = await createClient('Costed LLC');
     const loc = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     await prisma.shiftRateDefault.create({
-      data: { clientId: client.id, position: 'Cashier', payRate: 10, billRate: 21 },
+      // effectiveFrom explicit: the column's CURRENT_DATE default is the database's
+      // (UTC) day, not yet in force on the company's calendar after 8 PM Eastern.
+      data: { clientId: client.id, position: 'Cashier', payRate: 10, billRate: 21, effectiveFrom: new Date('2026-01-01T00:00:00.000Z') },
     });
     // Server is a LEAD position — drives the lead/associate split.
     await prisma.shiftPosition.create({

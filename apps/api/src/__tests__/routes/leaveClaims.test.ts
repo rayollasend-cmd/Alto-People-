@@ -4,6 +4,8 @@ import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { flushPendingAudits } from '../../lib/audit.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
+import { addDaysToKey } from '../../lib/timezone.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 
 /**
@@ -75,8 +77,10 @@ describe('leave of absence', () => {
     const { user: worker } = await createUser({ role: 'ASSOCIATE', associateId: vera.id });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
-    const start = ymd(new Date());
-    const end = ymd(new Date(Date.now() + 28 * DAY));
+    // The company's today: the case's dates and the certification clock run on its calendar
+    // (UTC's day is tomorrow after 8 PM Eastern).
+    const start = orgDateKey(new Date());
+    const end = addDaysToKey(start, 28);
     const future = new Date(Date.now() + 3 * DAY);
     const shift = await prisma.shift.create({ data: { clientId: client.id, locationId: site.id, position: 'Cashier', startsAt: future, endsAt: new Date(future.getTime() + 8 * 3_600_000), status: 'ASSIGNED', assignedAssociateId: vera.id } });
 
@@ -88,7 +92,7 @@ describe('leave of absence', () => {
 
     const notice = await a.post(`/leave/cases/${id}/notice`);
     expect(notice.body.case.status).toBe('PENDING_CERTIFICATION');
-    expect(notice.body.case.certificationDueAt).toBe(ymd(new Date(new Date(`${ymd(new Date())}T00:00:00Z`).getTime() + 15 * DAY)));
+    expect(notice.body.case.certificationDueAt).toBe(addDaysToKey(start, 15));
     const pdf = await a.get(`/leave/cases/${id}/notices/eligibility`);
     expect(pdf.status).toBe(200);
     expect(pdf.headers['content-type']).toMatch(/application\/pdf/);

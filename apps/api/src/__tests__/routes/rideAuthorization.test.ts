@@ -7,6 +7,8 @@ import { RIDE_AUTHORIZATION_VERSION } from '../../lib/rideAuthorizationContent.j
 import { authorizationCovers, rideRateOn, setRideRate } from '../../lib/rideAuthorization.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { flushPendingAudits } from '../../lib/audit.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
+import { addDaysToKey } from '../../lib/timezone.js';
 
 /**
  * Brief 1A-3 — ride deduction: keep it, fix it.
@@ -38,7 +40,8 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 }
 
 const inHours = (h: number) => new Date(Date.now() + h * 3_600_000);
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A day N days from today on the company's calendar — the rate history's days (UTC's is tomorrow after 8 PM Eastern). */
+const companyDay = (n = 0) => addDaysToKey(orgDateKey(new Date()), n);
 
 async function seed() {
   const client = await createClient('Coastal');
@@ -209,8 +212,8 @@ describe('the configurable rate', () => {
     expect(changed.status).toBe(200);
     expect(changed.body.settings).toMatchObject({ fareCents: 600, noShowFeeCents: 150 });
     expect(changed.body.rates).toHaveLength(2);
-    expect(changed.body.rates[0]).toMatchObject({ fareCents: 600, effectiveFrom: ymd(new Date()), effectiveTo: null });
-    expect(changed.body.rates[1]).toMatchObject({ fareCents: 500, effectiveTo: ymd(new Date(Date.now() - 86_400_000)) });
+    expect(changed.body.rates[0]).toMatchObject({ fareCents: 600, effectiveFrom: companyDay(), effectiveTo: null });
+    expect(changed.body.rates[1]).toMatchObject({ fareCents: 500, effectiveTo: companyDay(-1) });
     // The settings row mirrors the rate in force.
     expect(await prisma.transportSettings.findUniqueOrThrow({ where: { tenantId: '00000000-0000-4000-8000-000000000001' } })).toMatchObject({ fareCents: 600, noShowFeeCents: 150 });
     // The ride booked at the old rate keeps it.
@@ -244,7 +247,7 @@ describe('the configurable rate', () => {
     expect(past.status).toBe(409);
     expect(past.body.error.code).toBe('rate_history');
 
-    const nextWeek = ymd(new Date(Date.now() + 7 * 86_400_000));
+    const nextWeek = companyDay(7);
     const future = await s.directorAgent
       .put('/transport/settings')
       .send({ fareCents: 700, noShowFeeCents: 200, cutoffHours: 10, effectiveFrom: nextWeek });
@@ -293,7 +296,7 @@ describe('rides that would go uncharged', () => {
   it('a ride is booked at the rate in force on its day, and shows it needs a new signature', async () => {
     const s = await seed();
     await sign(s.kimAgent);
-    const inTenDays = ymd(new Date(Date.now() + 10 * 86_400_000));
+    const inTenDays = companyDay(10);
     await s.directorAgent.put('/transport/settings').send({ fareCents: 700, noShowFeeCents: 200, cutoffHours: 10, effectiveFrom: inTenDays });
     // Booked today for a day after the increase: the new fare, which Kim's $5 signature doesn't cover.
     const later = (await book(s.kimAgent, s.store, s.stop, 12 * 24)).body.ride;

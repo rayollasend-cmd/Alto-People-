@@ -3,6 +3,7 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 
 /**
  * The talent pages, shaped like a staffing company: career ladders that
@@ -199,7 +200,8 @@ describe('skills, celebrations and assets know the store', () => {
     const nia = all.body.associates.find((x: { name: string }) => x.name === 'Nia Near');
     expect(nia.place).toMatchObject({ locationId: store.id, clientName: 'Coastal' });
     expect(nia.certifications).toEqual([expect.objectContaining({ name: 'Forklift licence', isCert: true })]);
-    expect(nia.nextFreeDay).not.toBe(today.toISOString().slice(0, 10));
+    // Today on the company's calendar is the busy day (UTC's is tomorrow after 8 PM Eastern).
+    expect(nia.nextFreeDay).not.toBe(orgDateKey(today));
     const atStore = await a.get('/skills/search').query({ q: 'fork', locationId: store.id });
     expect(atStore.body.associates.map((x: { name: string }) => x.name)).toEqual(['Nia Near']);
   });

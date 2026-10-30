@@ -201,7 +201,7 @@ describe('one source per figure (walk 3, 15)', () => {
     await finalStatement(coastal.id, { amount: 500, number: 2, dueAt: daysFrom(10) });
     const late = await finalStatement(bay.id, { amount: 300, number: 3, dueAt: daysFrom(-72) });
     // A partial payment: the open balance is what every screen counts.
-    await recordClientPayment(prisma, { clientId: bay.id, receivedOn: ymd(new Date()), amount: 100, method: 'ACH', applications: [{ statementId: late.id, amount: 100 }], userId: p.fin.id });
+    await recordClientPayment(prisma, { clientId: bay.id, receivedOn: companyToday(), amount: 100, method: 'ACH', applications: [{ statementId: late.id, amount: 100 }], userId: p.fin.id });
     await flushPendingBooks();
 
     const books = (await p.a.get('/books/receivables')).body;
@@ -317,13 +317,15 @@ describe('the bill run (walk 8)', () => {
     const cash = await accountByKey(prisma, 'CASH_OPERATING');
 
     // One bad line (more than the bill owes) stops the whole run before anything posts.
-    const bad = await p.a.post('/books/bill-payments/batch').send({ paidOn: ymd(new Date()), method: 'CHECK', bankAccountId: cash.id, vendors: [{ vendorId: shell, applications: [{ billId: s1, amount: 300 }] }, { vendorId: lease, applications: [{ billId: l1, amount: 999 }] }] });
+    // Paid today on the company's calendar: UTC's day is tomorrow after 8 PM Eastern, and a
+    // payment dated tomorrow is scheduled, not posted, so it left the cash untouched.
+    const bad = await p.a.post('/books/bill-payments/batch').send({ paidOn: companyToday(), method: 'CHECK', bankAccountId: cash.id, vendors: [{ vendorId: shell, applications: [{ billId: s1, amount: 300 }] }, { vendorId: lease, applications: [{ billId: l1, amount: 999 }] }] });
     expect(bad.status).toBe(400);
     expect(await prisma.billPayment.count()).toBe(0);
     expect((await prisma.bill.findUniqueOrThrow({ where: { id: s1 } })).status).toBe('APPROVED');
 
     const run = await p.a.post('/books/bill-payments/batch').send({
-      paidOn: ymd(new Date()),
+      paidOn: companyToday(),
       method: 'CHECK',
       bankAccountId: cash.id,
       vendors: [

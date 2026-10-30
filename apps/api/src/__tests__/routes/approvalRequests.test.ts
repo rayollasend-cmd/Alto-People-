@@ -6,6 +6,7 @@ import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { flushPendingAudits } from '../../lib/audit.js';
 import { revertExpiredGrants } from '../../lib/accessChanges.js';
 import { runWithTenant } from '../../lib/tenant.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 
 /**
@@ -125,7 +126,8 @@ describe('pay-rate changes', () => {
     // Finance holds no manage:comp: not theirs to decide…
     expect((await C.post(`/approvals/requests/${id}/decide`).send({ decision: 'APPROVE' })).status).toBe(403);
     // …until the second admin hands them their approvals for the week.
-    const today = new Date().toISOString().slice(0, 10);
+    // The company's today: delegations run by its calendar (the UTC day is tomorrow after 8 PM Eastern).
+    const today = orgDateKey(new Date());
     const given = await B.post('/approvals/delegations').send({ toUserId: c.id, startsOn: today, endsOn: today, note: 'Out' });
     expect(given.status).toBe(201);
     expect((await C.get('/approvals/delegations/mine')).body.covering).toHaveLength(1);
@@ -319,7 +321,8 @@ describe('the approval record and the workflow builder', () => {
     expect((await A.get(`/approvals/requests?scope=all&requesterUserId=${b.id}`)).body.requests.map((r: { id: string }) => r.id)).toEqual([bill]);
     expect((await A.get(`/approvals/requests?scope=all&approverUserId=${b.id}`)).body.requests.map((r: { id: string }) => r.id)).toEqual([pay]);
     expect((await A.get('/approvals/requests?scope=all&to=2000-01-01')).body.requests).toEqual([]);
-    const today = new Date().toISOString().slice(0, 10);
+    // A day on the company's calendar, as the record's filter reads it.
+    const today = orgDateKey(new Date());
     expect((await A.get(`/approvals/requests?scope=all&from=${today}&to=${today}`)).body.requests).toHaveLength(2);
 
     const people = await A.get('/approvals/requests/people');

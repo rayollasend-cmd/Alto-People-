@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createApplicationWithChecklist,
@@ -1127,7 +1128,9 @@ describe('the client bill rate is never the supervisor’s', () => {
     expect((await prisma.shiftTemplate.findUniqueOrThrow({ where: { id: tpl.body.id } })).hourlyRate).toBeNull();
 
     await prisma.shiftRateDefault.create({
-      data: { clientId: mine.id, position: 'Server', payRate: 17, billRate: 28 },
+      // Today's card on the company's calendar (the PUT below replaces it in place). Not the
+      // column's CURRENT_DATE default: that is the database's UTC day, tomorrow after 8 PM Eastern.
+      data: { clientId: mine.id, position: 'Server', payRate: 17, billRate: 28, effectiveFrom: new Date(`${orgDateKey(new Date())}T00:00:00.000Z`) },
     });
     const defaults = await sup.get(`/scheduling/rate-defaults?clientId=${mine.id}`);
     expect(defaults.body.rateDefaults[0]).toMatchObject({ payRate: 17, billRate: null });
