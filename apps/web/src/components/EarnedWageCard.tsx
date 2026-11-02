@@ -52,7 +52,8 @@ export function EarnedWageCard() {
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('ewa.failed')),
   });
-  if (!enabled || !q.data || !q.data.enabled || q.data.blocker === 'NO_SCHEDULE') return null;
+  // Not offered: no pay schedule, or no payout provider could send it (every draw would fail).
+  if (!enabled || !q.data || !q.data.enabled || q.data.blocker === 'NO_SCHEDULE' || q.data.blocker === 'NO_PAYOUT_RAIL') return null;
   const a: EwaAvailability = q.data;
   const pay = parseYmd(a.payDate);
   const n = Number(amount);

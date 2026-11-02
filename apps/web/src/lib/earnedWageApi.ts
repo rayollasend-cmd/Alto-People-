@@ -4,7 +4,8 @@ import { apiFetch } from './api';
 
 export interface EwaAvailability {
   enabled: boolean;
-  blocker: 'OFF' | 'NO_SCHEDULE' | 'NO_VERIFIED_ACCOUNT' | 'NOTHING_EARNED' | 'LIMIT_REACHED' | null;
+  /** NO_PAYOUT_RAIL: no payout provider can pay this account yet — early pay isn't offered. */
+  blocker: 'OFF' | 'NO_SCHEDULE' | 'NO_VERIFIED_ACCOUNT' | 'NO_PAYOUT_RAIL' | 'NOTHING_EARNED' | 'LIMIT_REACHED' | null;
   periodStart: string;
   periodEnd: string;
   payDate: string;
@@ -66,6 +67,8 @@ export interface EwaDesk {
   rolledOver?: { count: number; amount: number };
   /** People who drew an advance in the last 90 days. */
   people?: number;
+  /** Whether a draw could be paid to a bank account / a card right now (false: no payout provider). */
+  payouts?: { bank: boolean; card: boolean };
   advances: EwaAdvance[];
 }
 

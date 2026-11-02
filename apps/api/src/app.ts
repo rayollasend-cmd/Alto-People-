@@ -271,7 +271,10 @@ const WEB_DIST = path.resolve(__dirname, '../../web/dist');
 
 export function createApp() {
   // Route-parameterized transaction names for Sentry, taken at the moment
-  // Express matches the route (see lib/routeName.ts).
+  // Express matches the route (see lib/routeName.ts). In production
+  // instrument.ts installs it before any router exists; this is the
+  // fallback for a process started without --import (routes made before
+  // it keep their unnamed dispatch).
   installRouteNaming();
   const app = express();
 

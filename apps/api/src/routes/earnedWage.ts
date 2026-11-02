@@ -6,6 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { ewaAvailability, loadEwaSettings, requestEarnedWageAdvance } from '../lib/earnedWage.js';
+import { payoutRailReady } from '../lib/disbursement.js';
 import { orgSettingIdFor } from '../lib/branding.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { scopeAssociates } from '../lib/scope.js';
@@ -167,7 +168,7 @@ earnedWageRouter.get('/payroll/earned-wage', PROCESS, async (req, res, next) => 
       ...reach,
       ...(status === 'OPEN' ? { status: { in: ['REQUESTED', 'PAID'] } } : status === 'ALL' ? {} : { status }),
     };
-    const [rows, outstanding, settings, stats] = await Promise.all([
+    const [rows, outstanding, settings, stats, bankReady, cardReady] = await Promise.all([
       prisma.earnedWageAdvance.findMany({
         where,
         include: { associate: { select: { id: true, firstName: true, lastName: true } } },
@@ -177,6 +178,8 @@ earnedWageRouter.get('/payroll/earned-wage', PROCESS, async (req, res, next) => 
       prisma.earnedWageAdvance.aggregate({ where: { ...reach, status: 'PAID' }, _sum: { amountCents: true, feeCents: true, recoveredCents: true }, _count: true }),
       loadEwaSettings(prisma),
       ewaDeskStats(reach),
+      payoutRailReady('BANK'),
+      payoutRailReady('CARD'),
     ]);
     res.json({
       settings: { enabled: settings.enabled, capPct: settings.capPct, fee: settings.feeCents / 100, maxPerPeriod: settings.maxPerPeriodCents / 100 },
@@ -185,6 +188,9 @@ earnedWageRouter.get('/payroll/earned-wage', PROCESS, async (req, res, next) => 
         amount: ((outstanding._sum.amountCents ?? 0) + (outstanding._sum.feeCents ?? 0) - (outstanding._sum.recoveredCents ?? 0)) / 100,
       },
       ...stats,
+      // Whether a draw could be paid to each kind of account: where it can't
+      // (no payout provider), associates aren't offered early pay at all.
+      payouts: { bank: bankReady, card: cardReady },
       advances: rows.map(row),
     });
   } catch (err) {

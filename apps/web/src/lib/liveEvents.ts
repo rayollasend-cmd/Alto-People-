@@ -11,6 +11,8 @@
  * the "server restarting" case where reconnects would otherwise hammer.
  */
 
+import { ApiError, apiFetch } from './api';
+
 export interface LiveEventDetail {
   type: string;
 }
@@ -18,6 +20,8 @@ export interface LiveEventDetail {
 let source: EventSource | null = null;
 let retryMs = 2_000;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+// Bumped by stopLiveEvents, so a session check still in flight can't reconnect a stopped channel.
+let generation = 0;
 
 function dispatch(type: string): void {
   window.dispatchEvent(
@@ -41,19 +45,35 @@ function connect(): void {
   es.addEventListener('hugo', () => dispatch('hugo'));
   es.onerror = () => {
     // EventSource retries by itself for transient blips; for hard
-    // failures (auth expired, server down) it closes — reschedule with
-    // backoff so we don't hammer a restarting server.
-    if (es.readyState === EventSource.CLOSED) {
-      es.close();
-      if (source === es) source = null;
-      if (retryTimer) clearTimeout(retryTimer);
-      retryTimer = setTimeout(() => {
-        retryTimer = null;
-        connect();
-      }, retryMs);
-      retryMs = Math.min(retryMs * 2, 60_000);
-    }
+    // failures (auth expired, server down) it closes.
+    if (es.readyState !== EventSource.CLOSED) return;
+    es.close();
+    if (source === es) source = null;
+    // It can't read the status it was refused with. A dead session (an idle
+    // policy timing out a hidden tab that had stopped polling) was refused
+    // with a 401 and retried every minute for days: Nov 2026, 3,259
+    // refusals from three tabs, 61% of the stream's traffic. Ask once. A
+    // 401 here ends the session the app's usual way (lib/auth → sign-in),
+    // and the channel stays down; anything else is a server blip, retried
+    // with backoff so we don't hammer a restarting server.
+    const gen = generation;
+    void apiFetch('/auth/me').then(
+      () => retryLater(gen),
+      (err: unknown) => {
+        if (!(err instanceof ApiError && err.status === 401)) retryLater(gen);
+      },
+    );
   };
+}
+
+function retryLater(gen: number): void {
+  if (gen !== generation) return;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    connect();
+  }, retryMs);
+  retryMs = Math.min(retryMs * 2, 60_000);
 }
 
 /** Start (idempotent). Call from the authed shell. */
@@ -64,6 +84,7 @@ export function startLiveEvents(): void {
 
 /** Stop and drop the connection (sign-out / shell unmount). */
 export function stopLiveEvents(): void {
+  generation += 1;
   if (retryTimer) {
     clearTimeout(retryTimer);
     retryTimer = null;

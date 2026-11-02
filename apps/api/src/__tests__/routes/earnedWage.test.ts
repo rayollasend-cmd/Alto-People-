@@ -1,10 +1,11 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { encryptString } from '../../lib/crypto.js';
 import { getCurrentPeriod } from '../../lib/payrollSchedule.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
+import { _setStubRefusalForTesting } from '../../lib/disbursement.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -102,6 +103,30 @@ describe('earned-wage access', () => {
     expect(avail.body.available).toBe(0);
     const r = await agent.post('/me/earned-wage').send({ amount: 20 });
     expect(r.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('with no payout provider, early pay is not offered: nothing is claimed, owed or emailed, and Finance is told', async () => {
+    // Production with PAYROLL_DISBURSEMENT_PROVIDER unset: the stub refuses every
+    // payout. Every draw used to fail with a 502 and an email "could not be sent".
+    _setStubRefusalForTesting(true);
+    onTestFinished(() => _setStubRefusalForTesting(null));
+    const { user, finance } = await seed();
+    const agent = await loginAs(user.email);
+    const avail = await agent.get('/me/earned-wage');
+    expect(avail.status).toBe(200);
+    expect(avail.body.blocker).toBe('NO_PAYOUT_RAIL');
+    expect(avail.body.available).toBe(0);
+    const r = await agent.post('/me/earned-wage').send({ amount: 20 });
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe('no_payout_rail');
+    expect(await prisma.earnedWageAdvance.count()).toBe(0);
+    const desk = await (await loginAs(finance.email)).get('/payroll/earned-wage');
+    expect(desk.status).toBe(200);
+    expect(desk.body.payouts).toEqual({ bank: false, card: false });
+
+    _setStubRefusalForTesting(null);
+    expect((await agent.get('/me/earned-wage')).body.blocker).toBeNull();
+    expect((await (await loginAs(finance.email)).get('/payroll/earned-wage')).body.payouts).toEqual({ bank: true, card: true });
   });
 
   it('refuses an account Finance has not verified', async () => {

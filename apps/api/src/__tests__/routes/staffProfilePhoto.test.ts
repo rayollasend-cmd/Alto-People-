@@ -1,7 +1,8 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { getBlobStore } from '../../lib/blobStore.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -128,10 +129,26 @@ describe('a face by user id, and when a browser may keep it', () => {
     const agent = await loginAs(hr.email);
     const up = await agent.post('/me/profile-photo').attach('file', PNG, { filename: 'me.png', contentType: 'image/png' });
     const versioned = await agent.get(up.body.photoUrl.replace(/^\/api/, ''));
-    expect(versioned.headers['cache-control']).toBe('private, max-age=3600');
+    // A new photo gets a new ?v=, so this version is kept a week.
+    expect(versioned.headers['cache-control']).toBe('private, max-age=604800, immutable');
     const bare = await agent.get(`/users/${hr.id}/photo`);
     expect(bare.headers['cache-control']).toBe('private, no-cache');
     expect(bare.headers.etag).toBeTruthy();
+    // An old version's link revalidates like a bare one.
+    expect((await agent.get(`/users/${hr.id}/photo?v=1`)).headers['cache-control']).toBe('private, no-cache');
+
+    // Revalidating answers 304 from the row: the image isn't read from storage.
+    const read = vi.spyOn(getBlobStore(), 'get');
+    onTestFinished(() => read.mockRestore());
+    const again = await agent.get(`/users/${hr.id}/photo`).set('If-None-Match', bare.headers.etag!);
+    expect(again.status).toBe(304);
+    expect(read).not.toHaveBeenCalled();
+
+    // A new photo is a new ETag: the old one gets the new bytes.
+    await agent.post('/me/profile-photo').attach('file', PNG, { filename: 'me2.png', contentType: 'image/png' });
+    const changed = await agent.get(`/users/${hr.id}/photo`).set('If-None-Match', bare.headers.etag!);
+    expect(changed.status).toBe(200);
+    expect(changed.headers.etag).not.toBe(bare.headers.etag);
   });
 });
 

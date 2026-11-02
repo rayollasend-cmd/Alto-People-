@@ -112,6 +112,25 @@ describe('pay before payday', () => {
     expect(await screen.findByText('Add a pay account and let payroll verify it first.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Get/ })).not.toBeInTheDocument();
   });
+
+  it('is not offered while no payout provider could send it', async () => {
+    const settle = async () => {
+      await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/me/earned-wage'));
+      await new Promise((r) => setTimeout(r, 50));
+    };
+    // The control: with a reason a person can act on, the card shows.
+    vi.mocked(apiFetch).mockResolvedValue({ ...avail, blocker: 'NOTHING_EARNED', available: 0 } as never);
+    const shown = renderAs('ASSOCIATE', <EarnedWageCard />);
+    await settle();
+    expect(shown.container).not.toBeEmptyDOMElement();
+    shown.unmount();
+
+    vi.mocked(apiFetch).mockReset();
+    vi.mocked(apiFetch).mockResolvedValue({ ...avail, blocker: 'NO_PAYOUT_RAIL', available: 0 } as never);
+    const { container } = renderAs('ASSOCIATE', <EarnedWageCard />);
+    await settle();
+    expect(container).toBeEmptyDOMElement();
+  });
 });
 
 describe('the guided close', () => {
@@ -249,6 +268,21 @@ describe("Finance's earned-wage desk", () => {
     await waitFor(() =>
       expect(apiFetch).toHaveBeenCalledWith('/payroll/earned-wage/settings', { method: 'PATCH', body: { enabled: true, capPct: 40, fee: 0, maxPerPeriod: 1000 } }),
     );
+    // Payouts work: no warning.
+    expect(screen.queryByTestId('ewa-no-payout-rail')).toBeNull();
+  });
+
+  it('says plainly when no payout provider can pay, and where to set one up', async () => {
+    vi.mocked(apiFetch).mockResolvedValue({
+      settings: { enabled: true, capPct: 50, fee: 0, maxPerPeriod: 1000 },
+      outstanding: { count: 0, amount: 0 },
+      payouts: { bank: false, card: false },
+      advances: [],
+    } as never);
+    renderAs('FINANCE_ACCOUNTANT', <EarnedWageDesk />);
+    const note = await screen.findByTestId('ewa-no-payout-rail');
+    expect(note).toHaveTextContent(/Paused\. No payout provider is set up, so .* aren’t shown early pay: every draw would fail\./);
+    expect(within(note).getByRole('link', { name: 'Set up payouts' })).toHaveAttribute('href', '/integrations');
   });
 });
 

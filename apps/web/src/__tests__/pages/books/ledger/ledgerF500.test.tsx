@@ -288,6 +288,9 @@ describe('the financial statements', () => {
   });
 
   it('compares with the period before: each account and the totals side by side, with the change', async () => {
+    // September is "last month" only in October: pin the day, or the period reads as a custom range.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-22T12:00:00'));
     const pnl: BooksProfitAndLoss = {
       from: '2026-09-01',
       to: '2026-09-30',

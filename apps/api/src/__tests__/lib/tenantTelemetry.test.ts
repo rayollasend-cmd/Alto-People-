@@ -11,7 +11,9 @@ import type { NextFunction, Request, Response } from 'express';
 const sentry = vi.hoisted(() => {
   type FakeScope = { tags: Record<string, string>; setTag(k: string, v: string): void };
   const make = (): FakeScope => ({ tags: {}, setTag(k, v) { this.tags[k] = v; } });
-  return { make, request: make(), forked: [] as Array<{ tags: Record<string, string> }> };
+  type FakeSpan = { attrs: Record<string, string>; setAttribute(k: string, v: string): void };
+  const span = (): FakeSpan => ({ attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } });
+  return { make, span, request: make(), forked: [] as Array<{ tags: Record<string, string> }>, active: null as FakeSpan | null };
 });
 
 vi.mock('@sentry/node', async (importOriginal) => {
@@ -20,6 +22,8 @@ vi.mock('@sentry/node', async (importOriginal) => {
     ...orig,
     isInitialized: () => true,
     getIsolationScope: () => sentry.request,
+    getActiveSpan: () => sentry.active,
+    getRootSpan: (s: unknown) => s,
     withIsolationScope: (cb: (s: unknown) => unknown) => {
       const scope = sentry.make();
       sentry.forked.push(scope);
@@ -42,6 +46,7 @@ function runMiddleware(user: { tenantId: string } | undefined, inside: () => voi
 beforeEach(() => {
   sentry.request = sentry.make();
   sentry.forked.length = 0;
+  sentry.active = null;
 });
 afterAll(async () => {
   await prisma.$disconnect();
@@ -51,6 +56,12 @@ describe('request scope', () => {
   it('a signed-in request tags its isolation scope with the user\'s tenant', () => {
     runMiddleware({ tenantId: T2 }, () => undefined);
     expect(sentry.request.tags).toEqual({ tenant: T2, tenant_source: 'session' });
+  });
+
+  it("the request's root span carries the tenant too: streamed traces don't carry scope tags", () => {
+    sentry.active = sentry.span();
+    runMiddleware({ tenantId: T2 }, () => undefined);
+    expect(sentry.active.attrs).toEqual({ tenant: T2, tenant_source: 'session' });
   });
 
   it('an anonymous request starts as the default tenant and moves with the tenant it adopts', () => {

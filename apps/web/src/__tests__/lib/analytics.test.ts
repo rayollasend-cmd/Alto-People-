@@ -152,6 +152,11 @@ describe('scrubbing', () => {
     expect(a.POSTHOG_CONFIG.disable_session_recording).toBe(true);
     expect(a.POSTHOG_CONFIG.session_recording).toMatchObject({ maskAllInputs: true, maskTextSelector: '*' });
   });
+
+  it('asks for no feature flags, but still loads the project settings the toggles arrive in', () => {
+    expect(a.POSTHOG_CONFIG.advanced_disable_feature_flags).toBe(true);
+    expect(a.POSTHOG_CONFIG.advanced_disable_flags).toBeUndefined();
+  });
 });
 
 describe('the client', () => {

@@ -54,6 +54,10 @@ The SDK sends to `/api/ux` on our own origin; the API forwards it to
   Mark any other element `data-private` to block it from recordings.
 - **Do Not Track** is honoured. Sentry handles exceptions (`capture_exceptions: false`);
   surveys, product tours, conversations and web experiments are off.
+- **No feature flags** (`advanced_disable_feature_flags`): the project has none,
+  so the SDK doesn't call `/flags` (~2,000 relay calls in 3 days, Nov 2026). The
+  project settings still load (`/array/<key>/config`), so the switches in
+  PostHog keep working. Don't use `advanced_disable_flags`: it drops those too.
 
 Consider a line in the employee privacy notice that app usage is measured —
 a policy call, not a code one.

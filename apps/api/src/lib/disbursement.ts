@@ -82,13 +82,25 @@ export interface DisbursementAdapter {
   finalize?(): Promise<unknown>;
 }
 
+let stubRefusalForTesting: boolean | null = null;
+
+/** The stub moves no money: in production, without the demo opt-in, it refuses every payout. */
+function stubRefuses(): boolean {
+  return stubRefusalForTesting ?? (env.NODE_ENV === 'production' && !env.PAYROLL_ALLOW_STUB_DISBURSEMENT);
+}
+
+/** Test-only: make the stub refuse as it does in production (null: back to the environment's answer). */
+export function _setStubRefusalForTesting(refuses: boolean | null): void {
+  stubRefusalForTesting = refuses;
+}
+
 class StubAdapter implements DisbursementAdapter {
   readonly provider: DisbursementProvider = 'STUB';
   async disburse(input: DisbursementInput): Promise<DisbursementResult> {
     // Tier-1 honesty guard: a stub "payment" moves no money. In production
     // that must never masquerade as a paid item — refuse loudly unless ops
     // explicitly opted in (e.g. a demo environment).
-    if (env.NODE_ENV === 'production' && !env.PAYROLL_ALLOW_STUB_DISBURSEMENT) {
+    if (stubRefuses()) {
       return {
         provider: 'STUB',
         externalRef: '',
@@ -345,11 +357,27 @@ export async function resolveAdapter(opts: { batch?: boolean; actorUserId?: stri
   return wise() ?? pickAdapter();
 }
 
+/**
+ * Would a payout to this kind of pay method go anywhere right now? No only
+ * when the rail it would take is the stub refusing (production with no
+ * provider configured), so a screen can say so up front instead of letting
+ * someone ask and fail. In Oct–Nov 2026 every earned-wage draw (34 of 34)
+ * failed this way and emailed the person "could not be sent".
+ */
+export async function payoutRailReady(kind: 'BANK' | 'CARD' | 'OTHER'): Promise<boolean> {
+  const adapter = await resolveAdapter();
+  const rail = adapter instanceof RoutingAdapter ? adapter.railFor(kind) : adapter;
+  return !(rail instanceof StubAdapter && stubRefuses());
+}
+
 /** One rail per pay method: card, bank account, or neither (a check). */
 class RoutingAdapter implements DisbursementAdapter {
   readonly provider: DisbursementProvider;
   constructor(private readonly bank: DisbursementAdapter, private readonly card: DisbursementAdapter) {
     this.provider = bank.provider;
+  }
+  railFor(kind: 'BANK' | 'CARD' | 'OTHER'): DisbursementAdapter {
+    return kind === 'CARD' ? this.card : kind === 'BANK' ? this.bank : checkAdapter;
   }
   async disburse(input: DisbursementInput): Promise<DisbursementResult> {
     if (input.recipient.branchCardId) return this.card.disburse(input);

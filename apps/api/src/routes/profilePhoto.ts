@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '../types/express.js';
 import { PROFILE_PHOTO_MAX_BYTES } from '@alto-people/shared';
 import multer from 'multer';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -274,8 +274,18 @@ profilePhotoRouter.delete(
   },
 );
 
-/** Stream a stored photo, or 404 when none is on file (or the blob is gone). */
-async function sendPhoto(req: Request, res: Response, key: string | null | undefined): Promise<void> {
+type StoredPhoto = { photoS3Key: string | null; photoUpdatedAt: Date | null } | null | undefined;
+
+/**
+ * Stream a stored photo, or 404 when none is on file (or the blob is gone).
+ *
+ * The row names the photo's version (the `?v=` its links carry,
+ * lib/profilePhotoUrl), so it is also the ETag: a browser revalidating gets
+ * its 304 from the row, without the image being read from storage just to
+ * say "unchanged" (Nov 2026: the busiest route, ~270 ms a view).
+ */
+async function sendPhoto(req: Request, res: Response, photo: StoredPhoto): Promise<void> {
+  const key = photo?.photoS3Key;
   if (!key) {
     // Most screens build the photo URL from an id and let the avatar fall
     // back to initials: let the browser remember "no photo" for a couple of
@@ -283,9 +293,25 @@ async function sendPhoto(req: Request, res: Response, key: string | null | undef
     res.setHeader('Cache-Control', 'private, max-age=120');
     throw new HttpError(404, 'no_photo', 'No profile photo on file.');
   }
+  const version = String(photo.photoUpdatedAt?.getTime() ?? 0);
+  res.setHeader('ETag', `"photo-${version}-${createHash('sha1').update(key).digest('hex').slice(0, 8)}"`);
+  // A ?v= naming this version is one version of the photo for good: a new
+  // photo gets a new link, so the browser keeps it for a week. A bare URL
+  // (or an old version's) must revalidate every time, or a new photo hid
+  // behind the old one.
+  res.setHeader(
+    'Cache-Control',
+    req.query.v !== undefined && String(req.query.v) === version ? 'private, max-age=604800, immutable' : 'private, no-cache',
+  );
+  if (req.fresh) {
+    res.status(304).end();
+    return;
+  }
   // Driver-based read; null (blob gone) keeps the existing 404.
   const blob = await getBlobStore().get(key);
   if (!blob) {
+    res.removeHeader('ETag');
+    res.setHeader('Cache-Control', 'private, max-age=120');
     throw new HttpError(404, 'no_photo', 'No profile photo on file.');
   }
   const ext = extname(key).toLowerCase();
@@ -301,14 +327,6 @@ async function sendPhoto(req: Request, res: Response, key: string | null | undef
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
   res.setHeader('Content-Length', String(blob.length));
-  // A ?v=<updatedAt> URL names one version of the photo, so it can be kept
-  // for an hour. A bare URL (the many places that build it from an id)
-  // must revalidate every time — Express answers with an ETag and a 304
-  // when nothing changed — or a new photo hid behind the old one for an hour.
-  res.setHeader(
-    'Cache-Control',
-    req.query.v ? 'private, max-age=3600' : 'private, no-cache',
-  );
   res.send(blob);
 }
 
@@ -339,9 +357,9 @@ profilePhotoRouter.get(
     await assertSameTenant('associate', String(req.params.id));
     const associate = await prisma.associate.findFirst({
       where: { id: req.params.id, deletedAt: null, ...portalAssociateScope(req.user!) },
-      select: { photoS3Key: true },
+      select: { photoS3Key: true, photoUpdatedAt: true },
     });
-    await sendPhoto(req, res, associate?.photoS3Key);
+    await sendPhoto(req, res, associate);
   },
 );
 
@@ -358,17 +376,16 @@ profilePhotoRouter.get(
     await assertSameTenant('user', String(req.params.id));
     const user = await prisma.user.findFirst({
       where: { id: req.params.id, deletedAt: null },
-      select: { photoS3Key: true, associateId: true },
+      select: { photoS3Key: true, photoUpdatedAt: true, associateId: true },
     });
     // The associate fallback under the same rule as /associates/:id/photo.
     const linked = user?.associateId
       ? await prisma.associate.findFirst({
           where: { id: user.associateId, deletedAt: null, ...portalAssociateScope(req.user!) },
-          select: { photoS3Key: true },
+          select: { photoS3Key: true, photoUpdatedAt: true },
         })
       : null;
-    const associateKey = linked?.photoS3Key ?? null;
-    await sendPhoto(req, res, associateKey ?? user?.photoS3Key);
+    await sendPhoto(req, res, linked?.photoS3Key ? linked : user);
   },
 );
 

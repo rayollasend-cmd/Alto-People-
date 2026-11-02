@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
@@ -108,6 +109,7 @@ export function EarnedWageDesk() {
               {data.people !== undefined && <MetricCard label="People using it" value={String(data.people)} hint="drew one in the last 90 days" />}
             </MetricStrip>
             <PolicyLine settings={data.settings} onEdit={() => setEditing(true)} />
+            {data.settings.enabled && data.payouts && !(data.payouts.bank && data.payouts.card) && <NoPayoutRail payouts={data.payouts} />}
           </div>
         ) : q.isError ? null : (
           <Skeleton className="h-24" />
@@ -149,6 +151,27 @@ export function EarnedWageDesk() {
       />
       {data && <PolicyDialog open={editing} onOpenChange={setEditing} settings={data.settings} />}
     </ListTemplate>
+  );
+}
+
+/**
+ * Offered, but no payout provider can send the money: those people don't see
+ * early pay at all (every draw would fail and email them "could not be sent").
+ */
+function NoPayoutRail({ payouts }: { payouts: NonNullable<EwaDesk['payouts']> }) {
+  const term = useTerm();
+  const what = !payouts.bank && !payouts.card
+    ? `No payout provider is set up, so ${term('workers').toLowerCase()} aren’t shown early pay: every draw would fail.`
+    : payouts.bank
+      ? 'Card payouts have no provider, so people paid to a card aren’t shown early pay.'
+      : 'Bank payouts have no provider, so people paid to a bank account aren’t shown early pay.';
+  return (
+    <p role="status" className="rounded border border-warning/30 bg-warning/5 p-3 text-sm text-ink" data-testid="ewa-no-payout-rail">
+      <span className="font-medium">Paused.</span> {what}{' '}
+      <Link to="/integrations" className="text-accent underline underline-offset-2">
+        Set up payouts
+      </Link>
+    </p>
   );
 }
 

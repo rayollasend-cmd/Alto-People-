@@ -4,7 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
-import { resolveAdapter, type DisbursementInput } from './disbursement.js';
+import { payoutRailReady, resolveAdapter, type DisbursementInput } from './disbursement.js';
 import { notifyFinance, resolvePayoutForPayroll } from './financialChanges.js';
 import { netWorkedMinutes, orgDateKey, type BreakFacts } from './timeAnomalies.js';
 import { dateOnly, patternOn, periodContaining, scheduleMembershipFor } from './payScheduleMembership.js';
@@ -76,7 +76,8 @@ export interface EwaAvailability {
   availableCents: number;
   feeCents: number;
   /** Why nothing is available right now, when nothing is. */
-  blocker: 'OFF' | 'NO_SCHEDULE' | 'NO_VERIFIED_ACCOUNT' | 'NOTHING_EARNED' | 'LIMIT_REACHED' | null;
+  /** NO_PAYOUT_RAIL: no provider can move money to this pay method (lib/disbursement payoutRailReady) — not offered until one is set up. */
+  blocker: 'OFF' | 'NO_SCHEDULE' | 'NO_VERIFIED_ACCOUNT' | 'NO_PAYOUT_RAIL' | 'NOTHING_EARNED' | 'LIMIT_REACHED' | null;
   /** Where an advance goes (the verified pay account), for the confirm before money moves. */
   payoutTo: { kind: 'BANK' | 'CARD' | 'OTHER'; last4: string | null } | null;
 }
@@ -212,6 +213,7 @@ export async function ewaAvailability(db: Db, associateId: string, now: Date = n
     ? { kind: pm.type === 'BANK_ACCOUNT' ? 'BANK' : pm.type === 'BRANCH_CARD' ? 'CARD' : 'OTHER', last4: pm.type === 'BRANCH_CARD' ? (pm.branchCardId?.slice(-4) ?? null) : (pm.accountLast4 ?? null) }
     : null;
   if (payout.decision !== 'verified') blocker = 'NO_VERIFIED_ACCOUNT';
+  else if (!(await payoutRailReady(payoutTo!.kind))) blocker = 'NO_PAYOUT_RAIL';
   else if (netCents <= 0) blocker = 'NOTHING_EARNED';
   else if (availableCents < 100) blocker = 'LIMIT_REACHED';
   return {
@@ -243,6 +245,10 @@ export async function requestEarnedWageAdvance(
   if (!avail.enabled) throw new HttpError(404, 'not_found', 'Earned-wage access is not offered here.');
   if (avail.blocker === 'NO_VERIFIED_ACCOUNT') {
     throw new HttpError(409, 'no_verified_payout', 'An advance can only go to a pay account Finance has verified.');
+  }
+  // Nothing is claimed, owed or emailed when no rail could pay it.
+  if (avail.blocker === 'NO_PAYOUT_RAIL') {
+    throw new HttpError(409, 'no_payout_rail', 'Early pay isn’t available yet.');
   }
   if (!Number.isInteger(input.amountCents) || input.amountCents < 100) {
     throw new HttpError(400, 'amount_too_small', 'The smallest advance is $1.00.');

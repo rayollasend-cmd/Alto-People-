@@ -21,6 +21,15 @@ export function tagTenantScope(tenantId: string, source: string): void {
   const scope = Sentry.getIsolationScope();
   scope.setTag('tenant', tenantId);
   scope.setTag('tenant_source', source);
+  // Traces are streamed span by span (Sentry 11's default), and a streamed
+  // span doesn't carry the scope's tags: the request's root span gets them
+  // as attributes, or no trace says whose request it was.
+  const span = Sentry.getActiveSpan();
+  if (span) {
+    const root = Sentry.getRootSpan(span);
+    root.setAttribute('tenant', tenantId);
+    root.setAttribute('tenant_source', source);
+  }
 }
 
 /** Run `fn` (a job's per-tenant body) in its own isolation scope tagged with the tenant. */

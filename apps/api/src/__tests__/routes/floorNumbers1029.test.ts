@@ -185,7 +185,12 @@ describe('scheduling: the company week, one person’s shifts, the contract by h
     expect(res.body.timezone).toBe(ET);
     expect(res.body.windows).toHaveLength(3);
     expect(res.body.windows.every((w: { locationId: string }) => w.locationId !== other.site.id)).toBe(true);
-    const at = (h: number) => res.body.hours[h].target;
+    // By the store's clock, not by position: a day across a DST change has 23
+    // or 25 hours (Nov 1 has two 1 AMs), and "today" here is the real date.
+    const storeHour = new Intl.DateTimeFormat('en-US', { timeZone: ET, hour: '2-digit', hourCycle: 'h23' });
+    const hourOf = (body: { hours: Array<{ at: string; target: number | null }> }, h: number) =>
+      body.hours.find((x) => Number(storeHour.format(new Date(x.at))) === h)?.target;
+    const at = (h: number) => hourOf(res.body, h);
     expect(res.body.hours.length).toBeGreaterThanOrEqual(23);
     expect(at(1)).toBe(2); // overnight
     expect(at(6)).toBe(11); // 3 + 8, never the other client's 50
@@ -202,7 +207,7 @@ describe('scheduling: the company week, one person’s shifts, the contract by h
     const narrowed = await o2.get(`/scheduling/contract?clientId=${client.id}`);
     expect(narrowed.status).toBe(200);
     expect(narrowed.body.windows.map((w: { locationId: string }) => w.locationId)).toEqual([second.id]);
-    expect(narrowed.body.hours[6].target).toBe(8);
+    expect(hourOf(narrowed.body, 6)).toBe(8);
   });
 });
 

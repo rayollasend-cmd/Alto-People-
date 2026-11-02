@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
@@ -85,6 +85,10 @@ describe('the payroll period ledger', () => {
   });
 
   it('GET /payroll/period-ledger, the inbox count, and "Pay these hours now" paying only the unpaid hours, once', async () => {
+    // The day the ledger above is read on: after Oct 30 that period's payday has passed too (a third MISSED).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T16:00:00Z'));
+    onTestFinished(() => vi.useRealTimers());
     const w = await world();
     const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
     const a = await loginAs(user.email);

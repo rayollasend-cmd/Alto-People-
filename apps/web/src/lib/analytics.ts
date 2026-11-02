@@ -199,6 +199,9 @@ export const POSTHOG_CONFIG: Partial<PostHogConfig> = {
   disable_product_tours: true,
   disable_conversations: true,
   disable_web_experiments: true,
+  // No feature flags in the project: skip /flags (~2,000 relay calls in 3 days, Nov 2026).
+  // Not advanced_disable_flags: that also drops the remote config the project's toggles arrive in.
+  advanced_disable_feature_flags: true,
   // Web vitals yes; per-request timing would carry API URLs.
   capture_performance: { web_vitals: true, network_timing: false },
   disable_session_recording: true,

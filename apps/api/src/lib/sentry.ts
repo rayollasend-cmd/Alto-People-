@@ -18,6 +18,38 @@ export function stampTenant<E extends { tags?: Record<string, unknown> }>(event:
 }
 
 /**
+ * Requests not worth a trace: the PostHog relay, health probes, the
+ * live-updates stream (open for minutes), web-vitals beacons and the web
+ * app's own files. Nov 2026 they were ~44% of requests.
+ */
+const UNTRACED_PATHS = /^\/(?:api\/)?(?:ux\/|health\/|events\/stream|telemetry\/web-vitals)|^\/(?:assets\/|[^/]+\.(?:js|css|png|svg|ico|webmanifest|json|txt|webp|woff2?|map)$)/;
+
+/**
+ * Which traces to keep. A root span with no request behind it — a
+ * background job's database call (`prisma:client:operation`) or an
+ * outgoing call it made — starts a trace of its own; ~1M a week used up
+ * the span quota (Oct 21–26: no API traces kept at all). Requests keep the
+ * configured rate, and a request's own spans follow it.
+ */
+export function sampleTrace(ctx: {
+  name: string;
+  parentSampled?: boolean;
+  attributes?: Record<string, unknown>;
+  normalizedRequest?: { url?: string };
+  inheritOrSampleWith: (fallback: number) => number;
+}): number {
+  if (ctx.parentSampled === undefined) {
+    if (ctx.name.startsWith('prisma:')) return 0;
+    const target = ctx.attributes?.['url.path'] ?? ctx.attributes?.['http.target'] ?? ctx.normalizedRequest?.url;
+    if (typeof target === 'string') {
+      const path = target.replace(/^https?:\/\/[^/]+/, '');
+      if (UNTRACED_PATHS.test(path)) return 0;
+    }
+  }
+  return ctx.inheritOrSampleWith(env.SENTRY_TRACES_SAMPLE_RATE);
+}
+
+/**
  * Sentry initialization. Called once at process boot, BEFORE any other
  * module imports that might throw (Sentry's auto-instrumentation hooks
  * Node's HTTP layer at import time).
@@ -34,7 +66,7 @@ export function initSentry(): void {
   Sentry.init({
     dsn: env.SENTRY_DSN,
     environment: env.NODE_ENV,
-    tracesSampleRate: env.SENTRY_TRACES_SAMPLE_RATE,
+    tracesSampler: sampleTrace,
     integrations: [
       // One place decides what is a server fault: middleware/error.ts. It
       // answers a ZodError and a malformed id (Prisma P2023) with 400, an
@@ -101,9 +133,9 @@ export function initSentry(): void {
       if (event.extra) event.extra = scrubDeep(event.extra) as typeof event.extra;
       return stampTenant(event);
     },
-    beforeSendTransaction(event) {
-      return stampTenant(event);
-    },
+    // No beforeSendTransaction: traces are streamed span by span (Sentry 11's
+    // default), which ignores it. A request's root span carries its tenant
+    // from lib/tenantTelemetry instead.
   });
 }
 
