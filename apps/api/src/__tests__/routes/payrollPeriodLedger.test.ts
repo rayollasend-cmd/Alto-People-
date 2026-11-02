@@ -88,7 +88,7 @@ describe('the payroll period ledger', () => {
     // The day the ledger above is read on: after Oct 30 that period's payday has passed too (a third MISSED).
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-21T16:00:00Z'));
-    onTestFinished(() => vi.useRealTimers());
+    onTestFinished(() => { vi.useRealTimers(); });
     const w = await world();
     const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
     const a = await loginAs(user.email);
