@@ -318,7 +318,7 @@ describe('the roster opens on people (F500)', () => {
     const { container } = renderPage('HR_ADMINISTRATOR', '/workers?group=none');
     await screen.findByRole('link', { name: /Dana Reyes/ });
     const srcs = [...container.querySelectorAll('img')].map((i) => i.getAttribute('src'));
-    expect(srcs).toContain('/api/associates/m2/photo?v=7');
+    expect(srcs).toContain('/api/associates/m2/photo?v=7&size=96');
     expect(srcs.some((src) => src?.includes('/api/associates/m1/photo'))).toBe(false);
   });
 

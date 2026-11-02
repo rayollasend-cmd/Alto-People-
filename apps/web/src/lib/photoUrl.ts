@@ -68,6 +68,18 @@ export function isPhotoKnownMissing(src: string): boolean {
   return missingPhotos.has(src);
 }
 
+/**
+ * The square thumbnail of a face this app serves (`?size=`, api
+ * routes/profilePhoto): 96 px for a row avatar, 256 for a profile-scale one.
+ * A row used to download the whole upload, and a People page on a phone
+ * asked for a hundred at once — the page's own data waited behind them.
+ * Any other URL (a blob preview, another host) is returned as it is.
+ */
+const FACE_URL = /^\/api\/(?:associates|users)\/[^/?#]+\/photo(?:\?|$)/;
+export function faceThumbUrl(src: string, px: 96 | 256): string {
+  return FACE_URL.test(src) ? `${src}${src.includes('?') ? '&' : '?'}size=${px}` : src;
+}
+
 /** After a photo upload: a face that was missing is asked for again. */
 export function forgetMissingPhotos(): void {
   missingPhotos.clear();

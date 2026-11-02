@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { cn } from '@/lib/cn';
-import { isPhotoKnownMissing, markPhotoMissing } from '@/lib/photoUrl';
+import { faceThumbUrl, isPhotoKnownMissing, markPhotoMissing } from '@/lib/photoUrl';
 
 /**
  * Phase 72 — Avatar primitive.
@@ -27,6 +27,10 @@ const SIZE_CLASS: Record<AvatarSize, string> = {
   xl: 'h-16 w-16 text-lg',
   '2xl': 'h-24 w-24 text-2xl',
 };
+
+// The thumbnail each size asks for: 96 px covers lg (48 px) at 2x; the
+// profile sizes get 256.
+const THUMB_PX: Record<AvatarSize, 96 | 256> = { xs: 96, sm: 96, md: 96, lg: 96, xl: 256, '2xl': 256 };
 
 // Six dim-saturated tints that all sit on AA-contrast white text.
 const PALETTE = [
@@ -93,7 +97,7 @@ export function Avatar({
     >
       {src && !broken ? (
         <img
-          src={src}
+          src={faceThumbUrl(src, THUMB_PX[size])}
           alt=""
           // Avatars render in every directory/queue row — lazy + async so a
           // 500-row list doesn't fire 500 eager photo fetches on mount. The

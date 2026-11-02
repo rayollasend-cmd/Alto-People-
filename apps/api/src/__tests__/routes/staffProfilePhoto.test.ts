@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import request, { type Test } from 'supertest';
+import sharp from 'sharp';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { getBlobStore } from '../../lib/blobStore.js';
@@ -149,6 +150,73 @@ describe('a face by user id, and when a browser may keep it', () => {
     const changed = await agent.get(`/users/${hr.id}/photo`).set('If-None-Match', bare.headers.etag!);
     expect(changed.status).toBe(200);
     expect(changed.headers.etag).not.toBe(bare.headers.etag);
+  });
+});
+
+/*
+ * Nov 2026: a row avatar downloaded the whole upload (59 KB typical, up to
+ * 2.4 MB), and a People page on a phone asked for a hundred at once — the
+ * page's own data waited behind them ("Still loading — the server may be
+ * waking up…"). Avatars now ask for a thumbnail.
+ */
+describe('a row avatar gets a thumbnail, not the upload', () => {
+  it('?size=96 is a small square WebP, made once and kept; the full photo is unchanged', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const agent = await loginAs(hr.email);
+    const photo = await sharp({ create: { width: 900, height: 1200, channels: 3, background: '#3a4a73' } }).jpeg({ quality: 95 }).toBuffer();
+    const up = await agent.post('/me/profile-photo').attach('file', photo, { filename: 'me.jpg', contentType: 'image/jpeg' });
+    expect(up.status).toBe(201);
+    const url = String(up.body.photoUrl).replace(/^\/api/, '');
+
+    const full = await agent.get(url).buffer(true);
+    expect(full.headers['content-type']).toBe('image/jpeg');
+    expect((full.body as Buffer).length).toBe(photo.length);
+
+    const store = getBlobStore();
+    const put = vi.spyOn(store, 'put');
+    onTestFinished(() => put.mockRestore());
+    const thumb = await agent.get(`${url}&size=96`).buffer(true);
+    expect(thumb.status).toBe(200);
+    expect(thumb.headers['content-type']).toBe('image/webp');
+    expect(await sharp(thumb.body as Buffer).metadata()).toMatchObject({ width: 96, height: 96, format: 'webp' });
+    expect((thumb.body as Buffer).length).toBeLessThan(photo.length / 10);
+    // Same version, same week-long keep; its own ETag, so it never answers for the full photo.
+    expect(thumb.headers['cache-control']).toBe('private, max-age=604800, immutable');
+    expect(thumb.headers.etag).not.toBe(full.headers.etag);
+    expect(put).toHaveBeenCalledTimes(1);
+
+    // Kept: the next ask reads it back instead of making it again.
+    const again = await agent.get(`${url}&size=96`).buffer(true);
+    expect(Buffer.compare(again.body as Buffer, thumb.body as Buffer)).toBe(0);
+    expect(put).toHaveBeenCalledTimes(1);
+
+    const big = await agent.get(`${url}&size=256`).buffer(true);
+    expect(await sharp(big.body as Buffer).metadata()).toMatchObject({ width: 256, height: 256 });
+    // A size the app doesn't use gets the photo as uploaded.
+    expect((await agent.get(`${url}&size=500`).buffer(true)).headers['content-type']).toBe('image/jpeg');
+  });
+
+  it('a new photo drops the old one\'s thumbnails', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const agent = await loginAs(hr.email);
+    const photo = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#73513a' } }).jpeg().toBuffer();
+    const up = await agent.post('/me/profile-photo').attach('file', photo, { filename: 'me.jpg', contentType: 'image/jpeg' });
+    await agent.get(`${String(up.body.photoUrl).replace(/^\/api/, '')}&size=96`);
+    const oldKey = (await prisma.user.findUniqueOrThrow({ where: { id: hr.id }, select: { photoS3Key: true } })).photoS3Key!;
+    expect(await getBlobStore().exists(`${oldKey}.96.webp`)).toBe(true);
+
+    await agent.post('/me/profile-photo').attach('file', photo, { filename: 'me2.jpg', contentType: 'image/jpeg' });
+    expect(await getBlobStore().exists(oldKey)).toBe(false);
+    expect(await getBlobStore().exists(`${oldKey}.96.webp`)).toBe(false);
+  });
+
+  it('an image the resizer cannot read is still shown, as uploaded', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const agent = await loginAs(hr.email);
+    await agent.post('/me/profile-photo').attach('file', PNG, { filename: 'me.png', contentType: 'image/png' });
+    const res = await agent.get(`/users/${hr.id}/photo?size=96`).buffer(true);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
   });
 });
 

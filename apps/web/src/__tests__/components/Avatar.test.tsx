@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { Avatar } from '@/components/ui/Avatar';
-import { associateFace, forgetMissingPhotos, isPhotoKnownMissing, personPhotoUrl, shiftHolderFace } from '@/lib/photoUrl';
+import { associateFace, faceThumbUrl, forgetMissingPhotos, isPhotoKnownMissing, personPhotoUrl, shiftHolderFace } from '@/lib/photoUrl';
 
 /**
  * One request per known photo (G4: ~24 404s on one Users page load). A row
@@ -23,7 +23,7 @@ describe('Avatar', () => {
   it('a photo that comes back missing is not asked for again by the next row', () => {
     const first = render(<Avatar src="/api/associates/a1/photo" name="Dee Kpakpo" />);
     const img = first.container.querySelector('img')!;
-    expect(img).toHaveAttribute('src', '/api/associates/a1/photo');
+    expect(img).toHaveAttribute('src', '/api/associates/a1/photo?size=96');
     fireEvent.error(img);
     expect(isPhotoKnownMissing('/api/associates/a1/photo')).toBe(true);
     expect(imgs(first.container)).toHaveLength(0);
@@ -42,6 +42,28 @@ describe('Avatar', () => {
     forgetMissingPhotos();
     const again = render(<Avatar src="/api/associates/a1/photo" name="Dee Kpakpo" />);
     expect(imgs(again.container)).toHaveLength(1);
+  });
+});
+
+/*
+ * A row avatar downloads a thumbnail, not the upload (Nov 2026: 59 KB a face,
+ * a hundred at once on a People page held the page's own data behind them).
+ */
+describe('Avatar thumbnails', () => {
+  it('a row avatar asks for the 96 px thumbnail, keeping the version', () => {
+    const { container } = render(<Avatar src="/api/associates/a1/photo?v=5" name="Dee Kpakpo" size="sm" />);
+    expect(container.querySelector('img')).toHaveAttribute('src', '/api/associates/a1/photo?v=5&size=96');
+  });
+
+  it('a profile-scale avatar asks for 256 px', () => {
+    const { container } = render(<Avatar src="/api/users/u1/photo" name="Rosa Martinez" size="2xl" />);
+    expect(container.querySelector('img')).toHaveAttribute('src', '/api/users/u1/photo?size=256');
+  });
+
+  it('any other picture is shown as it is', () => {
+    expect(faceThumbUrl('blob:https://people.altohr.com/123', 96)).toBe('blob:https://people.altohr.com/123');
+    expect(faceThumbUrl('/api/ops/photos/p1', 96)).toBe('/api/ops/photos/p1');
+    expect(faceThumbUrl('https://cdn.example.com/a/photo', 96)).toBe('https://cdn.example.com/a/photo');
   });
 });
 

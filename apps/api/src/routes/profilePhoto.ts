@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '../types/express.js';
 import { PROFILE_PHOTO_MAX_BYTES } from '@alto-people/shared';
 import multer from 'multer';
+import sharp from 'sharp';
 import { createHash, randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { prisma } from '../db.js';
@@ -107,11 +108,7 @@ async function savePhoto(
   if (prior && prior !== relativeKey) {
     // Best-effort cleanup of the previous blob. Failure here is fine —
     // it's an orphan blob, not a correctness problem.
-    try {
-      await getBlobStore().delete(prior);
-    } catch {
-      /* swallow */
-    }
+    await deletePhotoBlobs(prior);
   }
   return (owner.kind === 'associate' ? profilePhotoUrlFor(updated) : userPhotoUrlFor(updated))!;
 }
@@ -120,13 +117,13 @@ async function savePhoto(
 async function removePhoto(owner: PhotoOwner): Promise<void> {
   const prior = await readPhotoKey(owner);
   await writePhotoKey(owner, null);
-  if (prior) {
-    try {
-      await getBlobStore().delete(prior);
-    } catch {
-      /* swallow */
-    }
-  }
+  if (prior) await deletePhotoBlobs(prior);
+}
+
+/** A photo's blob and the thumbnails made from it — best effort, an orphan is not a correctness problem. */
+async function deletePhotoBlobs(key: string): Promise<void> {
+  const store = getBlobStore();
+  await Promise.all([key, ...[...THUMB_SIZES].map((px) => thumbKey(key, px))].map((k) => store.delete(k).catch(() => undefined)));
 }
 
 /**
@@ -277,6 +274,45 @@ profilePhotoRouter.delete(
 type StoredPhoto = { photoS3Key: string | null; photoUpdatedAt: Date | null } | null | undefined;
 
 /**
+ * Square thumbnails an avatar asks for with `?size=` (components/ui/Avatar):
+ * 96 px covers every row avatar (48 px at 2x), 256 the profile-scale ones.
+ * A row avatar used to download the whole upload — 59 KB typical, up to
+ * 2.4 MB — and a People page on a phone asked for a hundred at once, which
+ * filled the connection and held the page's own data behind them (Nov 2026:
+ * "Still loading — the server may be waking up…" on every page). A
+ * thumbnail is made once, on first ask, and kept beside the original.
+ */
+const THUMB_SIZES: ReadonlySet<number> = new Set([96, 256]);
+const thumbKey = (key: string, px: number): string => `${key}.${px}.webp`;
+const thumbsInFlight = new Map<string, Promise<Buffer | null>>();
+
+function thumbSize(req: Request): number | null {
+  const px = Number(req.query.size);
+  return THUMB_SIZES.has(px) ? px : null;
+}
+
+/** The thumbnail's bytes, made and stored on first ask; null when the original is gone. */
+async function thumbnail(key: string, px: number): Promise<Buffer | null> {
+  const derived = thumbKey(key, px);
+  const store = getBlobStore();
+  const stored = await store.get(derived).catch(() => null);
+  if (stored) return stored;
+  // A page asks for the same face from several rows at once: make it once.
+  let pending = thumbsInFlight.get(derived);
+  if (!pending) {
+    pending = (async () => {
+      const original = await store.get(key);
+      if (!original) return null;
+      const small = await sharp(original).rotate().resize(px, px, { fit: 'cover' }).webp({ quality: 80 }).toBuffer();
+      await store.put(derived, small, 'image/webp').catch(() => undefined);
+      return small;
+    })().finally(() => thumbsInFlight.delete(derived));
+    thumbsInFlight.set(derived, pending);
+  }
+  return pending;
+}
+
+/**
  * Stream a stored photo, or 404 when none is on file (or the blob is gone).
  *
  * The row names the photo's version (the `?v=` its links carry,
@@ -294,7 +330,8 @@ async function sendPhoto(req: Request, res: Response, photo: StoredPhoto): Promi
     throw new HttpError(404, 'no_photo', 'No profile photo on file.');
   }
   const version = String(photo.photoUpdatedAt?.getTime() ?? 0);
-  res.setHeader('ETag', `"photo-${version}-${createHash('sha1').update(key).digest('hex').slice(0, 8)}"`);
+  const px = thumbSize(req);
+  res.setHeader('ETag', `"photo-${version}-${createHash('sha1').update(key).digest('hex').slice(0, 8)}${px ? `-${px}` : ''}"`);
   // A ?v= naming this version is one version of the photo for good: a new
   // photo gets a new link, so the browser keeps it for a week. A bare URL
   // (or an old version's) must revalidate every time, or a new photo hid
@@ -307,16 +344,29 @@ async function sendPhoto(req: Request, res: Response, photo: StoredPhoto): Promi
     res.status(304).end();
     return;
   }
-  // Driver-based read; null (blob gone) keeps the existing 404.
-  const blob = await getBlobStore().get(key);
+  // Driver-based read; null (blob gone) keeps the existing 404. A
+  // thumbnail that can't be made (an image sharp can't read) falls back to
+  // the original rather than failing the face.
+  let blob: Buffer | null = null;
+  let thumb = false;
+  if (px) {
+    try {
+      blob = await thumbnail(key, px);
+      thumb = blob !== null;
+    } catch {
+      blob = null;
+    }
+  }
+  blob ??= await getBlobStore().get(key);
   if (!blob) {
     res.removeHeader('ETag');
     res.setHeader('Cache-Control', 'private, max-age=120');
     throw new HttpError(404, 'no_photo', 'No profile photo on file.');
   }
   const ext = extname(key).toLowerCase();
-  const mime =
-    ext === '.png'
+  const mime = thumb
+    ? 'image/webp'
+    : ext === '.png'
       ? 'image/png'
       : ext === '.webp'
         ? 'image/webp'
