@@ -22,7 +22,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePrompt } from '@/lib/confirm';
 import { fmtRelativeDate, fmtShiftSpanTz, fmtShiftTz, fmtTime } from '@/lib/format';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { resumeAllAgents } from '@/lib/agentsApi';
 import { getControlRoom, listControlRoomSites } from '@/lib/controlRoomApi';
 import { resumeRobot, stopRobot } from '@/lib/robotsApi';
@@ -269,7 +269,7 @@ export function ControlRoomPage() {
               {data.people.map((p) => (
                 <li key={p.associateId} className="flex flex-wrap items-center gap-3 px-3 py-2">
                   <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', p.clockedIn ? 'bg-positive' : p.late ? 'bg-negative' : 'bg-ink-subtle')} aria-hidden="true" />
-                  <Avatar src={associatePhotoUrl(p.associateId)} name={p.name} size="sm" />
+                  <Avatar src={personPhotoUrl({ photoUrl: p.photoUrl, associateId: p.associateId })} name={p.name} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <Link to={p.workerId ? `/people?associateId=${p.associateId}` : '/people'} className="font-medium text-ink hover:text-accent">

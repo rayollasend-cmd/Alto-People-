@@ -14,7 +14,7 @@ import { safeHref } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { fmtDate, phoneHref } from '@/lib/format';
 import { useMinWidth } from '@/lib/useViewport';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -461,7 +461,7 @@ function CandidateCard({
         )}
       >
         <div className="flex items-start gap-2 pr-6">
-          {!compact && <Avatar src={associatePhotoUrl(candidate.hiredAssociateId)} name={fullName} email={candidate.email} size="sm" />}
+          {!compact && <Avatar src={personPhotoUrl({ photoUrl: candidate.hiredAssociatePhotoUrl, associateId: candidate.hiredAssociateId })} name={fullName} email={candidate.email} size="sm" />}
           <div className="min-w-0 flex-1">
             {/* Two lines before an ellipsis: "Jasmine Thom…" was cut with room to spare. */}
             <div className="line-clamp-2 break-words font-medium leading-snug text-white" title={fullName}>{fullName}</div>
@@ -741,7 +741,7 @@ function PhoneCard({
         aria-label={`Open ${fullName}'s details`}
         className="flex w-full items-start gap-3 rounded-t-md p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
       >
-        <Avatar src={associatePhotoUrl(candidate.hiredAssociateId)} name={fullName} email={candidate.email} size="sm" />
+        <Avatar src={personPhotoUrl({ photoUrl: candidate.hiredAssociatePhotoUrl, associateId: candidate.hiredAssociateId })} name={fullName} email={candidate.email} size="sm" />
         <span className="min-w-0 flex-1">
           <span className="block break-words font-medium leading-snug text-ink">{fullName}</span>
           <span className="block truncate text-xs2 text-ink-muted">

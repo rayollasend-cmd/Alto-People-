@@ -987,7 +987,7 @@ complianceRouter.get('/eeo/applicant-report', MANAGE, async (req, res, next) => 
 /* ===== J-1 ============================================================= */
 
 type RawJ1 = Prisma.J1ProfileGetPayload<{
-  include: { associate: { select: { firstName: true; lastName: true; email: true } } };
+  include: { associate: { select: { firstName: true; lastName: true; email: true; photoS3Key: true; photoUpdatedAt: true } } };
 }>;
 
 function toJ1(row: RawJ1): J1Profile {
@@ -998,6 +998,7 @@ function toJ1(row: RawJ1): J1Profile {
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
     associateEmail: row.associate.email,
+    associatePhotoUrl: profilePhotoUrlFor({ id: row.associateId, ...row.associate }),
     programStartDate: ymd(row.programStartDate),
     programEndDate: ymd(row.programEndDate),
     ds2019Number: row.ds2019Number,
@@ -1010,7 +1011,7 @@ function toJ1(row: RawJ1): J1Profile {
 }
 
 const J1_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true, email: true } },
+  associate: { select: { firstName: true, lastName: true, email: true, photoS3Key: true, photoUpdatedAt: true } },
 } as const;
 
 complianceRouter.get('/j1', async (req, res, next) => {

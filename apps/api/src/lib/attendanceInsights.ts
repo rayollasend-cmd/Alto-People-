@@ -22,6 +22,7 @@ import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from './tenant.js';
 import { effectiveClientIdFilter, scopeAssociatesIncludingFormer, scopeShifts, scopeTimeEntries, scopeWhere } from './scope.js';
 import { getLaborPolicy } from './stateLaborPolicy.js';
+import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { splitByPerson } from './laborRules/hours.js';
 import { teamScope } from './delegations.js';
@@ -614,7 +615,7 @@ export async function lateNow(user: SessionUser, q: { siteId?: string }, now = n
       locationId: true,
       locationRel: { select: { name: true, timezone: true } },
       assignedAssociateId: true,
-      assignedAssociate: { select: { firstName: true, lastName: true, phone: true } },
+      assignedAssociate: { select: { firstName: true, lastName: true, phone: true, photoS3Key: true, photoUpdatedAt: true } },
     },
     orderBy: { startsAt: 'asc' },
     take: 1_000,
@@ -688,6 +689,7 @@ export async function lateNow(user: SessionUser, q: { siteId?: string }, now = n
       shiftId: s.id,
       associateId: s.assignedAssociateId!,
       name: `${a.firstName} ${a.lastName}`.trim(),
+      photoUrl: profilePhotoUrlFor({ id: s.assignedAssociateId!, photoS3Key: a.photoS3Key, photoUpdatedAt: a.photoUpdatedAt }),
       position: s.position,
       clientId: s.clientId,
       siteId: s.locationId,

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { CalendarCheck, MessageSquare, Search, Trophy, Waypoints } from '@/components/ui/icons';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -133,7 +134,7 @@ export function RelayPipeline({
                   {late > 0 && <span className="text-2xs font-medium text-alert">{late} late</span>}
                 </span>
                 <span className="mb-1.5 mt-1.5 flex h-6 items-center">
-                  <FacePile people={here.map((l) => ({ key: l.associateId, name: l.name, photoUrl: `/api/associates/${l.associateId}/photo` }))} max={3} />
+                  <FacePile people={here.map((l) => ({ key: l.associateId, name: l.name, photoUrl: personPhotoUrl({ photoUrl: l.photoUrl, associateId: l.associateId }) }))} max={3} />
                 </span>
                 <DeskChip desk={desk} className="mt-auto self-start pt-0.5" />
               </button>
@@ -201,7 +202,7 @@ export function RelayPipeline({
                     className="group flex min-w-0 flex-1 items-center gap-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
                     aria-label={`Open ${l.name}’s progress`}
                   >
-                    <Avatar src={`/api/associates/${l.associateId}/photo`} name={l.name} size="sm" />
+                    <Avatar src={personPhotoUrl({ photoUrl: l.photoUrl, associateId: l.associateId })} name={l.name} size="sm" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1.5">
                         <span className="truncate text-sm font-medium text-white group-hover:text-gold-bright">{l.name}</span>

@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtDayHeaderTz, fmtShiftRangeTz, parseYmd, ymdLocal, zonedDayKey } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -34,6 +35,8 @@ interface ScheduleShift {
   shiftId: string;
   associateId: string | null;
   name: string | null;
+  /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+  photoUrl?: string | null;
   position: string;
   startsAt: string;
   endsAt: string;
@@ -69,8 +72,6 @@ export function hourlyContract(targets: NonNullable<PortalSchedule['targets']>):
 
 /** A window's length in hours (one that ends at or before its start runs past midnight). */
 const windowHours = (w: { startMinute: number; endMinute: number }) => (((w.endMinute - w.startMinute + 1440) % 1440) || 1440) / 60;
-
-const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
 const STATE_STYLE: Record<ScheduleShift['state'], string> = {
   'on-floor': 'text-success',
@@ -374,7 +375,7 @@ export function PortalSchedule() {
                           {d.shifts.map((s) => (
                             <li key={s.shiftId} className="flex items-center gap-3 py-2">
                               {s.associateId ? (
-                                <Avatar src={photoUrl(s.associateId)} name={s.name ?? ''} email="" size="sm" />
+                                <Avatar src={personPhotoUrl({ photoUrl: s.photoUrl, associateId: s.associateId })} name={s.name ?? ''} email="" size="sm" />
                               ) : (
                                 <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-dashed border-alert/50 text-alert text-xs">
                                   ?

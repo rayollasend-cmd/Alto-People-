@@ -42,6 +42,7 @@ import { notifyClockOutEarnings } from '../lib/associateEarnings.js';
 import { supervisorRecipients } from '../lib/shiftWindows.js';
 import { openSopOnClockIn, sopBlockSummary, sopBlockingClockOut, sopOpenMessage, submitSopAtKiosk } from '../lib/storeShiftSop.js';
 import { kioskPunchSummary } from '../lib/kioskPunchSummary.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { recordAttendanceForEntry } from '../lib/attendance.js';
 import { env } from '../config/env.js';
 import { KIOSK_PIN_REGEX, ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
@@ -350,6 +351,8 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
           firstName: true,
           lastName: true,
           email: true,
+          photoS3Key: true,
+          photoUpdatedAt: true,
           faceConsentStatus: true,
           separatedAt: true,
           deactivatedAt: true,
@@ -407,6 +410,8 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
         associateId: p.associateId,
         associateName: `${p.associate.firstName} ${p.associate.lastName}`,
         associateEmail: p.associate.email,
+        // null: no photo on file — initials, no request that 404s.
+        associatePhotoUrl: profilePhotoUrlFor({ id: p.associateId, ...p.associate }),
         clientId: p.clientId ?? '',
         clientName: p.client?.name ?? '',
         locationId: loc?.id ?? null,

@@ -3483,7 +3483,7 @@ schedulingRouter.get('/unconfirmed', MANAGE, async (req, res, next) => {
         client: { select: { name: true } },
         locationRel: { select: { timezone: true } },
         assignedAssociate: {
-          select: { id: true, firstName: true, lastName: true, phone: true },
+          select: { id: true, firstName: true, lastName: true, phone: true, photoS3Key: true, photoUpdatedAt: true },
         },
       },
     });
@@ -3497,6 +3497,8 @@ schedulingRouter.get('/unconfirmed', MANAGE, async (req, res, next) => {
         timezone: r.locationRel?.timezone ?? companyWorkweek().timezone,
         associateId: r.assignedAssociate!.id,
         associateName: `${r.assignedAssociate!.firstName} ${r.assignedAssociate!.lastName}`,
+        // null: no photo on file — initials, no request that 404s.
+        associatePhotoUrl: profilePhotoUrlFor(r.assignedAssociate!),
         phone: r.assignedAssociate!.phone ?? null,
       })),
     });
@@ -4550,7 +4552,7 @@ schedulingRouter.post('/me/open-shift-claims/:id/withdraw', async (req, res, nex
 });
 
 const CLAIM_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true } },
+  associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
   shift: {
     include: {
       client: { select: { name: true } },
@@ -4584,6 +4586,7 @@ schedulingRouter.get('/open-shift-claims', MANAGE, async (req, res, next) => {
           status: c.status,
           associateId: c.associateId,
           associateName: `${c.associate.firstName} ${c.associate.lastName}`,
+          associatePhotoUrl: profilePhotoUrlFor({ id: c.associateId, ...c.associate }),
           shiftId: c.shiftId,
           shiftPosition: c.shift.position,
           shiftClientName: c.shift.client?.name ?? null,
@@ -5191,6 +5194,7 @@ async function rankAutoFillCandidates(
     return {
       associateId: a.id,
       associateName: `${a.firstName} ${a.lastName}`,
+      associatePhotoUrl: profilePhotoUrlFor(a),
       weeklyMinutesScheduled,
       weeklyMinutesActual,
       matchesAvailability,
@@ -6173,6 +6177,8 @@ schedulingRouter.get('/teams/:id', MANAGE, async (req, res, next) => {
             firstName: true,
             lastName: true,
             email: true,
+            photoS3Key: true,
+            photoUpdatedAt: true,
             user: { select: { status: true } },
             applications: {
               where: { status: 'APPROVED', locationId: team.locationId, deletedAt: null },
@@ -6197,6 +6203,7 @@ schedulingRouter.get('/teams/:id', MANAGE, async (req, res, next) => {
           firstName: m.associate.firstName,
           lastName: m.associate.lastName,
           email: m.associate.email,
+          photoUrl: profilePhotoUrlFor(m.associate),
           atLocation:
             m.associate.applications.length > 0 ||
             m.associate.assignments.length > 0,

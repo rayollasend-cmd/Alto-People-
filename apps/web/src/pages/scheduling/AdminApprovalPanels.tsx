@@ -14,6 +14,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { toast } from '@/components/ui/Toaster';
 import { fmtRelativeDayTz, fmtShiftTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 
 /**
  * The unconfirmed-shifts chase panel, shared by /approvals (the decisions
@@ -148,7 +149,7 @@ export function AdminUnconfirmedPanel({ className = 'mt-8', emptyFallback = null
                           )}
                         >
                           <Avatar
-                            src={`/api/associates/${r.associateId}/photo`}
+                            src={personPhotoUrl({ photoUrl: r.associatePhotoUrl, associateId: r.associateId })}
                             name={r.associateName}
                             email=""
                             size="md"

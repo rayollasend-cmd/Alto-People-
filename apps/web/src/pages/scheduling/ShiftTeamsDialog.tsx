@@ -28,7 +28,7 @@ import {
 import { Input } from '@/components/ui/Input';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 
 function minuteToTime(m: number | null): string {
   if (m == null) return '';
@@ -402,7 +402,7 @@ export function ShiftTeamsDialog({
                           className="flex items-center gap-2 px-3 py-2 text-sm"
                         >
                           <Avatar
-                            src={associatePhotoUrl(m.associateId)}
+                            src={personPhotoUrl({ photoUrl: m.photoUrl, associateId: m.associateId })}
                             name={`${m.firstName} ${m.lastName}`}
                             email={m.email}
                             size="xs"

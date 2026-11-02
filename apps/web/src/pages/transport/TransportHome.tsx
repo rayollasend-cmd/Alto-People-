@@ -90,7 +90,7 @@ import { DispatchMap } from '@/components/transport/DispatchMap';
 import { RiderDrawer } from '@/components/transport/RiderDrawer';
 import { VanDayTimeline, conflictWords, firstFreeVan, runConflicts, timelineBars } from '@/components/transport/VanDayTimeline';
 import { Avatar } from '@/components/ui/Avatar';
-import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -1072,7 +1072,7 @@ function TodayBoard({
                               {manage && (
                                 <PickBox label={`Pick ${r.rider.name}`} checked={picked.has(r.id)} onChange={(on) => toggle([r.id], on)} />
                               )}
-                              <Avatar src={associatePhotoUrl(r.rider.associateId)} name={r.rider.name} size="sm" />
+                              <Avatar src={personPhotoUrl({ photoUrl: r.rider.photoUrl, associateId: r.rider.associateId })} name={r.rider.name} size="sm" />
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-x-2 text-sm text-ink">
                                   <RiderName ride={r} onRider={onRider} />
@@ -1430,7 +1430,7 @@ function RunPanel({
                 ) : (
                   <span className="w-4 shrink-0 text-right text-xs tabular-nums text-ink-muted">{i + 1}</span>
                 )}
-                <Avatar src={associatePhotoUrl(r.rider.associateId)} name={r.rider.name} size="sm" />
+                <Avatar src={personPhotoUrl({ photoUrl: r.rider.photoUrl, associateId: r.rider.associateId })} name={r.rider.name} size="sm" />
                 <div className="min-w-0 flex-1">
                   <div className={cn('flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm', didntRun ? 'text-ink-muted' : 'text-ink')}>
                     <RiderName ride={r} onRider={onRider} />

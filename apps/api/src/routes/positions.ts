@@ -21,6 +21,7 @@ import { deciderFrom } from './approvalRequests.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { scopePositions } from '../lib/scope.js';
 import { dateColumnKey } from '../lib/timezone.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 const POSITIONS_CAP = 1000;
 
@@ -58,7 +59,7 @@ function shape(
       department: { select: { name: true } };
       costCenter: { select: { code: true } };
       manager: { select: { firstName: true; lastName: true } };
-      filledBy: { select: { firstName: true; lastName: true } };
+      filledBy: { select: { firstName: true; lastName: true; photoS3Key: true; photoUpdatedAt: true } };
     };
   }>,
 ): Position {
@@ -84,6 +85,11 @@ function shape(
     filledByName: row.filledBy
       ? `${row.filledBy.firstName} ${row.filledBy.lastName}`.trim()
       : null,
+    // null: no photo on file — initials, no request that 404s.
+    filledByPhotoUrl:
+      row.filledBy && row.filledByAssociateId
+        ? profilePhotoUrlFor({ id: row.filledByAssociateId, ...row.filledBy })
+        : null,
     filledAt: row.filledAt?.toISOString() ?? null,
     targetStartDate: row.targetStartDate ? dateColumnKey(row.targetStartDate) : null,
     minHourlyRate: row.minHourlyRate?.toString() ?? null,
@@ -119,7 +125,7 @@ const POS_INCLUDE = {
   department: { select: { name: true } },
   costCenter: { select: { code: true } },
   manager: { select: { firstName: true, lastName: true } },
-  filledBy: { select: { firstName: true, lastName: true } },
+  filledBy: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
 } as const;
 
 positionsRouter.get('/', VIEW, async (req: Request, res: Response) => {

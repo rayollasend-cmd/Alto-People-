@@ -18,6 +18,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { notifyAssociate, notifyUser } from '../lib/notify.js';
 import { fmtDayRange } from '../lib/humanDates.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 export const performanceRouter = Router();
 
@@ -25,7 +26,7 @@ const MANAGE = requireCapability('manage:performance');
 
 type RawReview = Prisma.PerformanceReviewGetPayload<{
   include: {
-    associate: { select: { firstName: true; lastName: true } };
+    associate: { select: { firstName: true; lastName: true; photoS3Key: true; photoUpdatedAt: true } };
     reviewer: { select: { email: true } };
   };
 }>;
@@ -40,6 +41,7 @@ function toReview(row: RawReview): PerformanceReview {
     id: row.id,
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
+    associatePhotoUrl: profilePhotoUrlFor({ id: row.associateId, ...row.associate }),
     reviewerUserId: row.reviewerUserId,
     reviewerEmail: row.reviewer?.email ?? null,
     sourcePipId: row.sourcePipId,
@@ -58,7 +60,7 @@ function toReview(row: RawReview): PerformanceReview {
 }
 
 const REVIEW_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true } },
+  associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
   reviewer: { select: { email: true } },
 } as const;
 

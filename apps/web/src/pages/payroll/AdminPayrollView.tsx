@@ -107,7 +107,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { fmtCount, fmtDate, fmtDateOnlyRange, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
 import { StatusBadge } from '@/lib/status';
 import { useTerm } from '@/lib/auth';
@@ -2762,7 +2762,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
           ) : (
             <ChevronRight className="h-4 w-4 text-ink-muted shrink-0" />
           )}
-          <Avatar src={associatePhotoUrl(item.associateId)} name={item.associateName ?? '—'} size="sm" />
+          <Avatar src={personPhotoUrl({ photoUrl: item.associatePhotoUrl, associateId: item.associateId })} name={item.associateName ?? '—'} size="sm" />
           <div className="min-w-0">
             <div className="text-sm text-ink truncate">
               {item.associateName ?? '—'}

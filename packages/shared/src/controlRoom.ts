@@ -12,6 +12,8 @@ export interface ControlRoomPerson {
   associateId: string;
   workerId: string | null;
   name: string;
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  photoUrl?: string | null;
   position: string;
   shiftId: string;
   shiftStart: string;

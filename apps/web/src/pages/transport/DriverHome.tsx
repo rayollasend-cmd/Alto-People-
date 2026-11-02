@@ -7,6 +7,7 @@ import { ShiftMapDrawer, type TripKey } from './ShiftMap';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { hapticConfirm } from '@/lib/haptics';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { fmtMonthShortYear, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
@@ -352,7 +353,7 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
                     aria-label={`${t('drive.riderProfile')}: ${r.rider.name}`}
                     className="grid shrink-0 place-items-center rounded-full coarse:h-11 coarse:w-11"
                   >
-                    <Avatar src={`/api/associates/${r.rider.associateId}/photo`} name={r.rider.name} email="" size="md" />
+                    <Avatar src={personPhotoUrl({ photoUrl: r.rider.photoUrl, associateId: r.rider.associateId })} name={r.rider.name} email="" size="md" />
                   </button>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
@@ -593,7 +594,7 @@ function RiderDialog({ associateId, onClose }: { associateId: string; onClose: (
         ) : (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
-              <Avatar src={`/api/associates/${r.associateId}/photo`} name={r.name} email="" size="xl" />
+              <Avatar src={personPhotoUrl({ photoUrl: r.photoUrl, associateId: r.associateId })} name={r.name} email="" size="xl" />
               <div className="min-w-0">
                 <div className="text-lg font-semibold text-white">{r.name}</div>
                 <div className="text-xs text-silver">

@@ -256,7 +256,7 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
     where,
     include: {
       associate: {
-        select: { id: true, firstName: true, lastName: true, email: true },
+        select: { id: true, firstName: true, lastName: true, email: true, photoS3Key: true, photoUpdatedAt: true },
       },
       assignedTo: { select: { email: true } },
       filedBy: { select: { email: true } },
@@ -280,6 +280,8 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
       associateId: c.associateId,
       associateName: `${c.associate.firstName} ${c.associate.lastName}`,
       associateEmail: c.associate.email,
+      // null: no photo on file — initials, no request that 404s.
+      associatePhotoUrl: profilePhotoUrlFor(c.associate),
       category: c.category,
       subject: c.subject,
       priority: c.priority,

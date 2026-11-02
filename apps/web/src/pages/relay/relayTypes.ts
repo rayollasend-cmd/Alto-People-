@@ -18,6 +18,8 @@ export interface LaneStage {
 export interface Lane {
   associateId: string;
   name: string;
+  /** The versioned headshot URL, null when none is on file (most new hires). Absent from an older server. */
+  photoUrl?: string | null;
   clientName: string | null;
   approvedAt: string;
   stages: LaneStage[];

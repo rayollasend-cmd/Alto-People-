@@ -3,7 +3,7 @@ import { MessageSquare, Phone } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { getRiderProfile, remindUnsignedRiders, type Ride, type RideStatus } from '@/lib/transportApi';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -56,7 +56,7 @@ export function RiderDrawer({ associateId, manage, onClose, onIssues }: { associ
         ) : (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
-              <Avatar src={associatePhotoUrl(r.associateId)} name={r.name} size="md" />
+              <Avatar src={personPhotoUrl({ photoUrl: r.photoUrl, associateId: r.associateId })} name={r.name} size="md" />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   {r.authorization ? (

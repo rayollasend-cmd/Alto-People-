@@ -1310,7 +1310,7 @@ timeRouter.get('/admin/clock-in-requests', MANAGE, async (req, res, next) => {
       orderBy: { requestedAt: 'desc' },
       take: 200,
       include: {
-        associate: { select: { firstName: true, lastName: true } },
+        associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
         decidedBy: { select: { email: true } },
       },
     });
@@ -1336,6 +1336,7 @@ timeRouter.get('/admin/clock-in-requests', MANAGE, async (req, res, next) => {
           id: r.id,
           associateId: r.associateId,
           associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+          associatePhotoUrl: profilePhotoUrlFor({ id: r.associateId, ...r.associate }),
           // A client-less request (a direct employer): the contract still says uuid, so the nil uuid stands in until it is widened.
           clientId: r.clientId ?? '00000000-0000-0000-0000-000000000000',
           clientName: r.clientId ? (clientName.get(r.clientId) ?? null) : null,

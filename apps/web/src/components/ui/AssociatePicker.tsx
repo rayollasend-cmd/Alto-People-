@@ -6,7 +6,7 @@ import { useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { cn } from '@/lib/cn';
-import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from './Avatar';
 import { Input } from './Input';
 import '@/lib/i18n/en/picker';
@@ -14,6 +14,12 @@ import '@/lib/i18n/en/picker';
 export interface PickedAssociate {
   id: string;
   name: string;
+  /**
+   * A value set from outside may carry the person's photo URL from its own
+   * payload (null: none on file — initials, no request). Absent, the chip
+   * falls back to the bare path.
+   */
+  photoUrl?: string | null;
 }
 
 /** A search hit — the pick plus the directory's cache-busted photo, which
@@ -53,7 +59,7 @@ export function AssociatePicker({
   const [term, setTerm] = useState('');
   const [open, setOpen] = useState(false);
   // The photo of the row just picked, so the chip shows the same
-  // cache-busted face; a value set from outside falls back to the id.
+  // cache-busted face; a value set from outside uses its own photoUrl.
   const [pickedPhoto, setPickedPhoto] = useState<{ id: string; url: string | null } | null>(null);
   const debouncedTerm = useDebouncedValue(term.trim(), 250);
   const canSearch = !value && debouncedTerm.length >= 2;
@@ -102,11 +108,10 @@ export function AssociatePicker({
       >
         <span className="flex min-w-0 items-center gap-2 text-white">
           <Avatar
-            src={
-              pickedPhoto?.id === value.id
-                ? personPhotoUrl({ photoUrl: pickedPhoto.url, associateId: value.id })
-                : associatePhotoUrl(value.id)
-            }
+            src={personPhotoUrl({
+              photoUrl: pickedPhoto?.id === value.id ? pickedPhoto.url : value.photoUrl,
+              associateId: value.id,
+            })}
             name={value.name}
             size="xs"
             className="-my-1"

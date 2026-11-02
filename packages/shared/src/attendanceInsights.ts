@@ -186,6 +186,8 @@ export const LateNowPersonSchema = /* @__PURE__ */ (() => z.object({
   shiftId: z.string().uuid(),
   associateId: z.string().uuid(),
   name: z.string(),
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  photoUrl: z.string().nullable().optional(),
   position: z.string(),
   /** The shift's client — /floor/crew-text texts one client's shifts at a time. */
   clientId: z.string().uuid().nullable(),

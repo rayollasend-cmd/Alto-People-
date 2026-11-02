@@ -13,6 +13,7 @@ import { HttpError } from '../middleware/error.js';
 import { listAgents, listApprovals } from './agents.js';
 import { listRobots, listZones } from './robots.js';
 import { listTasks, policyFor } from './tasks/engine.js';
+import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { crewLeadsOnFloor, spanOfControl } from './tasks/spanOfControl.js';
 import { moduleOn } from './tenantProfile.js';
 import { companyWorkweek } from './timeAnomalies.js';
@@ -92,7 +93,7 @@ export async function controlRoom(db: Db = defaultPrisma, locationId: string, te
         assignedAssociateId: true,
         workerId: true,
         worker: { select: { id: true, type: true, name: true } },
-        assignedAssociate: { select: { id: true, firstName: true, lastName: true } },
+        assignedAssociate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
       },
       take: 500,
     }),
@@ -131,6 +132,7 @@ export async function controlRoom(db: Db = defaultPrisma, locationId: string, te
       associateId: id,
       workerId: workerByAssociate.get(id) ?? null,
       name: s.assignedAssociate ? `${s.assignedAssociate.firstName} ${s.assignedAssociate.lastName}`.trim() : 'Associate',
+      photoUrl: s.assignedAssociate ? profilePhotoUrlFor(s.assignedAssociate) : null,
       position: s.position,
       shiftId: s.id,
       shiftStart: s.startsAt.toISOString(),

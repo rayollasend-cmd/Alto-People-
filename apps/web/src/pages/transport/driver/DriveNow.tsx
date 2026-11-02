@@ -21,6 +21,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { useConfirm } from '@/lib/confirm';
 import { fmtMoney, fmtTimeTz } from '@/lib/format';
 import { tapArrived, tapBoard, tapBoardAll, tapComplete, tapNoShow, tapUndo, pendingFor } from '@/lib/offlineTransport';
@@ -530,7 +531,7 @@ function RiderRow({
           aria-label={`${t('drive.riderProfile')}: ${ride.rider.name}`}
           className="grid h-11 w-11 shrink-0 place-items-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
-          <Avatar src={`/api/associates/${ride.rider.associateId}/photo`} name={ride.rider.name} email="" size="md" />
+          <Avatar src={personPhotoUrl({ photoUrl: ride.rider.photoUrl, associateId: ride.rider.associateId })} name={ride.rider.name} email="" size="md" />
         </button>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

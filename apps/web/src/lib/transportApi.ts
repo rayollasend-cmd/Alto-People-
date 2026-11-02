@@ -76,7 +76,8 @@ export interface Ride {
   /** The home end's coordinates, when known. */
   point: GeoPoint | null;
   store: { id: string; name: string; timezone: string; clientId: string | null; clientName: string };
-  rider: { associateId: string; name: string; phone: string | null };
+  /** photoUrl: the versioned headshot, null when none is on file. Absent from an older server. */
+  rider: { associateId: string; name: string; phone: string | null; photoUrl?: string | null };
   pickupOrder: number | null;
   pickupAt: string | null;
   run: {
@@ -934,6 +935,8 @@ export interface RiderProfile {
   associateId: string;
   name: string;
   phone: string | null;
+  /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+  photoUrl?: string | null;
   since: string;
   rides: number;
   noShows: number;
@@ -1048,6 +1051,8 @@ export interface VanArrival {
   rideId: string;
   associateId: string;
   name: string;
+  /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+  photoUrl?: string | null;
   store: { id: string; name: string };
   arriveBy: string;
   /** When the van actually gets them here (a van on the road). */

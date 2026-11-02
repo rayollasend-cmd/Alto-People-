@@ -23,7 +23,7 @@ import { useConfirm } from '@/lib/confirm';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { useUrlParam, useUrlWriter } from '@/lib/useUrlState';
 import { fmtDate } from '@/lib/format';
-import { associatePhotoUrl, userPhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { listAdminUsers } from '@/lib/usersAdminApi';
 import { getAgentScorecard } from '@/lib/agentsApi';
 import { listClientLocations, listClients } from '@/lib/clientsApi';
@@ -111,16 +111,6 @@ function otherStatusesHint(counts: Record<WorkerStatus, number> | undefined): st
   if (!counts) return '';
   const parts = STATUSES.filter((s) => s !== 'ACTIVE' && counts[s] > 0).map((s) => `${counts[s]} ${WORKER_STATUS_LABELS[s].toLowerCase()}`);
   return parts.length ? parts.join(' · ') : 'All active';
-}
-
-/**
- * The photo the API says is on file (null: none — initials, no request for a
- * photo that isn't there); an older response without the field falls back
- * to guessing the URL.
- */
-function photoOf(fromApi: string | null | undefined, guess: () => string | undefined): string | undefined {
-  if (fromApi === undefined) return guess();
-  return fromApi ?? undefined;
 }
 
 /** A person's face and name, opening their record when they have one. */
@@ -315,10 +305,10 @@ export function WorkerTypesAdmin() {
         width: '13rem',
         cell: (w) => {
           if (w.type === 'PERSON') {
-            return w.manager ? <Person name={w.manager.name} photo={photoOf(w.manager.photoUrl, () => associatePhotoUrl(w.manager!.associateId))} to={`/people/${w.manager.associateId}`} /> : <span className="text-silver/60">—</span>;
+            return w.manager ? <Person name={w.manager.name} photo={personPhotoUrl({ photoUrl: w.manager.photoUrl, associateId: w.manager.associateId })} to={`/people/${w.manager.associateId}`} /> : <span className="text-silver/60">—</span>;
           }
           return w.owner ? (
-            <Person name={w.owner.name || w.owner.email} email={w.owner.email} photo={photoOf(w.owner.photoUrl, () => userPhotoUrl(w.owner!.id))} to={w.owner.associateId ? `/people/${w.owner.associateId}` : null} />
+            <Person name={w.owner.name || w.owner.email} email={w.owner.email} photo={personPhotoUrl({ photoUrl: w.owner.photoUrl, userId: w.owner.id })} to={w.owner.associateId ? `/people/${w.owner.associateId}` : null} />
           ) : (
             <Badge variant="destructive" size="sm">No owner</Badge>
           );

@@ -4,6 +4,7 @@ import { HttpError } from '../middleware/error.js';
 import { associateWeekLink } from './appLinks.js';
 import { shiftSwapManagerTemplate } from './emailTemplates.js';
 import { notifyClientSupervisors, notifyManager } from './notify.js';
+import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { formatShiftLine, notifyShift } from './notifyShift.js';
 import { ACTIVE_ASSOCIATE_FILTER } from './schedulablePool.js';
 import { benchFor } from './scope.js';
@@ -37,8 +38,8 @@ export type RawSwap = Prisma.ShiftSwapRequestGetPayload<{
         locationRel: { select: { timezone: true } };
       };
     };
-    requester: { select: { firstName: true; lastName: true } };
-    counterparty: { select: { firstName: true; lastName: true } };
+    requester: { select: { firstName: true; lastName: true; photoS3Key: true; photoUpdatedAt: true } };
+    counterparty: { select: { firstName: true; lastName: true; photoS3Key: true; photoUpdatedAt: true } };
   };
 }>;
 
@@ -55,8 +56,8 @@ export const SWAP_INCLUDE = {
       locationRel: { select: { timezone: true } },
     },
   },
-  requester: { select: { firstName: true, lastName: true } },
-  counterparty: { select: { firstName: true, lastName: true } },
+  requester: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
+  counterparty: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
 } as const;
 
 export function toSwap(row: RawSwap): ShiftSwapRequestDTO {
@@ -80,8 +81,11 @@ export function toSwap(row: RawSwap): ShiftSwapRequestDTO {
       : null,
     requesterAssociateId: row.requesterAssociateId,
     requesterName: `${row.requester.firstName} ${row.requester.lastName}`,
+    // Faces only when on file (null: initials, no request that 404s).
+    requesterPhotoUrl: profilePhotoUrlFor({ id: row.requesterAssociateId, ...row.requester }),
     counterpartyAssociateId: row.counterpartyAssociateId,
     counterpartyName: `${row.counterparty.firstName} ${row.counterparty.lastName}`,
+    counterpartyPhotoUrl: profilePhotoUrlFor({ id: row.counterpartyAssociateId, ...row.counterparty }),
     status: row.status,
     note: row.note,
     decidedAt: row.decidedAt ? row.decidedAt.toISOString() : null,

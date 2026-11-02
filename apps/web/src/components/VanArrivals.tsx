@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import '@/lib/i18n/en/floorUi';
 
 /**
@@ -68,7 +68,7 @@ function ArrivalRow({ a, showStore }: { a: VanArrival; showStore: boolean }) {
           <span className="block text-2xs text-silver">{fmtRelativeDayTz(a.arriveBy)}</span>
         )}
       </span>
-      <Avatar src={associatePhotoUrl(a.associateId)} name={a.name} size="sm" />
+      <Avatar src={personPhotoUrl({ photoUrl: a.photoUrl, associateId: a.associateId })} name={a.name} size="sm" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm text-white">{a.name}</div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">

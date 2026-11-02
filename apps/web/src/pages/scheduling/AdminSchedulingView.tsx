@@ -190,7 +190,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { StatTile } from '@/pages/portal/portalCharts';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { useClientBounded } from '@/lib/useClientBounded';
-import { associateFace, associatePhotoUrl, shiftHolderFace } from '@/lib/photoUrl';
+import { associateFace, personPhotoUrl, shiftHolderFace } from '@/lib/photoUrl';
 import '@/lib/i18n/en/schedHome';
 
 // Stable empties so derived lists keep their identity across renders
@@ -5356,7 +5356,7 @@ function AutoFillDialog({
                 key={c.associateId}
                 className="flex items-center justify-between gap-3 p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md"
               >
-                <Avatar src={associatePhotoUrl(c.associateId)} name={c.associateName} size="sm" />
+                <Avatar src={personPhotoUrl({ photoUrl: c.associatePhotoUrl, associateId: c.associateId })} name={c.associateName} size="sm" />
                 <div className="min-w-0 flex-1">
                   <div className="text-white text-sm font-medium">
                     <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>

@@ -24,7 +24,7 @@ import {
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { fmtPunchDateTime } from '@/pages/time/punchFormat';
 import { downloadCsv } from '@/lib/csv';
-import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { statusTone } from '@/lib/status';
 import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import {
@@ -425,7 +425,7 @@ function InboxTab() {
           className: 'font-medium',
           cell: (item) => (
             <div className="flex items-center gap-2.5">
-              <Avatar src={associatePhotoUrl(item.associateId)} name={item.associateName} size="sm" />
+              <Avatar src={personPhotoUrl({ photoUrl: item.associatePhotoUrl, associateId: item.associateId })} name={item.associateName} size="sm" />
               <div className="truncate">{item.associateName}</div>
             </div>
           ),
@@ -887,7 +887,7 @@ function TimesheetsTab() {
             className: 'font-medium',
             cell: (e) => (
               <div className="flex items-center gap-2.5">
-                <Avatar src={associatePhotoUrl(e.associateId)} name={e.associateName} size="sm" />
+                <Avatar src={personPhotoUrl({ photoUrl: e.associatePhotoUrl, associateId: e.associateId })} name={e.associateName} size="sm" />
                 <div className="truncate">{e.associateName}</div>
               </div>
             ),
@@ -1158,7 +1158,7 @@ function TimeOffTab() {
             className: 'font-medium',
             cell: (r) => (
               <div className="flex items-center gap-2.5">
-                <Avatar src={associatePhotoUrl(r.associateId)} name={r.associateName} size="sm" />
+                <Avatar src={personPhotoUrl({ photoUrl: r.associatePhotoUrl, associateId: r.associateId })} name={r.associateName} size="sm" />
                 <div className="truncate">{r.associateName}</div>
               </div>
             ),

@@ -33,6 +33,8 @@ export interface KioskPin {
   associateId: string;
   associateName: string;
   associateEmail: string;
+  /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+  associatePhotoUrl?: string | null;
   clientId: string;
   clientName: string;
   /** Associate's current worksite (open assignment's Location), or null. */

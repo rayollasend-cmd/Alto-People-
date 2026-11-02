@@ -24,7 +24,7 @@ import { uploadAdminDocument } from '@/lib/documentsApi';
 import { DocumentThumbnails } from '@/components/DocumentViewer';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';
@@ -526,7 +526,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
               className: 'font-medium',
               cell: (x) => (
                 <div className="flex items-center gap-2.5">
-                  <Avatar src={associatePhotoUrl(x.associateId)} name={x.associateName} size="sm" />
+                  <Avatar src={personPhotoUrl({ photoUrl: x.associatePhotoUrl, associateId: x.associateId })} name={x.associateName} size="sm" />
                   <div className="min-w-0">
                     <div className="truncate">{x.associateName}</div>
                     {x.clientName && <div className="text-2xs text-silver/60 truncate">{x.clientName}</div>}
@@ -663,7 +663,7 @@ function DrugTestDetailPanel({
     <>
       <DrawerHeader>
         <div className="flex items-center gap-3">
-          <Avatar src={associatePhotoUrl(test.associateId)} name={test.associateName} size="md" />
+          <Avatar src={personPhotoUrl({ photoUrl: test.associatePhotoUrl, associateId: test.associateId })} name={test.associateName} size="md" />
           <div className="min-w-0">
             <DrawerTitle className="truncate">{test.associateName}</DrawerTitle>
             <DrawerDescription>{test.provider}</DrawerDescription>

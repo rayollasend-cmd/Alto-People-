@@ -54,6 +54,8 @@ export interface QueueCaseRow {
   associateId: string;
   associateName: string;
   associateEmail: string;
+  /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+  associatePhotoUrl?: string | null;
   category: CaseCategory;
   subject: string;
   priority: CasePriority;

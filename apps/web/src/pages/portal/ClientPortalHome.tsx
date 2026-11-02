@@ -39,7 +39,7 @@ import {
 import { coverageByHour } from './coverage';
 import { HoursSignOffDialog, useHoursToSign } from './HoursSignOff';
 import { cn } from '@/lib/cn';
-import { userPhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl, userPhotoUrl } from '@/lib/photoUrl';
 import { enterStagger } from '@/lib/motion';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
@@ -164,6 +164,8 @@ interface PortalOverview {
     onFloor: Array<{
       associateId: string;
       name: string;
+      /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+      photoUrl?: string | null;
       position: string | null;
       isLead: boolean;
       clockInAt: string;
@@ -325,8 +327,6 @@ function ReviewedMark({
     </Button>
   );
 }
-
-const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
 /** Build the API query string for the caller's scope: admins pass the
  *  preview client (+ store); a client-wide portal account may drill into
@@ -791,7 +791,7 @@ export function ClientPortalHome() {
                   {onFloor.slice(0, 8).map((p) => (
                     <Avatar
                       key={p.associateId}
-                      src={photoUrl(p.associateId)}
+                      src={personPhotoUrl({ photoUrl: p.photoUrl, associateId: p.associateId })}
                       name={p.name}
                       email=""
                       size="md"

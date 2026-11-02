@@ -34,6 +34,7 @@ import {
   can,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { HttpError } from '../middleware/error.js';
 import { deductionRows, line as deductionLine } from '../lib/deductionLines.js';
 import { assertRunReviewed, buildPayrollReview, currentFingerprint, notifyReviewers, reviewRequired, reviewState, runsAwaitingReview, signPayrollReview, SIGNER_SELECT } from '../lib/payrollReview.js';
@@ -143,7 +144,7 @@ type RawRun = Prisma.PayrollRunGetPayload<{
     approvedBy: { select: { email: true } };
     items: {
       include: {
-        associate: { select: { firstName: true; lastName: true } };
+        associate: { select: { firstName: true; lastName: true; photoS3Key: true; photoUpdatedAt: true } };
         earnings: true;
       };
     };
@@ -152,7 +153,7 @@ type RawRun = Prisma.PayrollRunGetPayload<{
 
 type RawItem = Prisma.PayrollItemGetPayload<{
   include: {
-    associate: { select: { firstName: true; lastName: true } };
+    associate: { select: { firstName: true; lastName: true; photoS3Key: true; photoUpdatedAt: true } };
     earnings: true;
   };
 }>;
@@ -211,6 +212,8 @@ function toItem(i: RawItem & { deductions?: RawDeduction[]; taxLines?: Array<{ c
     payrollRunId: i.payrollRunId,
     associateId: i.associateId,
     associateName: i.associate ? `${i.associate.firstName} ${i.associate.lastName}` : null,
+    // null: no photo on file — initials, no request that 404s.
+    associatePhotoUrl: i.associate ? profilePhotoUrlFor({ id: i.associateId, ...i.associate }) : null,
     hoursWorked: Number(i.hoursWorked),
     hourlyRate: Number(i.hourlyRate),
     grossPay: Number(i.grossPay),
@@ -321,7 +324,7 @@ const RUN_INCLUDE = {
   approvedBy: { select: { email: true } },
   items: {
     include: {
-      associate: { select: { firstName: true, lastName: true } },
+      associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
       earnings: true,
       deductions: { select: { code: true, category: true, label: true, sourceId: true, employeeAmount: true, employerAmount: true } },
       taxLines: { where: { kind: 'STATE_PROGRAM', employer: false }, select: { code: true, label: true, amount: true } },
@@ -4452,7 +4455,7 @@ payrollRouter.get('/me/items', async (req, res, next) => {
       orderBy: { createdAt: 'desc' },
       take: 50,
       include: {
-        associate: { select: { firstName: true, lastName: true } },
+        associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
         earnings: true,
         deductions: { select: { code: true, category: true, label: true, sourceId: true, employeeAmount: true, employerAmount: true } },
         taxLines: { where: { kind: 'STATE_PROGRAM', employer: false }, select: { code: true, label: true, amount: true } },

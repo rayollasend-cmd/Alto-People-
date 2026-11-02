@@ -9,6 +9,7 @@ import { raiseFloorFlag, textCrew } from '@/lib/floorApi';
 import { fmtTimeTz } from '@/lib/format';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { toast } from '@/components/ui/Toaster';
 import { CrewTextDialog } from '@/components/floor/CrewTextDialog';
 import { Avatar } from '@/components/ui/Avatar';
@@ -28,8 +29,6 @@ import '@/lib/i18n/en/notIn';
  * approved time off, the way to cover the shift. A watch-only lead can flag
  * a no-show to the supervisor. Refreshes every minute.
  */
-
-const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
 export const lateNowKey = (siteId?: string) => ['attendance', 'late-now', siteId ?? 'all'] as const;
 
@@ -170,7 +169,7 @@ export function NotInYetCard({
         <ul className="divide-y divide-line" aria-label={t('notIn.listAria')}>
           {people.map((p) => (
             <li key={p.shiftId} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
-              <Avatar src={photoUrl(p.associateId)} name={p.name} email="" size="sm" />
+              <Avatar src={personPhotoUrl({ photoUrl: p.photoUrl, associateId: p.associateId })} name={p.name} email="" size="sm" />
               <div className="min-w-0 flex-1">
                 <Link to={`/people/${p.associateId}`} className="block truncate text-sm font-medium text-ink hover:text-gold hover:underline">
                   {p.name}

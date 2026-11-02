@@ -69,6 +69,8 @@ export interface InboxItem {
   kind: 'TIMESHEET' | 'TIME_OFF' | 'REIMBURSEMENT' | 'GOAL_AT_RISK';
   associateId: string;
   associateName: string;
+  /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+  associatePhotoUrl?: string | null;
   summary: string;
   link: string;
   pendingSince: string;
@@ -86,6 +88,8 @@ export interface TeamTimeEntry {
   id: string;
   associateId: string;
   associateName: string;
+  /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+  associatePhotoUrl?: string | null;
   clientId: string | null;
   clientName: string | null;
   clockInAt: string;
@@ -104,6 +108,8 @@ export interface TeamTimeOffRequest {
   /** Null when the associate record was removed — the API returns null
    *  here and this was declared non-null, so string methods on it threw. */
   associateName: string | null;
+  /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+  associatePhotoUrl?: string | null;
   category: string;
   startDate: string;
   endDate: string;

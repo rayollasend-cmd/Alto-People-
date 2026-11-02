@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api';
 import { fmtDate, fmtShiftTz, parseYmd } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import {
   cancelShiftCover,
   createShiftCover,
@@ -46,11 +47,10 @@ import '@/lib/i18n/en/portal';
  */
 
 // Supervisors are staff logins: the API sends their associate headshot, else
-// their account photo. The bare associate path is the fallback for an API
-// that predates the field (photoUrl undefined) — an API `null` means "no
-// photo on file", so no guessed URL that 404s (F1 SH-1's rule).
+// their account photo. An API `null` means "no photo on file", so no guessed
+// URL that 404s (F1 SH-1's rule) — personPhotoUrl holds that contract.
 const photoUrl = (p: { photoUrl?: string | null; associateId: string | null }) =>
-  p.photoUrl !== undefined ? (p.photoUrl ?? undefined) : p.associateId ? `/api/associates/${p.associateId}/photo` : undefined;
+  personPhotoUrl({ photoUrl: p.photoUrl, associateId: p.associateId });
 
 export function useFloorTeam() {
   return useQuery({

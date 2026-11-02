@@ -14,6 +14,7 @@ import {
   IllegalStateError,
 } from '../lib/timeOffRequests.js';
 import { recordTimeEvent } from '../lib/audit.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { accrueSickLeaveForEntry } from '../lib/timeOffAccrual.js';
 import { accruePolicyLeaveForEntry } from '../lib/timeOffPolicy.js';
 import { notifyAssociate } from '../lib/notify.js';
@@ -391,6 +392,8 @@ interface InboxItem {
   kind: 'TIMESHEET' | 'TIME_OFF' | 'REIMBURSEMENT' | 'GOAL_AT_RISK';
   associateId: string;
   associateName: string;
+  /** Their headshot (?v= cache-buster); null when none is on file — no request, initials. */
+  associatePhotoUrl: string | null;
   summary: string;
   /** Path the UI should navigate to when the manager clicks "Open". */
   link: string;
@@ -432,7 +435,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
           clockInAt: true,
           clockOutAt: true,
           anomalies: true,
-          associate: { select: { firstName: true, lastName: true } },
+          associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
         },
       }),
       prisma.timeOffRequest.findMany({
@@ -446,7 +449,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
           startDate: true,
           endDate: true,
           createdAt: true,
-          associate: { select: { firstName: true, lastName: true } },
+          associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
         },
       }),
       prisma.reimbursement.findMany({
@@ -461,7 +464,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
           currency: true,
           submittedAt: true,
           createdAt: true,
-          associate: { select: { firstName: true, lastName: true } },
+          associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
         },
       }),
       prisma.goal.findMany({
@@ -479,7 +482,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
           periodEnd: true,
           updatedAt: true,
           progressPct: true,
-          associate: { select: { firstName: true, lastName: true } },
+          associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
         },
       }),
     ],
@@ -503,6 +506,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
       kind: 'TIMESHEET',
       associateId: t.associateId,
       associateName: `${t.associate.firstName} ${t.associate.lastName}`,
+      associatePhotoUrl: profilePhotoUrlFor({ id: t.associateId, ...t.associate }),
       summary: `Shift on ${fmtDayInZone(t.clockInAt, undefined, { weekday: true })}${anomalyNote}`,
       link: '/team?tab=timesheets',
       pendingSince: pending.toISOString(),
@@ -516,6 +520,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
       kind: 'TIME_OFF',
       associateId: r.associateId,
       associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+      associatePhotoUrl: profilePhotoUrlFor({ id: r.associateId, ...r.associate }),
       summary: `${timeOffWords(r.category, true)} · ${fmtDayRange(r.startDate, r.endDate)}`,
       link: '/team?tab=timeoff',
       pendingSince: r.createdAt.toISOString(),
@@ -529,6 +534,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
       kind: 'REIMBURSEMENT',
       associateId: r.associateId,
       associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+      associatePhotoUrl: profilePhotoUrlFor({ id: r.associateId, ...r.associate }),
       summary: `${r.title} · ${r.currency} ${r.totalAmount.toString()}`,
       link: `/reimbursements?id=${r.id}`,
       pendingSince: since.toISOString(),
@@ -543,6 +549,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
       kind: 'GOAL_AT_RISK',
       associateId: g.associateId,
       associateName: `${g.associate.firstName} ${g.associate.lastName}`,
+      associatePhotoUrl: profilePhotoUrlFor({ id: g.associateId, ...g.associate }),
       summary: `${g.title} (${g.progressPct}% · due ${fmtDay(g.periodEnd)})`,
       link: `/performance?goalId=${g.id}`,
       pendingSince: g.updatedAt.toISOString(),
@@ -594,7 +601,7 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
     orderBy: { clockInAt: 'desc' },
     take: 200,
     include: {
-      associate: { select: { firstName: true, lastName: true } },
+      associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
       location: { select: { timezone: true } },
     },
   });
@@ -615,6 +622,7 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
       id: r.id,
       associateId: r.associateId,
       associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+      associatePhotoUrl: profilePhotoUrlFor({ id: r.associateId, ...r.associate }),
       clientId: r.clientId,
       clientName: r.clientId ? clientNameById.get(r.clientId) ?? null : null,
       clockInAt: r.clockInAt.toISOString(),
@@ -859,7 +867,7 @@ teamRouter.get('/timeoff', VIEW, async (req: Request, res: Response) => {
     orderBy: { createdAt: 'desc' },
     take: 200,
     include: {
-      associate: { select: { firstName: true, lastName: true } },
+      associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
       reviewer: { select: { email: true } },
     },
   });
@@ -870,6 +878,7 @@ teamRouter.get('/timeoff', VIEW, async (req: Request, res: Response) => {
       associateName: r.associate
         ? `${r.associate.firstName} ${r.associate.lastName}`
         : null,
+      associatePhotoUrl: r.associate ? profilePhotoUrlFor({ id: r.associateId, ...r.associate }) : null,
       category: r.category,
       startDate: dateColumnKey(r.startDate),
       endDate: dateColumnKey(r.endDate),

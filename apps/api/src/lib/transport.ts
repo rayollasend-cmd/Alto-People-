@@ -6,7 +6,7 @@ import { placedClientIds } from './openShiftEligibility.js';
 import { getLaborPolicy } from './stateLaborPolicy.js';
 import { payFor } from './laborRules/hours.js';
 import { rideRateOn } from './rideAuthorization.js';
-import { accountPhotoUrlFor } from './profilePhotoUrl.js';
+import { accountPhotoUrlFor, profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { tenantIdForWrite } from './tenant.js';
 
 /**
@@ -287,7 +287,13 @@ export function toRideView(r: RideRow) {
       clientId: r.location.client?.id ?? null,
       clientName: r.location.client?.name ?? '',
     },
-    rider: { associateId: r.associate.id, name: `${r.associate.firstName} ${r.associate.lastName}`, phone: r.associate.phone },
+    rider: {
+      associateId: r.associate.id,
+      name: `${r.associate.firstName} ${r.associate.lastName}`,
+      phone: r.associate.phone,
+      /** Their headshot (with its ?v= cache-buster); null when none is on file — initials, no request. */
+      photoUrl: profilePhotoUrlFor(r.associate),
+    },
     pickupOrder: r.pickupOrder,
     pickupAt: r.pickupAt?.toISOString() ?? null,
     run: r.run

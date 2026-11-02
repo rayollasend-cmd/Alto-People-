@@ -1313,6 +1313,8 @@ export const ClockInRequestRowSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  associatePhotoUrl: z.string().nullable().optional(),
   clientId: UuidSchema,
   clientName: z.string().nullable(),
   locationId: UuidSchema.nullable(),
@@ -2153,6 +2155,8 @@ export const AdminOpenShiftClaimSchema = /* @__PURE__ */ (() => z.object({
   status: OpenShiftClaimStatusSchema,
   associateId: UuidSchema,
   associateName: z.string(),
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  associatePhotoUrl: z.string().nullable().optional(),
   shiftId: UuidSchema,
   shiftPosition: z.string(),
   shiftClientName: z.string().nullable(),
@@ -2887,6 +2891,8 @@ export const ShiftTeamDetailResponseSchema = /* @__PURE__ */ (() => z.object({
       firstName: z.string(),
       lastName: z.string(),
       email: z.string(),
+      /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+      photoUrl: z.string().nullable().optional(),
       /** False when the associate has no open assignment/approved
        *  application at the team's location — membership likely stale. */
       atLocation: z.boolean(),
@@ -3162,6 +3168,8 @@ export const PayrollItemSchema = /* @__PURE__ */ (() => z.object({
   payrollRunId: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string().nullable(),
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  associatePhotoUrl: z.string().nullable().optional(),
   hoursWorked: z.number().nonnegative(),
   hourlyRate: z.number().nonnegative(),
   grossPay: z.number().nonnegative(),
@@ -4359,6 +4367,8 @@ export const DrugTestSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  associatePhotoUrl: z.string().nullable().optional(),
   clientId: UuidSchema.nullable(),
   /** Display name for clientId (the test's own client when recorded, else
    *  the associate's current placement) — feeds the client filter. */
@@ -4436,6 +4446,8 @@ export const J1ProfileSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   associateEmail: z.string().email(),
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  associatePhotoUrl: z.string().nullable().optional(),
   programStartDate: z.string(),
   programEndDate: z.string(),
   ds2019Number: z.string(),
@@ -4677,6 +4689,8 @@ export const PerformanceReviewSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  associatePhotoUrl: z.string().nullable().optional(),
   reviewerUserId: UuidSchema.nullable(),
   reviewerEmail: z.string().email().nullable(),
   sourcePipId: UuidSchema.nullable(),
@@ -4756,6 +4770,8 @@ export const CandidateSchema = /* @__PURE__ */ (() => z.object({
   resumeUrl: z.string().nullable(),
   linkedinUrl: z.string().nullable(),
   hiredAssociateId: UuidSchema.nullable(),
+  /** The hired associate's headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  hiredAssociatePhotoUrl: z.string().nullable().optional(),
   hiredClientId: UuidSchema.nullable(),
   hiredAt: z.string().datetime().nullable(),
   rejectedReason: z.string().nullable(),
@@ -5608,8 +5624,11 @@ export const ShiftSwapRequestSchema = /* @__PURE__ */ (() => z.object({
   shiftClientName: z.string().nullable(),
   requesterAssociateId: UuidSchema,
   requesterName: z.string(),
+  /** Both sides' headshot URLs (with the ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  requesterPhotoUrl: z.string().nullable().optional(),
   counterpartyAssociateId: UuidSchema,
   counterpartyName: z.string(),
+  counterpartyPhotoUrl: z.string().nullable().optional(),
   status: ShiftSwapStatusSchema,
   note: z.string().nullable(),
   decidedAt: z.string().datetime().nullable(),
@@ -5678,6 +5697,8 @@ export type ShiftConflictsResponse = z.infer<typeof ShiftConflictsResponseSchema
 export const AutoFillCandidateSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   associateName: z.string(),
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  associatePhotoUrl: z.string().nullable().optional(),
   weeklyMinutesScheduled: z.number().int().nonnegative(),
   weeklyMinutesActual: z.number().int().nonnegative(),
   matchesAvailability: z.boolean(),
@@ -6417,6 +6438,8 @@ export const PositionSchema = /* @__PURE__ */ (() => z.object({
   status: PositionStatusSchema,
   filledByAssociateId: UuidSchema.nullable(),
   filledByName: z.string().nullable(),
+  /** The holder's headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  filledByPhotoUrl: z.string().nullable().optional(),
   filledAt: z.string().datetime().nullable(),
   targetStartDate: z.string().nullable(), // YYYY-MM-DD
   minHourlyRate: z.string().nullable(),

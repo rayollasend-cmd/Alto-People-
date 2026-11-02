@@ -5,7 +5,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Avatar } from '@/components/ui/Avatar';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { Lock, MessageCircle, Plus, Tag, Timer } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -460,7 +460,7 @@ export function HrCasesHome() {
                 cardMeta: true,
                 cell: (c) => (
                   <div className="flex items-center gap-2">
-                    <Avatar src={associatePhotoUrl(c.associateId)} name={c.associateName} email={c.associateEmail} size="sm" />
+                    <Avatar src={personPhotoUrl({ photoUrl: c.associatePhotoUrl, associateId: c.associateId })} name={c.associateName} email={c.associateEmail} size="sm" />
                     <div className="min-w-0">
                       <div className="text-sm">
                         <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>

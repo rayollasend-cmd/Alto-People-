@@ -24,6 +24,7 @@ import {
   hasCapability,
 } from '@alto-people/shared';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { CANDIDATE_SEARCH, idsMatching, searchWords } from '../lib/peopleSearch.js';
 import { expireLapsedOffers, liveSentOffer } from '../lib/offerExpiry.js';
 import { userDisplayName } from '../lib/clientProspects.js';
@@ -52,7 +53,23 @@ const MANAGE = requireCapability('manage:recruiting');
 
 type RawCandidate = Prisma.CandidateGetPayload<object>;
 
-function toCandidate(row: RawCandidate): Candidate {
+/**
+ * Each hired candidate's headshot (?v= cache-buster; null when none is on
+ * file), one query for the whole page. A candidate row has no relation to
+ * the associate, so the board used to guess the bare URL and 404 for every
+ * hire without a photo.
+ */
+async function hiredPhotos(rows: Array<{ hiredAssociateId: string | null }>): Promise<Map<string, string | null>> {
+  const ids = [...new Set(rows.map((r) => r.hiredAssociateId).filter((id): id is string => !!id))];
+  if (ids.length === 0) return new Map();
+  const people = await prisma.associate.findMany({
+    where: { id: { in: ids }, tenantId: tenantIdForWrite() },
+    select: { id: true, photoS3Key: true, photoUpdatedAt: true },
+  });
+  return new Map(people.map((p) => [p.id, profilePhotoUrlFor(p)]));
+}
+
+function toCandidate(row: RawCandidate, photos?: Map<string, string | null>): Candidate {
   return {
     id: row.id,
     firstName: row.firstName,
@@ -66,6 +83,8 @@ function toCandidate(row: RawCandidate): Candidate {
     resumeUrl: row.resumeUrl,
     linkedinUrl: row.linkedinUrl,
     hiredAssociateId: row.hiredAssociateId,
+    // Only when the caller looked (hiredPhotos); absent, the web falls back to the bare path.
+    ...(photos ? { hiredAssociatePhotoUrl: row.hiredAssociateId ? (photos.get(row.hiredAssociateId) ?? null) : null } : {}),
     hiredClientId: row.hiredClientId,
     hiredAt: row.hiredAt ? row.hiredAt.toISOString() : null,
     rejectedReason: row.rejectedReason,
@@ -171,7 +190,8 @@ recruitingRouter.get('/candidates', async (req, res, next) => {
         : Promise.resolve(null),
     ]);
     const stageCounts = byStage ? Object.fromEntries(byStage.map((g) => [g.stage, g._count._all])) : undefined;
-    res.json(CandidateListResponseSchema.parse({ candidates: rows.map(toCandidate), total, offset, limit, ...(stageCounts ? { stageCounts } : {}) }));
+    const photos = await hiredPhotos(rows);
+    res.json(CandidateListResponseSchema.parse({ candidates: rows.map((r) => toCandidate(r, photos)), total, offset, limit, ...(stageCounts ? { stageCounts } : {}) }));
   } catch (err) {
     next(err);
   }
@@ -200,10 +220,15 @@ recruitingRouter.get('/candidates/board', async (req, res, next) => {
               take: perStage,
             })
           : [];
-        return { stage, total, candidates: rows.map(toCandidate) };
+        return { stage, total, rows };
       }),
     );
-    res.json(CandidateBoardResponseSchema.parse({ columns }));
+    const photos = await hiredPhotos(columns.flatMap((c) => c.rows));
+    res.json(
+      CandidateBoardResponseSchema.parse({
+        columns: columns.map(({ stage, total, rows }) => ({ stage, total, candidates: rows.map((r) => toCandidate(r, photos)) })),
+      }),
+    );
   } catch (err) {
     next(err);
   }
@@ -307,7 +332,8 @@ recruitingRouter.get('/summary', async (_req, res, next) => {
 
 recruitingRouter.get('/candidates/:id', async (req, res, next) => {
   try {
-    res.json(toCandidate(await findLive(req.params.id)));
+    const row = await findLive(req.params.id);
+    res.json(toCandidate(row, await hiredPhotos([row])));
   } catch (err) {
     next(err);
   }
@@ -924,7 +950,7 @@ recruitingRouter.post('/candidates/:id/hire', MANAGE, async (req, res, next) => 
       payRecorded,
     });
     res.json({
-      ...toCandidate(hired),
+      ...toCandidate(hired, await hiredPhotos([hired])),
       applicationId: invite.applicationId,
       inviteUrl: invite.inviteUrl,
       payRecorded,

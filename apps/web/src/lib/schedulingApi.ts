@@ -536,6 +536,8 @@ export interface UnconfirmedShiftRow {
   timezone?: string | null;
   associateId: string;
   associateName: string;
+  /** The versioned headshot URL, null when none is on file. Absent from an older server. */
+  associatePhotoUrl?: string | null;
   phone: string | null;
 }
 

@@ -6,6 +6,7 @@ import { buildFieldglassQueue } from './fieldglassQueue.js';
 import { fmtDay } from './humanDates.js';
 import { billingWeek } from './financeCockpit.js';
 import { dateColumnKey } from './timezone.js';
+import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 
 const daysWord = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
 
@@ -54,6 +55,8 @@ export interface LaneStage {
 export interface Lane {
   associateId: string;
   name: string;
+  /** Their headshot (?v= cache-buster); null when none is on file — most new hires — so no request, initials. */
+  photoUrl: string | null;
   clientName: string | null;
   approvedAt: string;
   stages: LaneStage[];
@@ -287,7 +290,7 @@ export async function computeRelayBoard(
       approvedAt: true,
       cohortId: true,
       client: { select: { name: true } },
-      associate: { select: { firstName: true, lastName: true } },
+      associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
     },
   });
   // One lane per associate — the latest approval wins.
@@ -375,6 +378,7 @@ export async function computeRelayBoard(
     const lane: Lane = {
       associateId,
       name,
+      photoUrl: profilePhotoUrlFor({ id: associateId, ...seed.associate }),
       clientName: seed.client?.name ?? null,
       approvedAt: approvedAt.toISOString(),
       stages,

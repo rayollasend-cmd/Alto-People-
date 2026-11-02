@@ -7,6 +7,7 @@ import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { FieldglassPacketPanel, MarkAddedDialog } from './FieldglassPacket';
@@ -118,8 +119,7 @@ export function FieldglassQueueList({ queue, returnTo }: { queue: FieldglassQueu
           <li key={w.associateId} className="py-2.5">
             <div className="flex items-center gap-3">
               <Avatar
-                src={w.photoUrl ?? `/api/associates/${w.associateId}/photo`}
-                hasPhoto={w.photoUrl === undefined ? undefined : w.photoUrl !== null}
+                src={personPhotoUrl({ photoUrl: w.photoUrl, associateId: w.associateId })}
                 name={w.name}
                 email=""
                 size="md"

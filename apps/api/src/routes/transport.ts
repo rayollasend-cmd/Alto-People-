@@ -2630,7 +2630,7 @@ transportRouter.get('/riders/:associateId', requireAuth, async (req, res) => {
   // Another tenant's person is not found here (Brief 2-1, cross-tenant suite).
   const a = await prisma.associate.findFirst({
     where: { id: associateId, tenantId: tenantIdForWrite() },
-    select: { id: true, firstName: true, lastName: true, phone: true, createdAt: true, user: { select: { id: true, language: true } } },
+    select: { id: true, firstName: true, lastName: true, phone: true, createdAt: true, photoS3Key: true, photoUpdatedAt: true, user: { select: { id: true, language: true } } },
   });
   if (!a) throw new HttpError(404, 'not_found', 'Rider not found.');
   const counts = await prisma.ride.groupBy({ by: ['status'], where: { associateId }, _count: { _all: true } });
@@ -2639,6 +2639,8 @@ transportRouter.get('/riders/:associateId', requireAuth, async (req, res) => {
     associateId: a.id,
     name: `${a.firstName} ${a.lastName}`,
     phone: a.phone,
+    // null: no photo on file — initials, no request that 404s.
+    photoUrl: profilePhotoUrlFor(a),
     since: a.createdAt.toISOString(),
     rides: n('COMPLETED') + n('BOARDED'),
     noShows: n('NO_SHOW'),
@@ -4379,6 +4381,8 @@ transportRouter.get('/arrivals', requireAuth, async (req, res) => {
       rideId: r.id,
       associateId: r.associate.id,
       name: `${r.associate.firstName} ${r.associate.lastName}`,
+      // null: no photo on file — initials, no request that 404s.
+      photoUrl: profilePhotoUrlFor(r.associate),
       store: { id: r.location.id, name: r.location.name },
       arriveBy: r.targetAt.toISOString(),
       etaAt: eta.get(r.id)?.toISOString() ?? null,

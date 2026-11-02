@@ -32,7 +32,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { fmtDate, fmtDateOnly, fmtDateTime, fmtMoney } from '@/lib/format';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { statusLabel } from '@/lib/status';
 import { CandidatePortalPanel } from './CandidatePortalPanel';
 import { NewOfferDrawer } from './OfferDialog';
@@ -443,7 +443,7 @@ export function CandidateDetailDrawer({
             beside it they left the subtitle one word per line, with the
             chevrons over the name. */}
         <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
-          <Avatar src={associatePhotoUrl(candidate.hiredAssociateId)} name={fullName} email={candidate.email} size="md" />
+          <Avatar src={personPhotoUrl({ photoUrl: candidate.hiredAssociatePhotoUrl, associateId: candidate.hiredAssociateId })} name={fullName} email={candidate.email} size="md" />
           <div className="min-w-0 flex-1 basis-[calc(100%-4rem)] pr-10 sm:basis-0 sm:pr-0">
             <DrawerTitle className="break-words">{fullName}</DrawerTitle>
             <DrawerDescription>

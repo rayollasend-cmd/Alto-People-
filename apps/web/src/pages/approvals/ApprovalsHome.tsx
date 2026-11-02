@@ -57,6 +57,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { enterStagger } from '@/lib/motion';
 import {
   Dialog,
@@ -157,8 +158,6 @@ const requestsQuery = {
   queryFn: async () => (await listApprovalRequests('decide')).requests,
   refetchInterval: 60_000,
 };
-
-const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
 /** "Today · 9:00 PM", "Tomorrow · 6:00 AM", "Sat, Sep 19 · 6:00 AM" — on
  *  the shift's own store clock (one shift, one time). */
@@ -1044,7 +1043,7 @@ function WalkInClockInsPanel() {
                     checked={selected.has(r.id)}
                     onChange={() => toggle(r.id)}
                   />
-                  <Avatar src={photoUrl(r.associateId)} name={r.associateName} email="" size="md" />
+                  <Avatar src={personPhotoUrl({ photoUrl: r.associatePhotoUrl, associateId: r.associateId })} name={r.associateName} email="" size="md" />
                   <div className="min-w-0">
                     <div className="font-medium text-white">
                       <AssociateLink associateId={r.associateId}>
@@ -1433,7 +1432,7 @@ function PendingTimeOffPanel({
                     checked={selected.has(r.id)}
                     onChange={() => toggle(r.id)}
                   />
-                  <Avatar src={photoUrl(r.associateId)} name={r.associateName ?? ''} email="" size="md" />
+                  <Avatar src={personPhotoUrl({ photoUrl: r.associatePhotoUrl, associateId: r.associateId })} name={r.associateName ?? ''} email="" size="md" />
                   <div className="min-w-0">
                     <div className="text-white text-sm font-medium">
                       {r.associateName ?? '—'}
@@ -1700,9 +1699,9 @@ function SwapsPanel() {
                   />
                   {/* Who gives it up → who takes it, as faces. */}
                   <div className="flex shrink-0 items-center" aria-hidden="true">
-                    <Avatar src={photoUrl(s.requesterAssociateId)} name={s.requesterName} email="" size="sm" />
+                    <Avatar src={personPhotoUrl({ photoUrl: s.requesterPhotoUrl, associateId: s.requesterAssociateId })} name={s.requesterName} email="" size="sm" />
                     <ArrowLeftRight className="mx-1 h-3 w-3 text-silver/60" />
-                    <Avatar src={photoUrl(s.counterpartyAssociateId)} name={s.counterpartyName} email="" size="sm" />
+                    <Avatar src={personPhotoUrl({ photoUrl: s.counterpartyPhotoUrl, associateId: s.counterpartyAssociateId })} name={s.counterpartyName} email="" size="sm" />
                   </div>
                   <div className="min-w-0">
                     <div className="text-white text-sm">
@@ -1875,7 +1874,7 @@ function PickupsPanel() {
                     checked={selected.has(c.id)}
                     onChange={() => toggle(c.id)}
                   />
-                  <Avatar src={photoUrl(c.associateId)} name={c.associateName} email="" size="md" />
+                  <Avatar src={personPhotoUrl({ photoUrl: c.associatePhotoUrl, associateId: c.associateId })} name={c.associateName} email="" size="md" />
                   <div className="min-w-0">
                     <div className="text-white text-sm">
                       <AssociateLink associateId={c.associateId} className="font-medium">

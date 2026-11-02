@@ -38,7 +38,7 @@ import { boundedClientOf } from '@/lib/roles';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { useConfirm } from '@/lib/confirm';
 import {
   Badge,
@@ -1003,8 +1003,7 @@ export function TimesheetsView() {
                   <>
                     <span className="inline-flex items-center gap-1.5">
                       <Avatar
-                        src={r.photoUrl ?? associatePhotoUrl(r.associateId)}
-                        hasPhoto={r.photoUrl === undefined ? undefined : r.photoUrl !== null}
+                        src={personPhotoUrl({ photoUrl: r.photoUrl, associateId: r.associateId })}
                         name={r.worker}
                         size="xs"
                       />

@@ -4,6 +4,7 @@ import { ArrowRight, Check, ExternalLink } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
@@ -61,7 +62,7 @@ export function LaneDrawer({
         <>
           <DrawerHeader>
             <div className="flex items-center gap-3">
-              <Avatar src={`/api/associates/${associateId}/photo`} name={who} size="lg" />
+              <Avatar src={personPhotoUrl({ photoUrl: lane?.photoUrl, associateId })} name={who} size="lg" />
               <div className="min-w-0">
                 <DrawerTitle className="truncate">{who}</DrawerTitle>
                 <DrawerDescription>

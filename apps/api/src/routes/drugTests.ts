@@ -20,6 +20,7 @@ import {
 } from '../lib/associateClients.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { scopeAssociates, scopeWhere } from '../lib/scope.js';
 
 /**
@@ -45,11 +46,11 @@ const RESULT_KIND = 'DRUG_TEST_RESULT' as const;
 const RESULT_WINDOW_DAYS = 60;
 
 type RawTest = Prisma.DrugTestGetPayload<{
-  include: { associate: { select: { firstName: true; lastName: true } } };
+  include: { associate: { select: { firstName: true; lastName: true; photoS3Key: true; photoUpdatedAt: true } } };
 }>;
 
 const TEST_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true } },
+  associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
 } as const;
 
 function toTest(
@@ -61,6 +62,7 @@ function toTest(
     id: row.id,
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
+    associatePhotoUrl: profilePhotoUrlFor({ id: row.associateId, ...row.associate }),
     clientId: client?.clientId ?? row.clientId,
     clientName: client?.clientName ?? null,
     provider: row.provider,
