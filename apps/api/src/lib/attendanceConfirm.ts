@@ -179,6 +179,7 @@ async function ask(db: Db, agent: AgentContext, shift: AskShift, points: number,
     category: 'shift_confirm',
     senderUserId: null,
     byAgentId: agent.workerId,
+    actBy: shift.startsAt,
     wa: {
       template: 'alto_shift_confirm',
       params: (lang) => {

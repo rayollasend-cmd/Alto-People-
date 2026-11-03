@@ -3442,6 +3442,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
           body: `You've been assigned: ${line}`,
           category: 'shift_assigned',
           senderUserId: req.user!.id,
+          actBy: n.startsAt,
           wa: shiftWa('alto_shift_assigned', { position: input.position, clientName: placeName, locationName: null, startsAt: n.startsAt, endsAt: n.endsAt, timezone: location.timezone }),
         });
       }
@@ -3709,6 +3710,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
         })}`,
         category: 'shift_published',
         senderUserId: req.user!.id,
+        actBy: updated.startsAt,
         wa: shiftWa('alto_shift_assigned', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
       });
     }
@@ -3839,6 +3841,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
         })}`,
         category: 'shift_assigned',
         senderUserId: req.user!.id,
+        actBy: updated.startsAt,
         wa: shiftWa('alto_shift_assigned', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
       });
     }
@@ -3903,6 +3906,7 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
         })}`,
         category: 'shift_unassigned',
         senderUserId: req.user!.id,
+        actBy: updated.startsAt,
         wa: shiftWa('alto_shift_changed', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
       });
     }
@@ -4714,6 +4718,7 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
       body: `You're on: ${line}`,
       category: 'shift_pickup_approved',
       senderUserId: user.id,
+      actBy: claim.shift.startsAt,
     });
     // Notify the associates whose pending requests just auto-lost.
     const losers = await prisma.openShiftClaim.findMany({
@@ -5811,6 +5816,7 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
         (exchangeLine ? `\nYou handed off: ${exchangeLine}` : ''),
       category: 'swap_manager_approved',
       senderUserId: req.user!.id,
+      actBy: updated.shift.startsAt,
     });
     // Hugo tells a requester it was finding cover for, in their language (lib/hugoTasks).
     const viaHugo = await hugoHandlesSwap(updated.id);
@@ -7791,6 +7797,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
           })}`,
           category: 'shift_assigned',
           senderUserId: req.user!.id,
+          actBy: shift.startsAt,
           wa: shiftWa('alto_shift_assigned', { position: shift.position, clientName: shift.client?.name ?? null, locationName: shift.locationRel?.name ?? null, startsAt: shift.startsAt, endsAt: shift.endsAt, timezone: shift.locationRel?.timezone ?? null }),
         });
         void noteScheduleChange(prisma, {

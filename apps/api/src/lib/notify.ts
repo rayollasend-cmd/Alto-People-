@@ -172,7 +172,7 @@ async function pushFor(userId: string, opts: NotifyOpts, title: string, bellId: 
 
 /** What the delivery rules need to know about a notice (lib/notificationDelivery). */
 function noticeOf(opts: NotifyOpts): OutsideNotice {
-  return { subject: opts.subject, body: opts.body, linkUrl: opts.linkUrl, category: opts.category, urgent: opts.urgent, tier: opts.tier };
+  return { subject: opts.subject, body: opts.body, linkUrl: opts.linkUrl, category: opts.category, urgent: opts.urgent, tier: opts.tier, actBy: opts.actBy };
 }
 
 /**
@@ -299,6 +299,12 @@ export interface NotifyOpts {
    * still wins.
    */
   tier?: NotificationTier;
+  /**
+   * When the notice stops being useful — a shift's start, the van's
+   * arrival. Quiet hours or a summary never deliver it later than this; it
+   * goes now instead (lib/notificationDelivery planOutside).
+   */
+  actBy?: Date;
   /**
    * Bell and push only, no email this time: a sender that already emailed
    * the person about the same kind of thing today (open-shift invites:

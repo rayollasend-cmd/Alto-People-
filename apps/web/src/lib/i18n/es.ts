@@ -5685,7 +5685,7 @@ export const es: Record<Exclude<MessageKey, keyof typeof enExecPortal | keyof ty
   'settings.delivery.modeOff': 'Solo avisos urgentes y obligatorios',
   'settings.delivery.modeOffHint': 'Ningún otro correo. Siguen llegando los avisos urgentes de seguridad, de tu cuenta y de pago, y los avisos formales de RR. HH.',
   'settings.delivery.recommended': 'Recomendado para ti',
-  'settings.delivery.alwaysThrough': 'Los avisos urgentes de seguridad, de tu cuenta y de pago siempre llegan, incluso en horas de silencio.',
+  'settings.delivery.alwaysThrough': 'Los avisos urgentes de seguridad, de tu cuenta y de pago siempre llegan, incluso en horas de silencio. También los avisos de trabajo mientras estás fichado, y lo que trate de un turno o un viaje que empieza antes de que terminen.',
   'settings.devices.title': 'Dispositivos recordados',
   'settings.devices.desc': 'Dispositivos donde se ingresó y recordó un código de dos pasos. Olvida los que ya no uses.',
   'settings.devices.descDays': 'Dispositivos donde se ingresó un código de dos pasos y se recuerda por {days} días. Olvida los que ya no uses.',

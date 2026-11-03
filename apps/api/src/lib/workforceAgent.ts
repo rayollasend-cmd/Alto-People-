@@ -579,6 +579,7 @@ export async function executeAssignProposal(proposal: { id: string; workerId: st
       category: 'shift_assigned',
       ...(approval.decidedById ? { senderUserId: approval.decidedById } : {}),
       byAgentId: agent.workerId,
+      actBy: updated.startsAt,
       wa: shiftWa('alto_shift_assigned', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
     });
   }

@@ -4708,7 +4708,7 @@ export const ht: Partial<Record<MessageKey, string>> = {
   'settings.delivery.modeOff': 'Sèlman avi ijan ak avi obligatwa',
   'settings.delivery.modeOffHint': 'Pa gen lòt imel. Avi ijan sou sekirite, kont ou ak peman, ak avi fòmèl RH yo toujou rive.',
   'settings.delivery.recommended': 'Rekòmande pou ou',
-  'settings.delivery.alwaysThrough': 'Avi ijan sou sekirite, kont ou ak peman toujou rive, menm pandan lè silans yo.',
+  'settings.delivery.alwaysThrough': 'Avi ijan sou sekirite, kont ou ak peman toujou rive, menm pandan lè silans yo. Alèt travay ou yo rive tou pandan ou nan pwen, ak tout sa ki gen pou wè ak yon ranplasman oswa yon transpò ki kòmanse anvan lè silans yo fini.',
   'settings.devices.title': 'Aparèy ki sonje',
   'settings.devices.desc': 'Aparèy kote yo te antre yon kòd de etap epi sonje l. Bliye sa w pa itilize ankò yo.',
   'settings.devices.descDays': 'Aparèy kote yo te antre yon kòd de etap epi sonje l pou {days} jou. Bliye sa w pa itilize ankò yo.',

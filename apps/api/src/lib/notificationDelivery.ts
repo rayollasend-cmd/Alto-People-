@@ -44,6 +44,13 @@ import { whatsappConfigured } from './whatsapp.js';
  *   an incident, an emergency, pay or a disbursement goes out now, quiet
  *   hours or not. A caller can also say `urgent: true`.
  *
+ *   Quiet hours are for people off the clock: someone clocked in (an
+ *   overnight store shift) gets their work alerts as they happen. And a
+ *   notice about a set time — a shift's start, the van at the door —
+ *   carries `actBy`: a hold that would deliver it after then sends it now
+ *   instead (the first night held overnight supervisors' no-show alerts
+ *   and riders' "your van is 8 min away" until 7 AM).
+ *
  *   A held notification is a DeferredNotification row; the digest job
  *   (every ten minutes, per tenant) sends what has come due, one message
  *   per person and channel, and drops what the person already saw in the
@@ -123,14 +130,30 @@ const UNSEEN_WAIT_MS = 4 * 3_600_000;
 /** Non-urgent emails one person gets in a day; past it the rest wait for the morning summary. */
 export const DAILY_EMAIL_CAP = 5;
 
-/**
- * Pure: what this channel does with a notice of this tier for this person.
- * `reachable` matters only to IMPORTANT email: whether a push or WhatsApp
- * reaches them, so the email can wait to see whether the bell copy gets seen.
- */
-export function planOutside(prefs: DeliveryPrefs, channel: OutsideChannel, tier: NotificationTier, ctx: { reachable?: boolean } = {}, at: Date = new Date()): OutsidePlan {
+export interface PlanContext {
+  /** IMPORTANT email only: whether a push or WhatsApp reaches them, so the email can wait to see whether the bell copy gets seen. */
+  reachable?: boolean;
+  /** Clocked in right now: quiet hours don't apply to someone at work. */
+  onClock?: boolean;
+  /** When the notice stops being useful (a shift's start, the van's arrival): never held past it. */
+  actBy?: Date | null;
+}
+
+/** Pure: what this channel does with a notice of this tier for this person. */
+export function planOutside(prefs: DeliveryPrefs, channel: OutsideChannel, tier: NotificationTier, ctx: PlanContext = {}, at: Date = new Date()): OutsidePlan {
+  const plan = planHold(prefs, channel, tier, ctx, at);
+  if (plan.send === 'later' && ctx.actBy && plan.dueAt.getTime() >= ctx.actBy.getTime()) {
+    // Late is worse than at night: it goes now. An email that was only
+    // waiting to see whether the push got seen has no use after the fact —
+    // the push went now.
+    return plan.reason === 'UNSEEN' ? { send: 'never' } : { send: 'now' };
+  }
+  return plan;
+}
+
+function planHold(prefs: DeliveryPrefs, channel: OutsideChannel, tier: NotificationTier, ctx: PlanContext, at: Date): OutsidePlan {
   if (tier === 'critical') return { send: 'now' };
-  const quiet = inQuietHours(localMinutes(at, prefs.timezone), prefs.quietHoursStart, prefs.quietHoursEnd);
+  const quiet = !ctx.onClock && inQuietHours(localMinutes(at, prefs.timezone), prefs.quietHoursStart, prefs.quietHoursEnd);
   const quietEnd = quiet ? quietEndsAt(at, prefs.timezone, prefs.quietHoursEnd!) : null;
   const later = (reason: Deferral['reason'], dueAt: Date): OutsidePlan => ({ send: 'later', reason, dueAt });
   if (channel !== 'EMAIL') {
@@ -207,6 +230,7 @@ const PREFS_MS = 30_000;
 
 export function resetDeliveryPrefsCache(): void {
   prefsCache.clear();
+  clockCache.clear();
 }
 
 export async function deliveryPrefsFor(userId: string, db: PrismaClient = prisma): Promise<DeliveryPrefs> {
@@ -221,6 +245,25 @@ export async function deliveryPrefsFor(userId: string, db: PrismaClient = prisma
     : { quietHoursStart: null, quietHoursEnd: null, deliveryEmail: 'REALTIME', deliveryPush: 'REALTIME', deliverySms: 'REALTIME', timezone: orgTimeZone() };
   prefsCache.set(userId, { at: Date.now(), prefs });
   return prefs;
+}
+
+const clockCache = new Map<string, { at: number; on: boolean }>();
+/** An open time entry older than this is a forgotten punch-out, not a shift. */
+const OPEN_SHIFT_MS = 16 * 3_600_000;
+
+/** Clocked in at `at` (an open time entry from the last 16 hours). */
+async function onTheClock(userId: string, db: PrismaClient, at: Date): Promise<boolean> {
+  const hit = clockCache.get(userId);
+  if (hit && process.env.NODE_ENV !== 'test' && Date.now() - hit.at < 60_000) return hit.on;
+  const u = await db.user.findUnique({ where: { id: userId }, select: { associateId: true } });
+  const on =
+    !!u?.associateId &&
+    (await db.timeEntry.findFirst({
+      where: { associateId: u.associateId, clockOutAt: null, clockInAt: { lte: at, gte: new Date(at.getTime() - OPEN_SHIFT_MS) } },
+      select: { id: true },
+    })) !== null;
+  clockCache.set(userId, { at: Date.now(), on });
+  return on;
 }
 
 /** Does a push or WhatsApp reach this person for this kind of notice? (IMPORTANT email waits only if so.) */
@@ -249,6 +292,8 @@ export interface OutsideNotice {
   category?: string;
   urgent?: boolean;
   tier?: NotificationTier;
+  /** When it stops being useful (a shift's start, the van's arrival): a hold never delivers it later than this. */
+  actBy?: Date | null;
   /** EMAIL: the email as built, so a held copy can go out whole. */
   html?: string;
   text?: string;
@@ -271,9 +316,21 @@ export async function routeOutside(
   const prefs = await deliveryPrefsFor(userId, db);
   const tier = notificationTier(n.category, n);
   const reachable = channel === 'EMAIL' && tier === 'action' && prefs.deliveryEmail === 'IMPORTANT' ? await reachableElsewhere(userId, prefs, n.category, db) : true;
-  let plan = planOutside(prefs, channel, tier, { reachable }, at);
-  if (plan.send === 'now' && channel === 'EMAIL' && tier !== 'critical' && tier !== 'digest' && (await emailsToday(userId, prefs, db, at)) >= DAILY_EMAIL_CAP) {
-    plan = { send: 'later', reason: 'SUMMARY', dueAt: nextSummaryAt(at, prefs.timezone) };
+  // Only asked when it could matter: in quiet hours, for what isn't urgent anyway.
+  const onClock =
+    tier !== 'critical' && inQuietHours(localMinutes(at, prefs.timezone), prefs.quietHoursStart, prefs.quietHoursEnd) && (await onTheClock(userId, db, at));
+  const actBy = n.actBy ?? null;
+  let plan = planOutside(prefs, channel, tier, { reachable, onClock, actBy }, at);
+  const summaryAt = nextSummaryAt(at, prefs.timezone);
+  if (
+    plan.send === 'now' &&
+    channel === 'EMAIL' &&
+    tier !== 'critical' &&
+    tier !== 'digest' &&
+    !(actBy && summaryAt >= actBy) &&
+    (await emailsToday(userId, prefs, db, at)) >= DAILY_EMAIL_CAP
+  ) {
+    plan = { send: 'later', reason: 'SUMMARY', dueAt: summaryAt };
   }
   if (plan.send !== 'later') return plan.send;
   await db.deferredNotification.create({
@@ -406,10 +463,12 @@ async function emailAndRecord(db: PrismaClient, userId: string, email: string, m
 }
 
 /**
- * Send everything due for this tenant: one message per person and channel —
- * except an UNSEEN email, which goes alone, as it would have gone out. A
- * held copy whose bell twin the person has already seen or opened has done
- * its job and is dropped.
+ * Send everything due for this tenant: one message per person and channel.
+ * A single held notice goes out as itself (an UNSEEN email whole, as it
+ * would have gone out); several become one summary — 7 AM used to send
+ * each still-unseen email on its own beside the summary, up to six at once
+ * for one person. A held copy whose bell twin the person has already seen
+ * or opened has done its job and is dropped.
  */
 export async function runNotificationDigest(db: PrismaClient = prisma, now: Date = new Date()): Promise<number> {
   const tenantId = tenantIdForWrite();
@@ -432,7 +491,7 @@ export async function runNotificationDigest(db: PrismaClient = prisma, now: Date
   );
   const groups = new Map<string, typeof due>();
   for (const row of due) {
-    const k = row.reason === 'UNSEEN' ? `${row.userId}:${row.channel}:${row.id}` : `${row.userId}:${row.channel}`;
+    const k = `${row.userId}:${row.channel}`;
     groups.set(k, [...(groups.get(k) ?? []), row]);
   }
   const brand = getBrandingSync(tenantId);

@@ -51,6 +51,8 @@ export interface NotifyShiftParams {
   wa?: NotifyOpts['wa'];
   /** AI disclosure: the agent (Worker id) whose action this is, when an agent caused it. */
   byAgentId?: string | null;
+  /** The shift's start, for notices about one shift: quiet hours never deliver it after the shift began (NotifyOpts.actBy). */
+  actBy?: Date;
 }
 
 /**
@@ -139,6 +141,7 @@ async function notifyShiftInner(
     linkUrl,
     wa: params.wa,
     byAgentId: params.byAgentId ?? null,
+    actBy: params.actBy,
   }, bell.id);
 }
 

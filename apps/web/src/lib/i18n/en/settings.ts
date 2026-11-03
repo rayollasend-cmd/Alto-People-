@@ -73,7 +73,7 @@ export const enSettings = {
   'settings.delivery.modeOff': 'Only urgent and required notices',
   'settings.delivery.modeOffHint': 'No other email. Urgent safety, security and pay notices, and formal HR notices, still arrive.',
   'settings.delivery.recommended': 'Recommended for you',
-  'settings.delivery.alwaysThrough': 'Urgent safety, security and pay notices always come through, even during quiet hours.',
+  'settings.delivery.alwaysThrough': 'Urgent safety, security and pay notices always come through, even during quiet hours. So do your work alerts while you’re clocked in, and anything about a shift or ride that starts before quiet hours end.',
   'settings.devices.title': 'Remembered devices',
   'settings.devices.desc': 'Devices where a two-step code was entered and remembered. Forget any you no longer use.',
   'settings.devices.descDays': 'Devices where a two-step code was entered and remembered for {days} days. Forget any you no longer use.',

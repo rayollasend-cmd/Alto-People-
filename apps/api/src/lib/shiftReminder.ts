@@ -112,6 +112,7 @@ export async function runShiftReminderSweep(
         })}`,
         category: 'shift_reminder',
         senderUserId: null,
+        actBy: shift.startsAt,
         wa: shiftWa('alto_shift_reminder', { position: shift.position, clientName: shift.client?.name ?? null, locationName: null, startsAt: shift.startsAt, endsAt: shift.endsAt, timezone: shift.locationRel?.timezone ?? null }),
       });
       reminded++;
@@ -164,6 +165,7 @@ export async function runShiftReminderSweep(
         })}? Open your schedule and tap "I'll be there".`,
         category: 'shift_confirm',
         senderUserId: null,
+        actBy: shift.startsAt,
       });
       confirmNudges++;
     } catch (err) {

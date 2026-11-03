@@ -206,6 +206,7 @@ export async function cancelShiftWithinRules<I extends Prisma.ShiftInclude & { c
       body: `Cancelled: ${line}\nReason: ${reason}`,
       category: 'shift_cancelled',
       senderUserId: actor.userId,
+      actBy: updated.startsAt,
       wa: shiftWa('alto_shift_cancelled', { position: updated.position, clientName: updated.client?.name ?? null, locationName: updated.locationRel?.name ?? null, startsAt: updated.startsAt, endsAt: updated.endsAt, timezone: updated.locationRel?.timezone ?? null }),
     });
   }

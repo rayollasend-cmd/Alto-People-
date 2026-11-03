@@ -228,6 +228,7 @@ export async function seatTheLine(k: TripKey, now = new Date()): Promise<string[
             `${run.van.name}${run.van.plate ? ` · ${run.van.plate}` : ''} picks you up at ${fmtTime(pickup, tz)}.`,
           category: 'transport',
           linkUrl: '/rides',
+          actBy: pickup,
         }),
       );
       void trackNotificationWork(
@@ -236,6 +237,7 @@ export async function seatTheLine(k: TripKey, now = new Date()): Promise<string[
           body: `${next.associate.firstName} ${next.associate.lastName} was first in line for your ${k.windowLabel} run — pickup ${fmtTime(pickup, tz)}.`,
           category: 'transport',
           linkUrl: '/',
+          actBy: pickup,
         }),
       );
     }

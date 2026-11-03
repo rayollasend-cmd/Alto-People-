@@ -4708,7 +4708,7 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'settings.delivery.modeOff': 'Só avisos urgentes e obrigatórios',
   'settings.delivery.modeOffHint': 'Nenhum outro e-mail. Avisos urgentes de segurança, da conta e de pagamento, e avisos formais do RH, continuam chegando.',
   'settings.delivery.recommended': 'Recomendado para você',
-  'settings.delivery.alwaysThrough': 'Avisos urgentes de segurança, da conta e de pagamento sempre chegam, mesmo no horário de silêncio.',
+  'settings.delivery.alwaysThrough': 'Avisos urgentes de segurança, da conta e de pagamento sempre chegam, mesmo no horário de silêncio. Também chegam os alertas de trabalho enquanto você está com o ponto batido, e o que for sobre um turno ou transporte que começa antes do fim desse horário.',
   'settings.devices.title': 'Dispositivos lembrados',
   'settings.devices.desc': 'Dispositivos onde um código de duas etapas foi digitado e lembrado. Esqueça os que você não usa mais.',
   'settings.devices.descDays': 'Dispositivos onde um código de duas etapas foi digitado e é lembrado por {days} dias. Esqueça os que você não usa mais.',

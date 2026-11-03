@@ -4673,7 +4673,7 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'settings.delivery.modeOff': 'Yalnızca acil ve zorunlu bildirimler',
   'settings.delivery.modeOffHint': 'Başka e-posta yok. Acil iş güvenliği, hesap güvenliği ve ödeme bildirimleri ile resmi İK bildirimleri gelmeye devam eder.',
   'settings.delivery.recommended': 'Size önerilen',
-  'settings.delivery.alwaysThrough': 'Acil iş güvenliği, hesap güvenliği ve ödeme bildirimleri sessiz saatlerde bile her zaman ulaşır.',
+  'settings.delivery.alwaysThrough': 'Acil iş güvenliği, hesap güvenliği ve ödeme bildirimleri sessiz saatlerde bile her zaman ulaşır. Mesaideyken iş uyarıların ve sessiz saatler bitmeden başlayan bir vardiya ya da servisle ilgili bildirimler de ulaşır.',
   'settings.devices.title': 'Hatırlanan cihazlar',
   'settings.devices.desc': 'İki adımlı kodun girilip hatırlandığı cihazlar. Artık kullanmadıklarınızı unutun.',
   'settings.devices.descDays': 'İki adımlı kodun girildiği ve {days} gün hatırlanan cihazlar. Artık kullanmadıklarınızı unutun.',

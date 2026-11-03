@@ -59,6 +59,7 @@ export async function nudgeUnconfirmedShifts(
       body: `Quick tap needed: are you coming to ${line}? Open your schedule and tap "I'll be there" so your supervisor doesn't have to chase you.`,
       category: 'shift_confirm',
       senderUserId: actorUserId,
+      actBy: shift.startsAt,
     });
     nudged += 1;
   }

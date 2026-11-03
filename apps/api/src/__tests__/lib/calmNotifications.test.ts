@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
-import { DEFAULT_TEST_PASSWORD, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { DEFAULT_TEST_PASSWORD, createAssociate, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { createApp } from '../../app.js';
 import { env } from '../../config/env.js';
 import { setNativeTransportsForTests, type NativeTransports } from '../../lib/nativePush.js';
@@ -74,6 +74,29 @@ describe('which channels a notice earns', () => {
     expect(planOutside(off, 'EMAIL', 'action', {}, day)).toEqual({ send: 'never' });
     expect(planOutside(off, 'EMAIL', 'digest', {}, day)).toEqual({ send: 'never' });
     expect(planOutside(off, 'EMAIL', 'critical', {}, night)).toEqual({ send: 'now' });
+  });
+
+  it('quiet hours are for people off the clock: someone at work gets their alerts as they happen', () => {
+    expect(planOutside(floor, 'PUSH', 'action', { onClock: true }, night)).toEqual({ send: 'now' });
+    expect(planOutside(floor, 'EMAIL', 'action', { reachable: false, onClock: true }, night)).toEqual({ send: 'now' });
+    // The office's morning summary is a cadence they chose, not quiet hours: it stands.
+    expect(planOutside(office, 'EMAIL', 'action', { onClock: true }, night)).toMatchObject({ send: 'later', reason: 'SUMMARY' });
+    // What only informs still stays in the bell.
+    expect(planOutside(floor, 'PUSH', 'info', { onClock: true }, night)).toEqual({ send: 'never' });
+  });
+
+  it('a notice about a set time is never held past it — late is worse than at night', () => {
+    const fiveAm = new Date('2026-11-04T10:00:00Z');
+    expect(planOutside(floor, 'PUSH', 'action', { actBy: fiveAm }, night)).toEqual({ send: 'now' });
+    expect(planOutside(floor, 'EMAIL', 'action', { reachable: false, actBy: fiveAm }, night)).toEqual({ send: 'now' });
+    expect(planOutside(office, 'EMAIL', 'action', { actBy: fiveAm }, night)).toEqual({ send: 'now' });
+    // The email that only waits to see whether the push was seen is no use after the fact: the push went now.
+    expect(planOutside(floor, 'EMAIL', 'action', { reachable: true, actBy: new Date(day.getTime() + 2 * 3_600_000) }, day)).toEqual({ send: 'never' });
+    // A shift after the hold ends: the hold stands.
+    expect(planOutside(floor, 'PUSH', 'action', { actBy: new Date('2026-11-04T14:00:00Z') }, night)).toEqual({ send: 'later', reason: 'QUIET_HOURS', dueAt: sevenAm });
+    // A channel the person turned off stays off; information stays in the bell.
+    expect(planOutside({ ...floor, deliveryPush: 'OFF' }, 'PUSH', 'action', { actBy: fiveAm }, night)).toEqual({ send: 'never' });
+    expect(planOutside(floor, 'PUSH', 'info', { actBy: fiveAm }, night)).toEqual({ send: 'never' });
   });
 });
 
@@ -242,6 +265,57 @@ describe('calm notifications, end to end', () => {
     expect(await prisma.notification.count({ where: { recipientUserId: hr.id, channel: 'IN_APP' } })).toBe(1);
     expect(await emails(hr.id)).toBe(0);
     expect(await prisma.deferredNotification.findFirstOrThrow({ where: { userId: hr.id, channel: 'EMAIL' } })).toMatchObject({ reason: 'SUMMARY', dueAt: sevenAm });
+  });
+
+  it('a supervisor clocked in overnight gets the no-show alert at once; one at home hears at 7', async () => {
+    vi.setSystemTime(night);
+    const onShift = await createAssociate({ firstName: 'Nia', lastName: 'Overnight' });
+    const { user: working } = await createUser({ role: 'SHIFT_SUPERVISOR', associateId: onShift.id });
+    const atHome = await createAssociate({ firstName: 'Ray', lastName: 'Daytime' });
+    const { user: home } = await createUser({ role: 'SHIFT_SUPERVISOR', associateId: atHome.id });
+    await withPhone(working.id);
+    await withPhone(home.id);
+    await prisma.timeEntry.create({ data: { associateId: onShift.id, clockInAt: new Date(night.getTime() - 3 * 3_600_000), status: 'ACTIVE' } });
+    // A punch-out forgotten two days ago is not a shift.
+    await prisma.timeEntry.create({ data: { associateId: atHome.id, clockInAt: new Date(night.getTime() - 48 * 3_600_000), status: 'ACTIVE' } });
+    for (const u of [working, home]) await notifyUser(u.id, { subject: 'Possible no-show', body: 'Dee has not clocked in.', category: 'shift_no_show' });
+    await flushPendingNotifications();
+    expect(pushes).toEqual([`ios-${working.id}`]);
+    expect(await prisma.deferredNotification.count({ where: { userId: working.id, channel: 'PUSH' } })).toBe(0);
+    expect(await prisma.deferredNotification.findFirstOrThrow({ where: { userId: home.id, channel: 'PUSH' } })).toMatchObject({ reason: 'QUIET_HOURS', dueAt: sevenAm });
+  });
+
+  it('a reminder for a shift that starts before 7 goes at once — the van "8 min away" too — and no email trails it', async () => {
+    vi.setSystemTime(night);
+    const { user } = await createUser({ role: 'ASSOCIATE' });
+    await withPhone(user.id);
+    await notifyUser(user.id, { subject: 'Shift reminder', body: "You're scheduled at 5 AM.", category: 'shift_reminder', actBy: new Date('2026-11-04T10:00:00Z') });
+    await notifyUser(user.id, { subject: 'Your van is about 8 min away', body: 'Van 2 is about 8 min from Main St.', category: 'transport', actBy: new Date(night.getTime() + 8 * 60_000) });
+    // Tomorrow afternoon's shift can wait for the morning, as before.
+    await notifyUser(user.id, { subject: 'Shift reminder', body: "You're scheduled at 2 PM.", category: 'shift_reminder', actBy: new Date('2026-11-04T19:00:00Z') });
+    await flushPendingNotifications();
+    expect(pushes).toEqual([`ios-${user.id}`, `ios-${user.id}`]);
+    expect(await emails(user.id)).toBe(0);
+    const held = await prisma.deferredNotification.findMany({ where: { userId: user.id }, select: { channel: true, body: true } });
+    expect(held.every((h) => h.body === "You're scheduled at 2 PM.")).toBe(true);
+    expect(held.map((h) => h.channel).sort()).toEqual(['EMAIL', 'PUSH', 'WHATSAPP']);
+  });
+
+  it('at 7 everything held for one person is one email — unseen ones included, not one email each', async () => {
+    vi.setSystemTime(night);
+    const { user } = await createUser({ role: 'ASSOCIATE' });
+    await withPhone(user.id);
+    for (const subject of ['Please confirm your shift', 'Shift moved', 'Swap request']) {
+      await notifyUser(user.id, { subject, body: `${subject} — details.`, category: 'shift_confirm' });
+    }
+    await flushPendingNotifications();
+    const held = await prisma.deferredNotification.findMany({ where: { userId: user.id, channel: 'EMAIL' } });
+    expect(held.map((h) => h.reason)).toEqual(['UNSEEN', 'UNSEEN', 'UNSEEN']);
+    expect(await runNotificationDigest(prisma, sevenAm)).toBeGreaterThanOrEqual(1);
+    const mail = await prisma.notification.findMany({ where: { recipientUserId: user.id, channel: 'EMAIL' } });
+    expect(mail).toHaveLength(1);
+    expect(mail[0]!.body).toContain('Please confirm your shift');
+    expect(mail[0]!.body).toContain('Swap request');
   });
 });
 
