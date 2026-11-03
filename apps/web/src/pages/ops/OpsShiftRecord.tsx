@@ -434,7 +434,7 @@ function RecordTaskLine({ task, isFollowUp = false }: { task: OpsTaskRow; isFoll
             title={p.filename}
           >
             <img
-              src={opsPhotoUrl(p.id)}
+              src={opsPhotoUrl(p.id, 128)}
               alt={`Evidence for: ${task.title}`}
               loading="lazy"
               className="h-full w-full object-cover"

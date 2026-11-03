@@ -429,8 +429,9 @@ export function opsPacketUrl(
   return `/api/ops/packet.pdf?${params.toString()}`;
 }
 
-export function opsPhotoUrl(photoId: string): string {
-  return `/api/ops/photos/${photoId}`;
+/** An evidence photo; `size` asks for a small WebP that fits that box (128 beside a task, 640 for a tile) — the link to open it stays full size. */
+export function opsPhotoUrl(photoId: string, size?: 128 | 640): string {
+  return `/api/ops/photos/${photoId}${size ? `?size=${size}` : ''}`;
 }
 
 export function addOpsHandover(

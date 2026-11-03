@@ -13,6 +13,7 @@ import { effectiveClientIdFilter, scopeShifts, scopeWhere } from '../lib/scope.j
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
+import { sendEvidencePhoto } from '../lib/photoThumbnail.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
 import { orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
@@ -1623,11 +1624,7 @@ opsRouter.get('/photos/:id', VIEW, async (req, res, next) => {
     if (clamped !== undefined && clamped !== photo.task.opsShift.clientId) {
       throw new HttpError(403, 'forbidden', 'This photo belongs to another client.');
     }
-    const buf = await getBlobStore().get(photo.s3Key);
-    if (!buf) throw new HttpError(404, 'blob_missing', 'Photo file is missing.');
-    res.setHeader('Content-Type', photo.mimeType);
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.send(buf);
+    await sendEvidencePhoto(req, res, photo);
   } catch (err) {
     next(err);
   }

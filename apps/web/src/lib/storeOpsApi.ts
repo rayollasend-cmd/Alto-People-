@@ -194,6 +194,9 @@ export function getStoreOps(qs: string): Promise<StoreOpsDay> {
   return apiFetch(`/client-portal/ops${qs}`);
 }
 
-export function storeOpsPhotoUrl(photoId: string, scopeQs: string): string {
-  return `/api/client-portal/ops/photos/${photoId}${scopeQs}`;
+/** `scopeQs` is '' or '?clientId=…'; `size` as for opsPhotoUrl. */
+export function storeOpsPhotoUrl(photoId: string, scopeQs: string, size?: 128 | 640): string {
+  const sized = size ? `size=${size}` : '';
+  const qs = [scopeQs.replace(/^\?/, ''), sized].filter(Boolean).join('&');
+  return `/api/client-portal/ops/photos/${photoId}${qs ? `?${qs}` : ''}`;
 }

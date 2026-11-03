@@ -396,7 +396,7 @@ function FromTheFloor({
                   className="block overflow-hidden rounded-lg border border-navy-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                 >
                   <OpsPhoto
-                    src={storeOpsPhotoUrl(ph.id, scopeQs)}
+                    src={storeOpsPhotoUrl(ph.id, scopeQs, 640)}
                     alt={ph.title}
                     className="aspect-[4/3] w-full object-cover transition-transform group-hover:scale-[1.03]"
                   />
@@ -1083,7 +1083,7 @@ function RunDialog({ run, data, scopeQs, onClose }: { run: StoreOpsRun; data: St
                 {t('portalOps.finalZone')}
               </figcaption>
               <OpsPhoto
-                src={storeOpsPhotoUrl(run.finalPhotoId, scopeQs)}
+                src={storeOpsPhotoUrl(run.finalPhotoId, scopeQs, 640)}
                 alt={t('portalOps.finalZoneAlt', { dept: run.department })}
                 className="max-h-80 min-h-24 w-full rounded-md border border-navy-secondary object-cover"
               />

@@ -21,7 +21,7 @@ import { auditRecruiting, recordCandidateEvent } from '../lib/candidateEvents.js
 import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
 import { buildStoreOps, opsShiftScope, runExpired, scopedOpsPhoto } from '../lib/portalOps.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { sendEvidencePhoto } from '../lib/photoThumbnail.js';
 import {
   SIGNOFF_LOOKBACK_WEEKS,
   lastFinishedWeek,
@@ -1633,11 +1633,7 @@ clientPortalRouter.get('/client-portal/ops/photos/:id', requireAuth, async (req,
     const scope = await resolveScope(req.user!, req.query, { floorLead: true });
     const photo = await scopedOpsPhoto(scope, req.params.id);
     if (!photo) throw new HttpError(404, 'not_found', 'Photo not found');
-    const buf = await getBlobStore().get(photo.s3Key);
-    if (!buf) throw new HttpError(404, 'blob_missing', 'Photo file is missing.');
-    res.setHeader('Content-Type', photo.mimeType);
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.send(buf);
+    await sendEvidencePhoto(req, res, photo);
   } catch (err) {
     next(err);
   }

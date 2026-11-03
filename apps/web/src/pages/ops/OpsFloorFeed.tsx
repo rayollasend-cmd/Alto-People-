@@ -107,7 +107,7 @@ export function OpsPhotoWall({
                   className="block overflow-hidden rounded-lg border border-navy-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                 >
                   <img
-                    src={opsPhotoUrl(p.id)}
+                    src={opsPhotoUrl(p.id, 640)}
                     alt={`${p.title} at ${p.store}`}
                     loading="lazy"
                     className="aspect-[4/3] w-full object-cover transition-transform group-hover:scale-[1.03]"
@@ -282,7 +282,7 @@ export function OpsFloorFeed({
                       )}
                       {e.photoId && (
                         <img
-                          src={opsPhotoUrl(e.photoId)}
+                          src={opsPhotoUrl(e.photoId, 128)}
                           alt=""
                           loading="lazy"
                           className="h-9 w-9 shrink-0 rounded object-cover"

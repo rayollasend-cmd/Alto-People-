@@ -3,7 +3,6 @@ import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '../types/express.js';
 import { PROFILE_PHOTO_MAX_BYTES } from '@alto-people/shared';
 import multer from 'multer';
-import sharp from 'sharp';
 import { createHash, randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { prisma } from '../db.js';
@@ -15,6 +14,7 @@ import {
 } from '../middleware/auth.js';
 import { PROFILE_PHOTO_DIR } from '../lib/storage.js';
 import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
+import { storedThumbnail, thumbnailKey } from '../lib/photoThumbnail.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { profilePhotoUrlFor, userPhotoUrlFor } from '../lib/profilePhotoUrl.js';
@@ -123,7 +123,7 @@ async function removePhoto(owner: PhotoOwner): Promise<void> {
 /** A photo's blob and the thumbnails made from it — best effort, an orphan is not a correctness problem. */
 async function deletePhotoBlobs(key: string): Promise<void> {
   const store = getBlobStore();
-  await Promise.all([key, ...[...THUMB_SIZES].map((px) => thumbKey(key, px))].map((k) => store.delete(k).catch(() => undefined)));
+  await Promise.all([key, ...[...THUMB_SIZES].map((px) => thumbnailKey(key, px))].map((k) => store.delete(k).catch(() => undefined)));
 }
 
 /**
@@ -283,33 +283,10 @@ type StoredPhoto = { photoS3Key: string | null; photoUpdatedAt: Date | null } | 
  * thumbnail is made once, on first ask, and kept beside the original.
  */
 const THUMB_SIZES: ReadonlySet<number> = new Set([96, 256]);
-const thumbKey = (key: string, px: number): string => `${key}.${px}.webp`;
-const thumbsInFlight = new Map<string, Promise<Buffer | null>>();
 
 function thumbSize(req: Request): number | null {
   const px = Number(req.query.size);
   return THUMB_SIZES.has(px) ? px : null;
-}
-
-/** The thumbnail's bytes, made and stored on first ask; null when the original is gone. */
-async function thumbnail(key: string, px: number): Promise<Buffer | null> {
-  const derived = thumbKey(key, px);
-  const store = getBlobStore();
-  const stored = await store.get(derived).catch(() => null);
-  if (stored) return stored;
-  // A page asks for the same face from several rows at once: make it once.
-  let pending = thumbsInFlight.get(derived);
-  if (!pending) {
-    pending = (async () => {
-      const original = await store.get(key);
-      if (!original) return null;
-      const small = await sharp(original).rotate().resize(px, px, { fit: 'cover' }).webp({ quality: 80 }).toBuffer();
-      await store.put(derived, small, 'image/webp').catch(() => undefined);
-      return small;
-    })().finally(() => thumbsInFlight.delete(derived));
-    thumbsInFlight.set(derived, pending);
-  }
-  return pending;
 }
 
 /**
@@ -351,7 +328,7 @@ async function sendPhoto(req: Request, res: Response, photo: StoredPhoto): Promi
   let thumb = false;
   if (px) {
     try {
-      blob = await thumbnail(key, px);
+      blob = await storedThumbnail(key, px);
       thumb = blob !== null;
     } catch {
       blob = null;
