@@ -171,6 +171,11 @@ export async function purgeGhost(
       await tx.associateAssignment.deleteMany({ where: { associateId: ghost.associateId } });
       await tx.backgroundCheck.deleteMany({ where: { associateId: ghost.associateId } });
       await tx.drugTest.deleteMany({ where: { associateId: ghost.associateId } });
+      // An agreement they e-signed before walking away: its Signature row
+      // RESTRICTs deleting the document (Nov 2026: 7 ghosts failed every
+      // sweep on Signature_documentId_fkey). The signed PDF is the
+      // document's own file, already in blobKeys.
+      await tx.signature.deleteMany({ where: { document: { associateId: ghost.associateId } } });
       await tx.documentRecord.deleteMany({ where: { associateId: ghost.associateId } });
       await tx.pendingPayrollDeduction.deleteMany({ where: { associateId: ghost.associateId } });
       await tx.application.deleteMany({ where: { associateId: ghost.associateId } });

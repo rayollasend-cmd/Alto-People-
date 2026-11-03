@@ -74,7 +74,15 @@ export function initSentry(): void {
       // else itself. Sentry 11's Express integration otherwise captures
       // every error that carries no HTTP status — all of those — before
       // that handler runs (ALTO-PEOPLE-API-8, -S, -14, -Y, -X, -T).
-      Sentry.expressIntegration({ shouldHandleError: false }),
+      //
+      // Spans for the route handler only. A span per middleware and per
+      // router hung a 'finish' listener on every response for each layer
+      // passed — ~16 on a plain request, 96 on a path that walks every
+      // router — so Node warned "MaxListenersExceededWarning" on nearly
+      // every request (Nov 2026: ~11 a minute, most of the log), and each
+      // kept trace spent ~17 spans on helmet/cors/body parsing. Route names
+      // don't depend on them (lib/routeName names the root span).
+      Sentry.expressIntegration({ shouldHandleError: false, ignoreLayersType: ['middleware', 'router'] }),
     ],
     // Don't capture noisy AbortError / ECONNRESET that happen when a
     // browser cancels an in-flight request. They're not errors, they're

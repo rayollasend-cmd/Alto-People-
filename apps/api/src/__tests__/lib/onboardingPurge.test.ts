@@ -197,6 +197,43 @@ describe('runOnboardingPurgeSweep — abandoned onboardings', () => {
     expect(audit!.metadata).toMatchObject({ kind: 'onboarding_abandoned' });
   });
 
+  it('purges someone who e-signed an agreement before walking away: signature, document and person go', async () => {
+    const { associate, user } = await seedAcceptedGhost();
+    const t0 = Date.now();
+    // What the onboarding e-sign leaves: the signed PDF filed as a document,
+    // and a Signature row pointing at it (which RESTRICTs deleting it).
+    const doc = await prisma.documentRecord.create({
+      data: {
+        associateId: associate.id,
+        kind: 'SIGNED_AGREEMENT',
+        s3Key: 'esign/agreement/abc.pdf',
+        filename: 'handbook.pdf',
+        mimeType: 'application/pdf',
+        size: 2048,
+        status: 'VERIFIED',
+        createdAt: new Date(t0),
+      },
+    });
+    const sig = await prisma.signature.create({
+      data: {
+        documentId: doc.id,
+        signerUserId: user.id,
+        associateId: associate.id,
+        signedAt: new Date(t0),
+        signatureS3Key: 'esign/agreement/abc.pdf',
+        typedName: 'Walked Away',
+      },
+    });
+
+    await runOnboardingPurgeSweep(prisma, new Date(t0 + 9 * DAY));
+    const day12 = await runOnboardingPurgeSweep(prisma, new Date(t0 + 12 * DAY));
+    expect(day12.errors).toEqual([]);
+    expect(day12.abandonedPurged).toBe(1);
+    expect(await prisma.signature.findUnique({ where: { id: sig.id } })).toBeNull();
+    expect(await prisma.documentRecord.findUnique({ where: { id: doc.id } })).toBeNull();
+    expect(await prisma.associate.findUnique({ where: { id: associate.id } })).toBeNull();
+  });
+
   it('recent onboarding activity resets the idle clock', async () => {
     const { associate } = await seedAcceptedGhost();
     const t0 = Date.now();
