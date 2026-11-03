@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { runShiftReminderSweep } from '../../lib/shiftReminder.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
+import { recordAttendanceForEntry } from '../../lib/attendance.js';
 import { prisma, truncateAll } from '../../../test/db.js';
 
 beforeEach(async () => {
@@ -299,5 +300,39 @@ describe('no-call no-show attendance records', () => {
     const r = await runShiftReminderSweep(prisma, NOW);
     expect(r.noShowsWithdrawn).toBe(0);
     expect(await ncnsCount()).toBe(1);
+  });
+});
+
+describe('late arrivals on clock-out', () => {
+  it('a second clock-out on the same late shift records LATE once, quietly', async () => {
+    const { shift, associateId } = await seedEndedShift({ endedMinAgo: 60 });
+    // In 20 minutes late, out for lunch, back in, out at the end: two
+    // entries on one shift, and each clock-out asks again.
+    const morning = await prisma.timeEntry.create({
+      data: {
+        associateId,
+        shiftId: shift.id,
+        clockInAt: new Date(shift.startsAt.getTime() + 20 * 60_000),
+        clockOutAt: new Date(shift.startsAt.getTime() + 4 * 3_600_000),
+        status: 'COMPLETED',
+      },
+    });
+    const afternoon = await prisma.timeEntry.create({
+      data: {
+        associateId,
+        shiftId: shift.id,
+        clockInAt: new Date(shift.startsAt.getTime() + 4.5 * 3_600_000),
+        clockOutAt: shift.endsAt,
+        status: 'COMPLETED',
+      },
+    });
+
+    await recordAttendanceForEntry(prisma, morning.id);
+    await recordAttendanceForEntry(prisma, afternoon.id);
+    await recordAttendanceForEntry(prisma, morning.id); // a replayed punch
+
+    const late = await prisma.attendanceEvent.findMany({ where: { shiftId: shift.id, kind: 'LATE' } });
+    expect(late).toHaveLength(1);
+    expect(late[0]!.note).toBe('20 min after shift start');
   });
 });

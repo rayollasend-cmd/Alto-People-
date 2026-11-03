@@ -131,9 +131,13 @@ async function createEvent(
   },
 ): Promise<void> {
   const scoreBefore = await attendanceScore(db, data.associateId);
-  try {
-    await db.attendanceEvent.create({
-      data: {
+  // Unique (shiftId, kind): a second clock-out on the same shift, a
+  // concurrent sweep or a replayed punch already recorded this signal.
+  // Skipped, not caught — Prisma logs a failed create as an error (~4 an
+  // hour in production, Nov 2026), and a catch-all hid real failures too.
+  const { count } = await db.attendanceEvent.createMany({
+    data: [
+      {
         associateId: data.associateId,
         shiftId: data.shiftId,
         clientId: data.clientId,
@@ -142,12 +146,10 @@ async function createEvent(
         occurredOn: data.occurredOn,
         note: data.note ?? null,
       },
-    });
-  } catch {
-    // Unique (shiftId, kind) — a concurrent sweep or replayed clock-out
-    // already recorded this signal. Idempotent by design.
-    return;
-  }
+    ],
+    skipDuplicates: true,
+  });
+  if (count === 0) return;
   await notifyIfThresholdCrossed(db, {
     associateId: data.associateId,
     associateName: data.associateName,
@@ -364,9 +366,9 @@ export async function recordCallOutAttendance(
       await createEvent(db, { associateId: data.associateId, shiftId: data.shiftId, clientId: data.clientId, kind: 'CALL_OUT', occurredOn: data.occurredOn, note: data.note, associateName: data.associateName });
       return;
     }
-    await db.attendanceEvent
-      .create({
-        data: {
+    await db.attendanceEvent.createMany({
+      data: [
+        {
           associateId: data.associateId,
           shiftId: data.shiftId,
           clientId: data.clientId,
@@ -376,8 +378,9 @@ export async function recordCallOutAttendance(
           note: [data.note, data.excusedWhy].filter(Boolean).join(' — ').slice(0, 1000),
           excusedAt: new Date(),
         },
-      })
-      .catch(() => undefined); // already recorded for this shift
+      ],
+      skipDuplicates: true, // already recorded for this shift
+    });
   } catch (err) {
     console.warn('[attendance] call-out hook failed:', err instanceof Error ? err.message : err);
   }
