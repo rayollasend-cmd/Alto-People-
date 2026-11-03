@@ -29,8 +29,8 @@ import { Settings } from '@/pages/Settings';
 type Reach = { web: boolean; native: boolean; devices: number };
 
 const ENTRIES = [
-  { category: 'scheduling', label: 'Scheduling', description: 'Shift changes', mandatory: false, emailEnabled: true, inAppEnabled: true, pushEnabled: true },
-  { category: 'documents', label: 'Documents', description: 'Your paperwork', mandatory: false, emailEnabled: true, inAppEnabled: true, pushEnabled: false },
+  { category: 'scheduling', label: 'Schedule changes', description: 'Shifts you are added to, moved off of, or that get cancelled.', mandatory: false, emailEnabled: true, inAppEnabled: true, pushEnabled: true },
+  { category: 'documents', label: 'Document changes', description: 'Confirmations and rejections for documents you upload.', mandatory: false, emailEnabled: true, inAppEnabled: true, pushEnabled: false },
   { category: 'security', label: 'Account security', description: 'Sign-ins', mandatory: true, emailEnabled: true, inAppEnabled: true, pushEnabled: true },
 ];
 
@@ -68,8 +68,8 @@ describe('the Push column', () => {
     const cols = await screen.findByTestId('notif-columns');
     expect(cols).toHaveTextContent(/Bell\s*Email\s*Push/);
     const push = (label: string) => screen.getByRole('switch', { name: `Push for ${label}` });
-    expect(push('Scheduling')).toBeChecked();
-    expect(push('Documents')).not.toBeChecked();
+    expect(push('Schedule changes')).toBeChecked();
+    expect(push('Document changes')).not.toBeChecked();
     expect(push('Account security')).toBeChecked();
     expect(push('Account security')).toBeDisabled();
     // The copy names all three.
@@ -81,12 +81,12 @@ describe('the Push column', () => {
     reach = { web: true, native: false, devices: 1 };
     serve();
     renderAs('ASSOCIATE', <Settings />, '/settings#notifications', { associateId: 'a1' });
-    const toggle = await screen.findByRole('switch', { name: 'Push for Scheduling' });
+    const toggle = await screen.findByRole('switch', { name: 'Push for Schedule changes' });
     await userEvent.click(toggle);
     await waitFor(() => expect(patches).toEqual([{ category: 'scheduling', pushEnabled: false }]));
     expect(toggle).not.toBeChecked();
-    expect(screen.getByRole('switch', { name: 'Email for Scheduling' })).toBeChecked();
-    expect(screen.getByRole('switch', { name: 'Bell for Scheduling' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Email for Schedule changes' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Bell for Schedule changes' })).toBeChecked();
   });
 
   it('this device subscribed and reachable: no note, and the device row offers to turn it off here', async () => {
@@ -110,7 +110,7 @@ describe('the Push column', () => {
     const note = await screen.findByTestId('push-column-note');
     expect(note).toHaveTextContent('Push is off on this device. No device of yours gets push yet, so nothing arrives by push.');
     // The switches point at the note.
-    expect(screen.getByRole('switch', { name: 'Push for Scheduling' })).toHaveAttribute('aria-describedby', 'push-column-note');
+    expect(screen.getByRole('switch', { name: 'Push for Schedule changes' })).toHaveAttribute('aria-describedby', 'push-column-note');
     expect(screen.queryByTestId('push-this-device')).toBeNull();
 
     const before = prefsLoads();
@@ -164,6 +164,11 @@ describe('the Push column', () => {
       expect(note).toHaveTextContent('Las notificaciones push están desactivadas en este dispositivo. Ninguno de tus dispositivos recibe push todavía, así que no te llegará nada por push.');
       expect(within(note).getByRole('button', { name: 'Activar push en este dispositivo' })).toBeInTheDocument();
       expect(screen.getByTestId('push-column-head')).toHaveTextContent('Push');
+      // The categories themselves, not only the page around them (owner, 2026-11-03).
+      expect(screen.getByText('Cambios de horario')).toBeInTheDocument();
+      expect(screen.getByText('Turnos a los que lo agregan, de los que lo quitan o que se cancelan.')).toBeInTheDocument();
+      expect(screen.getAllByRole('switch', { name: /Cambios de horario/ })).toHaveLength(3);
+      expect(screen.queryByText('Schedule changes')).toBeNull();
     } finally {
       window.localStorage.removeItem('alto.lang');
     }

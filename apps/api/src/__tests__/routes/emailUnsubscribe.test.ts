@@ -177,6 +177,9 @@ describe('the unsubscribe link', () => {
     const page = await request(app()).get(`/communications/unsubscribe/${token}`).set({ ...navigation, 'accept-language': 'es-US,es;q=0.9,en;q=0.8' });
     expect(page.text).toContain('<html lang="es">');
     expect(page.text).toContain('Dejar de recibir estos correos');
+    // The kind of email is named in Spanish too, as the app's bell names it.
+    expect(page.text).toContain('Cambios de horario');
+    expect(page.text).not.toContain('Schedule changes');
   });
 
   it('refuses a required bucket — security, safety and formal HR notices always reach people', async () => {

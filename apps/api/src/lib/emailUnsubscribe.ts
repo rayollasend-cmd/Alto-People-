@@ -209,15 +209,72 @@ const PAGE_COPY: Record<EmailLang, {
 
 export type UnsubscribePageState = 'confirm' | 'done' | 'always_on' | 'invalid';
 
-/** The bucket's name as Settings shows it. */
-function bucketLabel(bucket: string | null): string {
-  return NOTIFICATION_CATEGORIES.find((c) => c.key === bucket)?.label ?? '';
+/** The bucket names in the page's other languages — the same words the app's bell and Settings use (web i18n bell.cat.*). */
+const BUCKET_LABELS: Record<Exclude<EmailLang, 'en'>, Record<string, string>> = {
+  es: {
+    onboarding: 'Novedades de incorporación',
+    documents: 'Cambios en documentos',
+    time_off: 'Decisiones de ausencias',
+    scheduling: 'Cambios de horario',
+    shift_swaps: 'Solicitudes de cambio de turno',
+    broadcast: 'Anuncios de la empresa',
+    time_pay: 'Novedades de horas y pago',
+    growth: 'Carrera y crecimiento',
+    workplace: 'Novedades del trabajo y RR. HH.',
+    discipline: 'Medidas disciplinarias',
+    probation: 'Período de prueba',
+    security: 'Seguridad de la cuenta',
+    assistant: 'Tareas y notas del asistente',
+    messages: 'Mensajes',
+    store_daily: 'Nota de la mañana de la tienda',
+    store_alerts: 'Alertas de falta de personal',
+    store_requests: 'Novedades de solicitudes',
+    store_reports: 'Informes y estados de cuenta',
+    transport: 'Viajes y transporte',
+    finance: 'Finanzas y facturación',
+    recruiting: 'Reclutamiento',
+    approvals_tasks: 'Aprobaciones y traspasos',
+    reports_digests: 'Informes y resúmenes',
+    emergency: 'Alertas de emergencia',
+  },
+  tr: {
+    assistant: 'Asistan görevleri ve notları',
+    broadcast: 'Şirket duyuruları',
+    discipline: 'Disiplin işlemleri',
+    documents: 'Belge değişiklikleri',
+    growth: 'Kariyer ve gelişim',
+    messages: 'Mesajlar',
+    onboarding: 'İşe alım güncellemeleri',
+    probation: 'Deneme süresi',
+    scheduling: 'Program değişiklikleri',
+    security: 'Hesap güvenliği',
+    shift_swaps: 'Vardiya takas istekleri',
+    store_alerts: 'Personel eksikliği uyarıları',
+    store_daily: 'Mağazanın sabah notu',
+    store_reports: 'Raporlar ve hesap özetleri',
+    store_requests: 'İstek güncellemeleri',
+    time_off: 'İzin kararları',
+    time_pay: 'Saat ve ödeme güncellemeleri',
+    workplace: 'İş yeri ve İK güncellemeleri',
+    transport: 'Servisler ve ulaşım',
+    finance: 'Finans ve faturalama',
+    recruiting: 'Personel alımı',
+    approvals_tasks: 'Onaylar ve devredilen işler',
+    reports_digests: 'Raporlar ve özetler',
+    emergency: 'Acil durum uyarıları',
+  },
+};
+
+/** The bucket's name as Settings shows it, in the page's language (English when a name has no translation yet). */
+function bucketLabel(bucket: string | null, lang: EmailLang): string {
+  const english = NOTIFICATION_CATEGORIES.find((c) => c.key === bucket)?.label ?? '';
+  return (lang !== 'en' && bucket && BUCKET_LABELS[lang][bucket]) || english;
 }
 
 export function unsubscribePageHtml(o: { state: UnsubscribePageState; lang: EmailLang; bucket: string | null }): string {
   const c = PAGE_COPY[o.lang];
   const brand = getEmailBrandName();
-  const label = bucketLabel(o.bucket);
+  const label = bucketLabel(o.bucket, o.lang);
   const manage = `<p class="manage"><a href="${escapeHtml(manageNotificationsUrl())}">${escapeHtml(c.manage)}</a></p>`;
   let body: string;
   if (o.state === 'confirm') {

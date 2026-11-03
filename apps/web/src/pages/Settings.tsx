@@ -69,6 +69,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { isLang, useI18n, type MessageKey, type Translate } from '@/lib/i18n';
+import { en } from '@/lib/i18n/english';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -933,6 +934,20 @@ function EmailCard() {
 
 type Channel = 'inAppEnabled' | 'emailEnabled' | 'pushEnabled';
 
+/**
+ * A category's name and line in the person's language (settingsPage.notif.cat.* /
+ * .desc.*). The API sends them in English; a bucket added later with no key yet
+ * shows that English rather than a raw key.
+ */
+function categoryText(e: NotificationPreferenceEntry, t: Translate, term: Parameters<typeof termizeText>[1]): { label: string; description: string } {
+  const label = `settingsPage.notif.cat.${e.category}` as MessageKey;
+  const desc = `settingsPage.notif.desc.${e.category}` as MessageKey;
+  return {
+    label: en[label] ? t(label) : e.label,
+    description: en[desc] ? t(desc) : termizeText(e.description, term),
+  };
+}
+
 function NotificationsCard() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -1054,7 +1069,7 @@ function NotificationsCard() {
         checked={e[channel]}
         onCheckedChange={() => void onToggle(e, channel)}
         disabled={e.mandatory || pending === `${e.category}:${channel}`}
-        aria-label={t('settingsPage.notif.toggleAria', { channel: label, category: e.label })}
+        aria-label={t('settingsPage.notif.toggleAria', { channel: label, category: categoryText(e, t, term).label })}
         aria-describedby={channel === 'pushEnabled' && note ? 'push-column-note' : undefined}
       />
     </span>
@@ -1126,7 +1141,7 @@ function NotificationsCard() {
               >
                 <div className="min-w-0 flex-1">
                   <div className="text-sm text-ink flex flex-wrap items-center gap-x-2">
-                    {e.label}
+                    {categoryText(e, t, term).label}
                     {e.mandatory && (
                       <span className="inline-flex items-center gap-1 text-xs text-silver">
                         <Lock className="h-3 w-3" />
@@ -1134,7 +1149,7 @@ function NotificationsCard() {
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-silver mt-0.5">{termizeText(e.description, term)}</div>
+                  <div className="text-xs text-silver mt-0.5">{categoryText(e, t, term).description}</div>
                 </div>
                 <span className="flex shrink-0 items-start gap-3">
                   {channelToggle(e, 'inAppEnabled', t('settingsPage.notif.bell'))}
