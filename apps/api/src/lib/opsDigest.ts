@@ -3,7 +3,7 @@ import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { notifyAllAdmins } from './notify.js';
-import { orgDateKey } from './timeAnomalies.js';
+import { companyWorkweek, orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 import { fmtDay } from './humanDates.js';
 import { logger } from './logger.js';
 
@@ -13,8 +13,7 @@ import { logger } from './logger.js';
  *
  * Runs on an interval (env-gated) but only SENDS once per org-day, after
  * 8pm org-local, and only when there was ops activity to report. Dedup is
- * a Notification-row check on category + the day key in the body — the
- * same convention the other once-per-condition sweeps use.
+ * a Notification-row check: any ops digest since the org day began.
  */
 
 const SEND_AFTER_HOUR = 20;
@@ -38,11 +37,14 @@ export async function runOpsDigestSweep(
     return { sent: false, reason: 'before_send_hour' };
   }
   const dateKey = orgDateKey(now);
+  // Matched by when, not by the body: the body named the day key until it
+  // began saying the day in words (Oct 26), and from then on the check never
+  // matched — the office got it every interval from 8 PM to midnight (Nov
+  // 2026: 108 emails to 4 people in a week).
   const already = await prisma.notification.findFirst({
     where: {
       category: 'ops.digest',
-      body: { contains: dateKey },
-      createdAt: { gte: new Date(now.getTime() - 24 * 3_600_000) },
+      createdAt: { gte: utcInstantOfLocalMidnight(dateKey, companyWorkweek().timezone) },
     },
     select: { id: true },
   });
