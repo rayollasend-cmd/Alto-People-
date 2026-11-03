@@ -36,6 +36,7 @@ export * from './timesheetQueue.js';
 export * from './clientAccount.js';
 export * from './prospects.js';
 export * from './peopleStatus.js';
+export * from './complianceWorkforce.js';
 export * from './queues.js';
 export * from './auditLog.js';
 export * from './hirePay.js';

@@ -2,6 +2,7 @@ import type { SeasonWeekMix } from './tasks.js';
 import { z } from 'zod';
 import { TenantProfileSchema } from './tenantProfile.js';
 import { WorkStatusSchema, type WorkStatusCounts } from './peopleStatus.js';
+import { ComplianceWorkforceSchema, WorkforceCountsSchema } from './complianceWorkforce.js';
 import { httpUrl } from './safeUrl.js';
 import { SUPPORTED_TIMEZONES } from './timezones.js';
 import { NOTIFICATION_CATEGORIES, type NotificationCategory } from './notificationCategories.js';
@@ -4107,6 +4108,9 @@ export const I9VerificationSchema = /* @__PURE__ */ (() => z.object({
   /** The person's headshot URL; null = none on file (the Avatar skips the
    *  request). Absent from older servers. */
   photoUrl: z.string().nullable().optional(),
+  /** Where the person stands (peopleStatus.ts) — the row's employment badge.
+   *  Absent from older servers. */
+  workStatus: WorkStatusSchema.nullable().optional(),
 }))();
 export type I9Verification = z.infer<typeof I9VerificationSchema>;
 
@@ -4131,6 +4135,10 @@ export const I9ListResponseSchema = /* @__PURE__ */ (() => z.object({
   truncated: z.boolean().optional(),
   /** Placed people with no I-9 record (the working list only). */
   notStarted: z.array(I9NotStartedSchema).optional(),
+  /** The group this list was asked for (complianceWorkforce.ts). */
+  workforce: ComplianceWorkforceSchema.optional(),
+  /** How many of this list's people are in each group — the chip counts. */
+  workforceCounts: WorkforceCountsSchema.optional(),
 }))();
 export type I9ListResponse = z.infer<typeof I9ListResponseSchema>;
 
@@ -4195,6 +4203,9 @@ export const BackgroundCheckSchema = /* @__PURE__ */ (() => z.object({
   result: z.string().nullable().optional(),
   /** Ordered through a connected provider — adverse action runs in its panel. */
   viaProvider: z.boolean().optional(),
+  /** Where the person stands (peopleStatus.ts) — the row's employment badge.
+   *  Absent from older servers. */
+  workStatus: WorkStatusSchema.nullable().optional(),
 }))();
 export type BackgroundCheck = z.infer<typeof BackgroundCheckSchema>;
 
@@ -4269,6 +4280,12 @@ export type EeoApplicantReport = z.infer<typeof EeoApplicantReportSchema>;
 
 export const BackgroundCheckListResponseSchema = /* @__PURE__ */ (() => z.object({
   checks: z.array(BackgroundCheckSchema),
+  /** True when more checks matched than the list carries. */
+  truncated: z.boolean().optional(),
+  /** The group this list was asked for (complianceWorkforce.ts). */
+  workforce: ComplianceWorkforceSchema.optional(),
+  /** How many of this list's people are in each group — the chip counts. */
+  workforceCounts: WorkforceCountsSchema.optional(),
 }))();
 export type BackgroundCheckListResponse = z.infer<typeof BackgroundCheckListResponseSchema>;
 
@@ -4380,11 +4397,20 @@ export const DrugTestSchema = /* @__PURE__ */ (() => z.object({
   completedAt: z.string().datetime().nullable(),
   /** DRUG_TEST_RESULT documents on file for this associate. */
   reportCount: z.number().int().nonnegative().optional(),
+  /** Where the person stands (peopleStatus.ts) — the row's employment badge.
+   *  Absent from older servers. */
+  workStatus: WorkStatusSchema.nullable().optional(),
 }))();
 export type DrugTest = z.infer<typeof DrugTestSchema>;
 
 export const DrugTestListResponseSchema = /* @__PURE__ */ (() => z.object({
   tests: z.array(DrugTestSchema),
+  /** True when more tests matched than the list carries. */
+  truncated: z.boolean().optional(),
+  /** The group this list was asked for (complianceWorkforce.ts). */
+  workforce: ComplianceWorkforceSchema.optional(),
+  /** How many of this list's people are in each group — the chip counts. */
+  workforceCounts: WorkforceCountsSchema.optional(),
 }))();
 export type DrugTestListResponse = z.infer<typeof DrugTestListResponseSchema>;
 
@@ -4457,6 +4483,9 @@ export const J1ProfileSchema = /* @__PURE__ */ (() => z.object({
   country: z.string(),
   /** Server-computed: days from now until programEndDate (negative = expired). */
   daysUntilEnd: z.number().int(),
+  /** Where the person stands (peopleStatus.ts) — the row's employment badge.
+   *  Absent from older servers. */
+  workStatus: WorkStatusSchema.nullable().optional(),
 }))();
 export type J1Profile = z.infer<typeof J1ProfileSchema>;
 
@@ -4464,6 +4493,10 @@ export const J1ListResponseSchema = /* @__PURE__ */ (() => z.object({
   profiles: z.array(J1ProfileSchema),
   /** True when more profiles matched than the list carries. */
   truncated: z.boolean().optional(),
+  /** The group this list was asked for (complianceWorkforce.ts). */
+  workforce: ComplianceWorkforceSchema.optional(),
+  /** How many of this list's people are in each group — the chip counts. */
+  workforceCounts: WorkforceCountsSchema.optional(),
 }))();
 export type J1ListResponse = z.infer<typeof J1ListResponseSchema>;
 
@@ -6797,6 +6830,9 @@ export const EVerifyRosterRowSchema = /* @__PURE__ */ (() => z.object({
   overdue: z.boolean(),
   blockers: z.array(EVerifyBlockerSchema),
   ready: z.boolean(),
+  /** Where the person stands (peopleStatus.ts) — the row's employment badge.
+   *  Absent from older servers. */
+  workStatus: WorkStatusSchema.nullable().optional(),
 }))();
 export type EVerifyRosterRow = z.infer<typeof EVerifyRosterRowSchema>;
 
@@ -6812,6 +6848,10 @@ export const EVerifyRosterResponseSchema = /* @__PURE__ */ (() => z.object({
     blocked: z.number().int().nonnegative(),
   }),
   truncated: z.boolean(),
+  /** The group this list was asked for (complianceWorkforce.ts). */
+  workforce: ComplianceWorkforceSchema.optional(),
+  /** How many of this list's people are in each group — the chip counts. */
+  workforceCounts: WorkforceCountsSchema.optional(),
 }))();
 export type EVerifyRosterResponse = z.infer<typeof EVerifyRosterResponseSchema>;
 

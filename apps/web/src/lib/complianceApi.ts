@@ -26,11 +26,21 @@ import type {
   J1Profile,
   J1UpsertInput,
 } from '@alto-people/shared';
+import type { ComplianceWorkforce } from '@alto-people/shared';
 import { apiFetch } from './api';
 
-export function listI9s(filter: 'pending' | 'complete' | 'all' = 'all'): Promise<I9ListResponse> {
+/**
+ * `?workforce=` on a compliance list (owner, 2026-11-03): who the list is
+ * about. Left out, the server opens on the current workforce.
+ */
+function withWorkforce(path: string, workforce: ComplianceWorkforce | undefined): string {
+  if (!workforce) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}workforce=${workforce}`;
+}
+
+export function listI9s(filter: 'pending' | 'complete' | 'all' = 'all', opts: { workforce?: ComplianceWorkforce } = {}): Promise<I9ListResponse> {
   const qs = filter === 'all' ? '' : `?status=${filter}`;
-  return apiFetch<I9ListResponse>(`/compliance/i9${qs}`);
+  return apiFetch<I9ListResponse>(withWorkforce(`/compliance/i9${qs}`, opts.workforce));
 }
 
 export function upsertI9(associateId: string, body: I9UpsertInput): Promise<I9Verification> {
@@ -43,8 +53,8 @@ export function upsertI9(associateId: string, body: I9UpsertInput): Promise<I9Ve
 /* ----- E-Verify directorate --------------------------------------------- */
 
 /** Everyone onboarded or onboarding, with E-Verify state and what's blocking. */
-export function listEVerifyRoster(): Promise<EVerifyRosterResponse> {
-  return apiFetch<EVerifyRosterResponse>('/compliance/everify');
+export function listEVerifyRoster(opts: { workforce?: ComplianceWorkforce } = {}): Promise<EVerifyRosterResponse> {
+  return apiFetch<EVerifyRosterResponse>(withWorkforce('/compliance/everify', opts.workforce));
 }
 
 /**
@@ -83,8 +93,8 @@ export function updateEVerifyIdentity(
   });
 }
 
-export function listBackgroundChecks(): Promise<BackgroundCheckListResponse> {
-  return apiFetch<BackgroundCheckListResponse>('/compliance/background');
+export function listBackgroundChecks(opts: { workforce?: ComplianceWorkforce } = {}): Promise<BackgroundCheckListResponse> {
+  return apiFetch<BackgroundCheckListResponse>(withWorkforce('/compliance/background', opts.workforce));
 }
 
 /** Check + report documents for the drawer. Every read is an audited
@@ -155,8 +165,8 @@ export function getEeoApplicantReport(range: { from?: string; to?: string } = {}
 
 /* ----- Drug tests -------------------------------------------------------- */
 
-export function listDrugTests(): Promise<DrugTestListResponse> {
-  return apiFetch<DrugTestListResponse>('/compliance/drug-tests');
+export function listDrugTests(opts: { workforce?: ComplianceWorkforce } = {}): Promise<DrugTestListResponse> {
+  return apiFetch<DrugTestListResponse>(withWorkforce('/compliance/drug-tests', opts.workforce));
 }
 
 /** Test + result documents for the drawer. Every read is an audited
@@ -188,9 +198,9 @@ export function bulkInitiateDrugTests(
   });
 }
 
-export function listJ1Profiles(opts: { expiringWithin?: number } = {}): Promise<J1ListResponse> {
+export function listJ1Profiles(opts: { expiringWithin?: number; workforce?: ComplianceWorkforce } = {}): Promise<J1ListResponse> {
   const qs = opts.expiringWithin ? `?expiringWithin=${opts.expiringWithin}` : '';
-  return apiFetch<J1ListResponse>(`/compliance/j1${qs}`);
+  return apiFetch<J1ListResponse>(withWorkforce(`/compliance/j1${qs}`, opts.workforce));
 }
 
 export function upsertJ1(associateId: string, body: J1UpsertInput): Promise<J1Profile> {
