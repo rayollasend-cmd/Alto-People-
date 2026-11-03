@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Globe, Plane, Plus } from '@/components/ui/icons';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
 import { sanitizeReturnPath } from './section2Verification';
-import type { J1Profile } from '@alto-people/shared';
+import { WORKFORCE_PARAM, WorkforceFilter, useComplianceWorkforce } from './WorkforceFilter';
+import { COMPLIANCE_WORKFORCE_LABELS, type ClearedShift, type J1Profile } from '@alto-people/shared';
 import { listJ1Profiles, upsertJ1 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
-import { fmtDate, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDateTz, fmtShiftRangeTz, parseYmd, ymdLocal } from '@/lib/format';
 import { personPhotoUrl } from '@/lib/photoUrl';
+import { PeopleStatusBadge, workStatusEnglish } from '@/components/ui/PeopleStatusBadge';
 import {
   Avatar,
   Badge,
@@ -33,11 +35,42 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 
+/**
+ * J-1 participants (cleared to work, owner 2026-11-03). Opens on the current
+ * workforce like every compliance tab; the program end is the one the
+ * scheduling block reads (the later of this profile and an open Program
+ * record), and each row says when the person is next scheduled — and flags
+ * a shift booked after the program end, or a punch after it. The 30-day
+ * grace period lets a participant stay in the country; it does not allow
+ * work, so scheduling refuses those days.
+ */
+
 function expiryVariant(days: number): 'destructive' | 'pending' | 'default' {
   if (days < 0) return 'destructive';
-  if (days < 30) return 'pending';
+  if (days <= 30) return 'pending';
   return 'default';
 }
+
+/** Days left in words: the last program day is "Last day", not −1 or 0d. Exported for the tests. */
+export function daysLeftWords(days: number): string {
+  if (days < 0) return `Ended ${-days}d ago`;
+  if (days === 0) return 'Last day';
+  return `${days}d left`;
+}
+
+type J1Filter = 'all' | 'active' | 'ending' | 'ended' | 'scheduled' | 'worked';
+const J1_FILTERS: readonly J1Filter[] = ['all', 'active', 'ending', 'ended', 'scheduled', 'worked'];
+
+function matches(p: J1Profile, f: J1Filter): boolean {
+  if (f === 'active') return p.daysUntilEnd >= 0;
+  if (f === 'ending') return p.daysUntilEnd >= 0 && p.daysUntilEnd <= 30;
+  if (f === 'ended') return p.daysUntilEnd < 0;
+  if (f === 'scheduled') return !!p.scheduledAfterEnd;
+  if (f === 'worked') return !!p.workedAfterEndOn;
+  return true;
+}
+
+const shiftWords = (s: ClearedShift) => `${fmtDateTz(s.startsAt, s.timezone)} · ${fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)} · ${s.position}${s.place ? ` at ${s.place}` : ''}`;
 
 interface UpsertSeed {
   associateId: string;
@@ -58,12 +91,14 @@ const EMPTY_SEED: UpsertSeed = {
 };
 
 export function J1Tab({ canManage }: { canManage: boolean }) {
-  // ?associateId= deep-links one participant (the scorecard's Fix links and
-  // the application checklist send it) — auto-open their drawer once the
-  // list arrives. ?return= is the surface the reviewer came from; the
-  // drawer offers a way back. Both are captured into state once, then
-  // consumed (replace: true): ComplianceHome tab switches copy the current
-  // search params, so lingering params would re-arm on every tab visit.
+  // ?associateId= deep-links one participant (the scorecard's Fix links, the
+  // application checklist and the Cleared to work tab send it) — auto-open
+  // their drawer once the list arrives, on All so they are on it whatever
+  // their group. ?return= is the surface the reviewer came from; ?status=
+  // (ended | scheduled | worked | ending | active) and ?workforce= pick the
+  // view for this visit. All are captured into state once, then consumed
+  // (replace: true): ComplianceHome tab switches copy the current search
+  // params, so lingering params would re-arm on every tab visit.
   const [deepLinkParams, setDeepLinkParams] = useSearchParams();
   const [deepLinkAssociateId] = useState<string | null>(() =>
     deepLinkParams.get('associateId'),
@@ -71,24 +106,32 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
   const [returnPath] = useState<string | null>(() =>
     sanitizeReturnPath(deepLinkParams.get('return')),
   );
+  const [filter, setFilter] = useState<J1Filter>(() => {
+    const v = deepLinkParams.get('status');
+    return J1_FILTERS.find((f) => f === v) ?? 'all';
+  });
+  const { workforce, setWorkforce } = useComplianceWorkforce({ wide: !!deepLinkAssociateId });
   const deepLinkOpened = useRef(false);
   const deepLinkConsumed = useRef(false);
   useEffect(() => {
     if (deepLinkConsumed.current) return;
-    if (!deepLinkParams.has('associateId') && !deepLinkParams.has('return')) return;
+    if (!['associateId', 'return', 'status', WORKFORCE_PARAM].some((k) => deepLinkParams.has(k))) return;
     deepLinkConsumed.current = true;
     const params = new URLSearchParams(deepLinkParams);
     params.delete('associateId');
     params.delete('return');
+    params.delete('status');
+    params.delete(WORKFORCE_PARAM);
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
   const [drawerTarget, setDrawerTarget] = useState<J1Profile | null>(null);
   const [upsertSeed, setUpsertSeed] = useState<UpsertSeed | null>(null);
   const profilesQuery = useQuery({
-    queryKey: ['J1Tab', 'profiles'],
-    queryFn: () => listJ1Profiles(),
+    queryKey: ['J1Tab', 'profiles', workforce],
+    queryFn: () => listJ1Profiles({ workforce }),
   });
   const profiles: J1Profile[] | null = profilesQuery.data?.profiles ?? null;
+  const shown = useMemo(() => (profiles ?? []).filter((p) => matches(p, filter)), [profiles, filter]);
   const error = profilesQuery.error
     ? profilesQuery.error instanceof ApiError
       ? profilesQuery.error.message
@@ -116,7 +159,6 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
     }
   }, [profiles, deepLinkAssociateId]);
 
-
   const openEditFromDrawer = () => {
     if (!drawerTarget) return;
     setUpsertSeed({
@@ -129,12 +171,18 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
     });
   };
 
+  // The tiles count the rows of the chosen group, and each one is the filter it names.
+  const all = profiles ?? [];
+  const count = (f: J1Filter) => all.filter((p) => matches(p, f)).length;
+  const tile = (f: J1Filter) => ({ active: filter === f, onClick: () => setFilter(filter === f ? 'all' : f) });
+  const group = COMPLIANCE_WORKFORCE_LABELS[workforce].toLowerCase();
+
   return (
     <section>
       <DirectorateHeader
         icon={Plane}
         title="J-1 program"
-        blurb="Exchange-visitor participants — DS-2019, sponsor, and program window tracking"
+        blurb="Exchange-visitor participants: DS-2019, sponsor and program dates. No work after the program ends, grace period or not."
         actions={
           canManage && (
             <Button onClick={() => setUpsertSeed(EMPTY_SEED)} size="sm">
@@ -147,27 +195,44 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
 
       {profiles && profiles.length > 0 && (
         <KpiStrip>
-          <Kpi label="Participants" value={profiles.length} />
-          <Kpi
-            label="Active"
-            value={profiles.filter((p) => p.daysUntilEnd >= 0).length}
-            tone="text-success"
-          />
+          <Kpi label="Participants" value={all.length} hint={`J-1 participants in ${group === 'all' ? 'every group' : `the ${group} group`}.`} {...tile('all')} />
+          <Kpi label="Active" value={count('active')} tone="text-success" hint="Program still running (today counts)." {...tile('active')} />
           <Kpi
             label="Ending ≤ 30d"
-            value={profiles.filter((p) => p.daysUntilEnd >= 0 && p.daysUntilEnd <= 30).length}
-            tone={
-              profiles.some((p) => p.daysUntilEnd >= 0 && p.daysUntilEnd <= 30)
-                ? 'text-warning'
-                : undefined
-            }
+            value={count('ending')}
+            tone={count('ending') > 0 ? 'text-warning' : undefined}
+            hint="Program ends within 30 days: they may not work after it."
+            {...tile('ending')}
           />
           <Kpi
             label="Program ended"
-            value={profiles.filter((p) => p.daysUntilEnd < 0).length}
-            tone={profiles.some((p) => p.daysUntilEnd < 0) ? 'text-alert' : undefined}
+            value={count('ended')}
+            tone={count('ended') > 0 ? 'text-alert' : undefined}
+            hint="Program over. The grace period lets them stay in the country, not work."
+            {...tile('ended')}
+          />
+          <Kpi
+            label="Scheduled after end"
+            value={count('scheduled')}
+            tone={count('scheduled') > 0 ? 'text-alert' : undefined}
+            hint="A shift is booked on a day after their program ends. Move it to someone else."
+            {...tile('scheduled')}
+          />
+          <Kpi
+            label="Worked after end"
+            value={count('worked')}
+            tone={count('worked') > 0 ? 'text-alert' : undefined}
+            hint="Clocked in on a day after their program ended."
+            {...tile('worked')}
           />
         </KpiStrip>
+      )}
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <WorkforceFilter value={workforce} onChange={setWorkforce} counts={profilesQuery.data?.workforceCounts} />
+      </div>
+      {profilesQuery.data?.truncated && (
+        <p className="mb-2 text-xs text-warning">More profiles matched than this list carries. Narrow it with the group chips.</p>
       )}
 
       {error && (
@@ -186,14 +251,16 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
       {profiles && profiles.length === 0 && (
         <EmptyState
           icon={Globe}
-          title="No J-1 profiles yet"
+          title={workforce === 'all' ? 'No J-1 profiles yet' : `No J-1 participants in ${group}`}
           description={
-            canManage
-              ? 'Add a J-1 profile for an associate when their DS-2019 paperwork is in hand.'
-              : 'J-1 profiles will appear here once they are created.'
+            workforce !== 'all'
+              ? 'Pick another group above to see participants who left or are paused.'
+              : canManage
+                ? 'Add a J-1 profile for an associate when their DS-2019 paperwork is in hand.'
+                : 'J-1 profiles will appear here once they are created.'
           }
           action={
-            canManage ? (
+            canManage && workforce === 'all' ? (
               <Button onClick={() => setUpsertSeed(EMPTY_SEED)} size="sm">
                 <Plus className="h-4 w-4" />
                 Add profile
@@ -204,14 +271,16 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
       )}
       {profiles && profiles.length > 0 && (
         <TableShell>
-        <DataGrid<(typeof profiles)[number]>
+        <DataGrid<J1Profile>
           id="j1-profiles"
           caption="J-1 profiles"
-          rows={profiles}
+          rows={shown}
           rowKey={(pr) => pr.id}
           search={{ placeholder: 'Associate, country, sponsor…' }}
           urlState={false}
-          exportCsv={{ filename: 'j1-profiles' }}
+          exportCsv={{ filename: `j1-${workforce}-${ymdLocal()}` }}
+          activeFilters={filter === 'all' ? 0 : 1}
+          onClearFilters={() => setFilter('all')}
           onRowClick={(pr) => setDrawerTarget(pr)}
           rowActionLabel={(pr) => `Open ${pr.associateName}`}
           columns={[
@@ -229,13 +298,21 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
                 </div>
               ),
             },
-            { key: 'country', header: 'Country', accessor: (pr) => pr.country, sortable: true, cardMeta: true, className: 'text-silver' },
-            { key: 'ds2019', header: 'DS-2019', accessor: (pr) => pr.ds2019Number, sortable: true, className: 'text-silver' },
-            { key: 'sponsor', header: 'Sponsor', accessor: (pr) => pr.sponsorAgency, sortable: true, className: 'text-silver' },
+            {
+              key: 'employment',
+              header: 'Employment',
+              sortable: true,
+              cardMeta: true,
+              accessor: (pr) => (pr.workStatus ? workStatusEnglish(pr.workStatus) : 'No longer on file'),
+              cell: (pr) => (pr.workStatus ? <PeopleStatusBadge status={pr.workStatus} size="sm" /> : <span className="text-xs text-silver/60">No longer on file</span>),
+            },
+            { key: 'country', header: 'Country', accessor: (pr) => pr.country, sortable: true, className: 'text-silver', hideBelow: 1180 },
+            { key: 'ds2019', header: 'DS-2019', accessor: (pr) => pr.ds2019Number, sortable: true, className: 'text-silver', hideBelow: 1280 },
+            { key: 'sponsor', header: 'Sponsor', accessor: (pr) => pr.sponsorAgency, sortable: true, className: 'text-silver', hideBelow: 1180 },
             {
               key: 'program',
               header: 'Program',
-              accessor: (pr) => pr.programStartDate,
+              accessor: (pr) => pr.programEndDate,
               csv: (pr) => `${pr.programStartDate} → ${pr.programEndDate}`,
               sortable: true,
               searchable: false,
@@ -251,13 +328,52 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
               key: 'daysLeft',
               header: 'Days left',
               accessor: (pr) => pr.daysUntilEnd,
-              csv: (pr) => `${pr.daysUntilEnd}d`,
+              csv: (pr) => daysLeftWords(pr.daysUntilEnd),
               sortable: true,
               searchable: false,
               cell: (pr) => (
                 <Badge variant={expiryVariant(pr.daysUntilEnd)}>
-                  <span className="tabular-nums">{pr.daysUntilEnd}d</span>
+                  <span className="tabular-nums">{daysLeftWords(pr.daysUntilEnd)}</span>
                 </Badge>
+              ),
+            },
+            {
+              key: 'nextShift',
+              header: 'Next shift',
+              accessor: (pr) => pr.nextShift?.startsAt ?? null,
+              csv: (pr) => (pr.nextShift ? shiftWords(pr.nextShift) : ''),
+              sortable: true,
+              searchable: false,
+              stopRowClick: true,
+              cell: (pr) =>
+                pr.nextShift ? (
+                  <Link to={`/scheduling?shift=${pr.nextShift.id}`} className="text-xs text-silver hover:underline">
+                    {fmtDateTz(pr.nextShift.startsAt, pr.nextShift.timezone)}
+                  </Link>
+                ) : (
+                  <span className="text-xs text-silver/60">None</span>
+                ),
+            },
+            {
+              key: 'flags',
+              header: 'After the end',
+              accessor: (pr) => [pr.scheduledAfterEnd ? 'Scheduled after program end' : '', pr.workedAfterEndOn ? `Worked after program end (${pr.workedAfterEndOn})` : ''].filter(Boolean).join('; ') || null,
+              sortable: true,
+              searchable: false,
+              cell: (pr) => (
+                <div className="flex flex-wrap gap-1">
+                  {pr.scheduledAfterEnd && (
+                    <Badge variant="destructive" size="sm">
+                      Scheduled after program end
+                    </Badge>
+                  )}
+                  {pr.workedAfterEndOn && (
+                    <Badge variant="destructive" size="sm">
+                      Worked after program end
+                    </Badge>
+                  )}
+                  {!pr.scheduledAfterEnd && !pr.workedAfterEndOn && <span className="text-xs text-silver/60">—</span>}
+                </div>
               ),
             },
           ]}
@@ -340,18 +456,48 @@ function J1DetailPanel({
         </div>
       </DrawerHeader>
       <DrawerBody>
-        <div className="flex items-center gap-3 mb-5">
+        <div className="mb-5 flex flex-wrap items-center gap-3">
           <Badge variant={expiryVariant(profile.daysUntilEnd)}>
-            <span className="tabular-nums">{profile.daysUntilEnd}d remaining</span>
+            <span className="tabular-nums">{daysLeftWords(profile.daysUntilEnd)}</span>
           </Badge>
+          {profile.workStatus && <PeopleStatusBadge status={profile.workStatus} size="sm" />}
           <span className="text-xs text-silver">{profile.country}</span>
         </div>
+        {(profile.scheduledAfterEnd || profile.workedAfterEndOn) && (
+          <div className="mb-4 space-y-1 rounded-md border border-negative-200 bg-negative-100 p-3 text-xs text-negative-800" role="alert">
+            {profile.scheduledAfterEnd && (
+              <p>
+                Scheduled after the program ends:{' '}
+                <Link to={`/scheduling?shift=${profile.scheduledAfterEnd.id}`} className="underline">
+                  {shiftWords(profile.scheduledAfterEnd)}
+                </Link>
+                . Move it to someone else.
+              </p>
+            )}
+            {profile.workedAfterEndOn && <p>Clocked in on {fmtDate(profile.workedAfterEndOn)}, after the program ended.</p>}
+          </div>
+        )}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
           <DetailRow label="Program start">
             {fmtDate(parseYmd(profile.programStartDate))}
           </DetailRow>
           <DetailRow label="Program end">
             {fmtDate(parseYmd(profile.programEndDate))}
+            {profile.programEndSource === 'program' && <span className="block text-2xs text-silver/70">From the program record</span>}
+          </DetailRow>
+          <DetailRow label="Grace period ends">
+            {profile.graceEndsOn ? fmtDate(parseYmd(profile.graceEndsOn)) : '—'}
+            <span className="block text-2xs text-silver/70">May stay, may not work</span>
+          </DetailRow>
+          <DetailRow label="DS-2019 ends">{profile.ds2019ExpiresOn ? fmtDate(parseYmd(profile.ds2019ExpiresOn)) : '—'}</DetailRow>
+          <DetailRow label="Next shift">
+            {profile.nextShift ? (
+              <Link to={`/scheduling?shift=${profile.nextShift.id}`} className="text-gold hover:underline">
+                {shiftWords(profile.nextShift)}
+              </Link>
+            ) : (
+              'None'
+            )}
           </DetailRow>
           <DetailRow label="DS-2019 number">{profile.ds2019Number}</DetailRow>
           <DetailRow label="Sponsor agency">{profile.sponsorAgency}</DetailRow>
@@ -438,7 +584,7 @@ function UpsertJ1Dialog({ open, seed, onOpenChange, onSaved }: UpsertJ1DialogPro
           <DialogTitle>{editing ? 'Update J-1 profile' : 'Add J-1 profile'}</DialogTitle>
           <DialogDescription>
             {editing
-              ? 'Updating the existing profile for this associate.'
+              ? 'Updating the existing profile for this associate. A later program end lets scheduling book them again.'
               : 'Upsert by associate ID — re-saving with the same ID updates the existing profile.'}
           </DialogDescription>
         </DialogHeader>

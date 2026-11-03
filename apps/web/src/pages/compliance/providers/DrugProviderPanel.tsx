@@ -5,6 +5,7 @@ import { RefreshCw } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDateTime, fmtDayShort } from '@/lib/format';
+import { DRUG_TEST_REASONS, DRUG_TEST_REASON_LABELS } from '@alto-people/shared';
 import { drugProviderView, orderDrug, providerSummary, refreshDrug, type DrugProviderView, type DrugReason } from '@/lib/providersApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -22,14 +23,8 @@ import { CopyValue } from '@/pages/integrations/providers/providerShared';
  * has verified it — the screen says so instead of showing "failed".
  */
 
-const REASONS: Array<{ value: DrugReason; label: string }> = [
-  { value: 'PRE_EMPLOYMENT', label: 'Before they start' },
-  { value: 'RANDOM', label: 'Random selection' },
-  { value: 'POST_ACCIDENT', label: 'After an accident' },
-  { value: 'REASONABLE_SUSPICION', label: 'Reasonable suspicion' },
-  { value: 'RETURN_TO_DUTY', label: 'Returning to duty' },
-  { value: 'FOLLOW_UP', label: 'Follow-up' },
-];
+// One vocabulary with the hand-recorded and bulk orders (contracts DRUG_TEST_REASONS).
+const REASONS: Array<{ value: DrugReason; label: string }> = DRUG_TEST_REASONS.map((value) => ({ value, label: DRUG_TEST_REASON_LABELS[value] }));
 
 function resultLine(v: DrugProviderView): { text: string; variant: 'success' | 'destructive' | 'pending' } | null {
   if (v.resultCode === 'NEGATIVE') return { text: 'Negative', variant: 'success' };
@@ -44,7 +39,8 @@ export function DrugProviderPanel({ testId, personName, canManage, onChanged }: 
   const summary = useQuery({ queryKey: ['providers', 'summary'], queryFn: providerSummary, staleTime: 60_000 });
   const connected = summary.data?.connected.DRUG_TEST;
   const view = useQuery({ queryKey: ['providers', 'drug', testId], queryFn: () => drugProviderView(testId), enabled: !!connected });
-  const [reason, setReason] = useState<DrugReason>('PRE_EMPLOYMENT');
+  // The reason recorded when the order was noted here (2026-11-03) is the one sent, unless changed.
+  const [picked, setReason] = useState<DrugReason | null>(null);
   const [panel, setPanel] = useState('');
 
   const act = useMutation({
@@ -76,6 +72,7 @@ export function DrugProviderPanel({ testId, personName, canManage, onChanged }: 
 
   const v = view.data;
   const busy = act.isPending;
+  const reason: DrugReason = picked ?? REASONS.find((x) => x.value === v.reason)?.value ?? 'PRE_EMPLOYMENT';
   const r = resultLine(v);
   const passExpired = v.donorPassExpiresAt ? new Date(v.donorPassExpiresAt).getTime() < Date.now() : false;
 

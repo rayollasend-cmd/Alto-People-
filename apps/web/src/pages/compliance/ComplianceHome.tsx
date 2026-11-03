@@ -8,10 +8,11 @@ import { J1Tab } from './J1Tab';
 import { ComplianceScorecard } from './ComplianceScorecard';
 import { AuditPacketTab } from './AuditPacketTab';
 import { RequirementsTab } from './RequirementsTab';
+import { ClearedTab } from './ClearedTab';
 import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
-type Tab = 'scorecard' | 'i9' | 'everify' | 'background' | 'drugtests' | 'j1' | 'requirements' | 'audit';
+type Tab = 'scorecard' | 'cleared' | 'i9' | 'everify' | 'background' | 'drugtests' | 'j1' | 'requirements' | 'audit';
 
 export function ComplianceHome() {
   const { can } = useAuth();
@@ -36,9 +37,11 @@ export function ComplianceHome() {
   // other pages deep-link a directorate (the profile document vault links
   // each category to its owning tab), the URL stays shareable, and Back
   // retraces tab switches instead of dumping out of the page.
-  const TABS: readonly Tab[] = ['scorecard', 'i9', 'everify', 'background', 'drugtests', 'j1', 'requirements', 'audit'];
+  const TABS: readonly Tab[] = ['scorecard', 'cleared', 'i9', 'everify', 'background', 'drugtests', 'j1', 'requirements', 'audit'];
   const [searchParams, setSearchParams] = useSearchParams();
-  const requestedTab = searchParams.get('tab');
+  // `drug-tests` was the Inbox's and the drug-result notice's spelling until
+  // 2026-11-03 and opened the scorecard; links already sent keep working.
+  const requestedTab = searchParams.get('tab') === 'drug-tests' ? 'drugtests' : searchParams.get('tab');
   // A bookmarked ?tab=audit from before the capability narrowed would
   // otherwise select a tab that no longer renders — an empty page, not a
   // refusal. Fall back to the scorecard.
@@ -64,6 +67,8 @@ export function ComplianceHome() {
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           {hasScorecard && <TabsTrigger value="scorecard">Scorecard</TabsTrigger>}
+          {/* Cleared to work (owner, 2026-11-03): one answer per person, across the tabs below. */}
+          <TabsTrigger value="cleared">Cleared to work</TabsTrigger>
           <TabsTrigger value="i9">I-9 verification</TabsTrigger>
           {/* Sits next to I-9 because E-Verify is downstream of it — the
               verifier finishes Section 2 and moves straight here. */}
@@ -80,6 +85,9 @@ export function ComplianceHome() {
             <ComplianceScorecard />
           </TabsContent>
         )}
+        <TabsContent value="cleared">
+          <ClearedTab />
+        </TabsContent>
         <TabsContent value="i9">
           <I9Tab canManage={canManage} />
         </TabsContent>

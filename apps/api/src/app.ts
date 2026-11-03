@@ -47,6 +47,7 @@ import { payrollTaxesRouter } from './routes/payrollTaxes.js';
 import { w4RecollectionRouter } from './routes/w4Recollection.js';
 import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
+import { clearedToWorkRouter } from './routes/clearedToWork.js';
 import { credentialRequirementsRouter } from './routes/credentialRequirements.js';
 import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
@@ -611,6 +612,8 @@ export function createApp() {
     requireCapability('view:compliance'),
     complianceRouter
   );
+  // Cleared to work (owner, 2026-11-03): one row per person, the exceptions queue and the overrides.
+  app.use('/compliance/cleared', requireCapability('view:compliance'), clearedToWorkRouter);
   // What a site or client requires its people to hold (agent families step 5, coverage.credentials).
   app.use('/credential-requirements', requireCapability('view:compliance'), requireModule('compliance'), credentialRequirementsRouter);
   // Walmart Contract Compliance Scorecard — preventative dashboard

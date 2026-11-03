@@ -19,7 +19,11 @@ import type {
   EVerifyCaseInput,
   EVerifyIdentityInput,
   EVerifyRosterResponse,
+  I9DestroyResponse,
   I9ListResponse,
+  I9Reverification,
+  I9ReverificationInput,
+  I9ReverificationListResponse,
   I9UpsertInput,
   I9Verification,
   J1ListResponse,
@@ -48,6 +52,29 @@ export function upsertI9(associateId: string, body: I9UpsertInput): Promise<I9Ve
     method: 'POST',
     body,
   });
+}
+
+/** One person's re-verifications (Supplement B), newest first. */
+export function listI9Reverifications(associateId: string): Promise<I9ReverificationListResponse> {
+  return apiFetch<I9ReverificationListResponse>(`/compliance/i9/${associateId}/reverifications`);
+}
+
+/** Record a Supplement B entry: a re-verification (document, new end) or a rehire reusing the I-9. */
+export function recordI9Reverification(associateId: string, body: I9ReverificationInput): Promise<I9Reverification> {
+  return apiFetch<I9Reverification>(`/compliance/i9/${associateId}/reverification`, {
+    method: 'POST',
+    body,
+  });
+}
+
+/** Destroy one I-9 past retention; `confirm` is the typed word DESTROY. Permanent. */
+export function destroyI9(associateId: string, confirm: string): Promise<I9DestroyResponse> {
+  return apiFetch<I9DestroyResponse>(`/compliance/i9/${associateId}/destroy`, { method: 'POST', body: { confirm } });
+}
+
+/** Destroy several I-9s past retention; `confirm` is the typed count. Each is checked again on the server. */
+export function destroyI9s(associateIds: string[], confirm: string): Promise<I9DestroyResponse> {
+  return apiFetch<I9DestroyResponse>('/compliance/i9/destroy', { method: 'POST', body: { associateIds, confirm } });
 }
 
 /* ----- E-Verify directorate --------------------------------------------- */
@@ -130,9 +157,13 @@ export function updateBackgroundCheck(
 
 /* ----- FCRA adverse action (audit 2026-10-21 #14) ----------------------- */
 
-/** The worklist: final notices due, reports to decide, notices waiting out their period, recent ones. */
-export function listAdverseActions(): Promise<AdverseActionListResponse> {
-  return apiFetch<AdverseActionListResponse>('/compliance/adverse-actions');
+/** The worklist: final notices due, reports to decide, notices waiting out their period, recent ones —
+ *  for one group of people, or several at once (the Inbox's Current + Starting soon; this list
+ *  alone takes a comma list). Left out, the server opens on the current workforce. */
+export function listAdverseActions(opts: { workforce?: ComplianceWorkforce | readonly ComplianceWorkforce[] } = {}): Promise<AdverseActionListResponse> {
+  const w = opts.workforce;
+  const param = typeof w === 'string' ? w : w && w.length > 0 ? w.join(',') : null;
+  return apiFetch<AdverseActionListResponse>(param ? `/compliance/adverse-actions?workforce=${param}` : '/compliance/adverse-actions');
 }
 
 /** Pre-adverse notice with the report on file attached; starts the waiting period. */
@@ -180,6 +211,26 @@ export function updateDrugTest(id: string, body: DrugTestUpdateInput): Promise<D
     method: 'POST',
     body,
   });
+}
+
+/* A drug test through a consumer reporting agency takes the FCRA steps (2026-11-03). */
+
+/** Pre-adverse notice with the result on file attached; starts the waiting period. */
+export function sendDrugPreAdverse(id: string, waitDays?: number): Promise<DrugTest> {
+  return apiFetch<DrugTest>(`/compliance/drug-tests/${id}/pre-adverse`, {
+    method: 'POST',
+    body: waitDays ? { waitDays } : {},
+  });
+}
+
+/** The final adverse action notice — only after the waiting period. Records the test as failed. */
+export function sendDrugFinalAdverse(id: string): Promise<DrugTest> {
+  return apiFetch<DrugTest>(`/compliance/drug-tests/${id}/final-adverse`, { method: 'POST', body: {} });
+}
+
+/** The person answered: withdraw the pending adverse action and clear the test. */
+export function withdrawDrugAdverse(id: string): Promise<DrugTest> {
+  return apiFetch<DrugTest>(`/compliance/drug-tests/${id}/withdraw-adverse`, { method: 'POST', body: {} });
 }
 
 /** Everyone needing a test: no result inside the 60-day window, no order

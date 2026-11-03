@@ -19,6 +19,7 @@ import { startStaleNudgeCron } from './lib/staleNudge.js';
 import { startDueInviteCron } from './lib/inviteDelivery.js';
 import { startRecruitingCleanupCron } from './lib/recruitingCleanup.js';
 import { startDormancySweepCron } from './lib/dormancySweep.js';
+import { startPausedSeparationCron } from './lib/pausedSeparation.js';
 import { startOpsDigestCron } from './lib/opsDigest.js';
 import { startOpsSopCron } from './lib/storeShiftSop.js';
 import { startPortalDigestCron } from './lib/portalDigest.js';
@@ -151,6 +152,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startDueInviteCron();
   startRecruitingCleanupCron();
   startDormancySweepCron();
+  // Owner, 2026-11-03: paused more than 120 days becomes a separation; HR hears at 110 (lib/pausedSeparation).
+  startPausedSeparationCron();
   startOpsDigestCron();
   startOpsSopCron();
   startPortalDigestCron();

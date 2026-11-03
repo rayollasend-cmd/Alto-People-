@@ -142,8 +142,8 @@ describe('E-Verify worklist (HR walk 3 and 22)', () => {
     renderAt('/compliance?tab=everify');
     expect(await screen.findByText('Rosa Vega')).toBeInTheDocument();
     expect(screen.getByText("Can't submit yet")).toBeInTheDocument();
-    // The total names who it counts (PEOPLE-23), not "Associates".
-    expect(screen.getByText('Hired or onboarding')).toBeInTheDocument();
+    // The total names who it counts (PEOPLE-23): the group on view (owner, 2026-11-03).
+    expect(screen.getByText('Current workforce')).toBeInTheDocument();
     expect(screen.queryByText('Associates')).toBeNull();
     // Two with no case yet; the authorized one isn't counted.
     expect(screen.getByText("Can't submit yet").nextElementSibling).toHaveTextContent('2');

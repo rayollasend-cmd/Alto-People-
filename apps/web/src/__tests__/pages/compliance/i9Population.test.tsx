@@ -93,7 +93,8 @@ describe('<I9Tab> reads the scorecard’s population', () => {
     const user = userEvent.setup();
     renderTab();
     await screen.findByText('Aaliyah Brooks');
-    await user.click(screen.getByRole('button', { name: 'All' }));
+    // "All statuses": the group chips have their own "All".
+    await user.click(screen.getByRole('button', { name: 'All statuses' }));
     const row = (await screen.findByText('Maria Lopez')).closest('tr')!;
     expect(within(row).getByText('Onboarding')).toBeInTheDocument();
   });

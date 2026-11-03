@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { TenantProfileSchema } from './tenantProfile.js';
 import { WorkStatusSchema, type WorkStatusCounts } from './peopleStatus.js';
 import { ComplianceWorkforceSchema, WorkforceCountsSchema } from './complianceWorkforce.js';
+import { ClearedShiftSchema, WorkAuthorizationOverrideSchema } from './clearedToWork.js';
 import { httpUrl } from './safeUrl.js';
 import { SUPPORTED_TIMEZONES } from './timezones.js';
 import { NOTIFICATION_CATEGORIES, type NotificationCategory } from './notificationCategories.js';
@@ -2424,6 +2425,12 @@ export const ShiftAssignInputSchema = /* @__PURE__ */ (() => z.object({
   expectUnassigned: z.boolean().optional(),
   /** Why the change is excused from predictability pay (lib/predictabilityPay). */
   changeReason: ScheduleChangeReasonSchema.optional(),
+  /** Assign even though the person is not cleared to work that day (work
+   *  authorization or J-1 program ended, E-Verify final nonconfirmation).
+   *  Honoured only for a caller holding manage:compliance; the reason is
+   *  required and the override is audited (owner, 2026-11-03). Without it,
+   *  /assign 409s with `not_authorized_to_work`. */
+  overrideWorkAuthorization: WorkAuthorizationOverrideSchema.optional(),
 }))();
 export type ShiftAssignInput = z.infer<typeof ShiftAssignInputSchema>;
 
@@ -4111,6 +4118,39 @@ export const I9VerificationSchema = /* @__PURE__ */ (() => z.object({
   /** Where the person stands (peopleStatus.ts) — the row's employment badge.
    *  Absent from older servers. */
   workStatus: WorkStatusSchema.nullable().optional(),
+  /** Section 1 citizenship status. Only ALIEN_AUTHORIZED_TO_WORK ever
+   *  re-verifies (owner, 2026-11-03). Inline enum: I9CitizenshipStatusSchema
+   *  is declared further down this file. */
+  citizenshipStatus: z.enum(['US_CITIZEN', 'NON_CITIZEN_NATIONAL', 'LAWFUL_PERMANENT_RESIDENT', 'ALIEN_AUTHORIZED_TO_WORK']).nullable().optional(),
+  /** The one hire date (lib/hireDate: the employment's first day; the
+   *  application's planned start before hire), YYYY-MM-DD — the Section 2
+   *  clock runs from it, the same date E-Verify uses. */
+  hireDate: z.string().nullable().optional(),
+  /** Section 2 due: 3 business days after hireDate (weekends and federal
+   *  holidays skipped), YYYY-MM-DD. Null without a hire date. */
+  section2DueBy: z.string().nullable().optional(),
+  /** The day HR examined the Section 2 documents, when typed (YYYY-MM-DD). */
+  section2ExaminedOn: z.string().nullable().optional(),
+  /** When the person sent Section 1 and their documents for HR's review. */
+  documentsSubmittedAt: z.string().datetime().nullable().optional(),
+  /** Re-verification due within 90 days by the one rule
+   *  (lib/hiringCompliance i9ReverificationWhere): an alien authorized to
+   *  work, still employed (current or paused). */
+  reverifyDue: z.boolean().optional(),
+  /** The last day worked (YYYY-MM-DD) of someone who left: the completed
+   *  separation's, else the day they were separated. Retention runs from it. */
+  leftOn: z.string().nullable().optional(),
+  /** Needs review (owner, 2026-11-03): a work-authorization end date but no
+   *  Section 1 citizenship status, for someone still employed — nobody can
+   *  tell whether it must be re-verified. */
+  needsReview: z.boolean().optional(),
+  /** The day the original I-9 was completed (Section 2), YYYY-MM-DD — a
+   *  rehire may reuse it within 3 years. */
+  originalSection2On: z.string().nullable().optional(),
+  /** The latest rehire recorded on Supplement B (YYYY-MM-DD). */
+  rehireOn: z.string().nullable().optional(),
+  /** Rehired: an earlier employment ended before this one began. */
+  rehired: z.boolean().optional(),
 }))();
 export type I9Verification = z.infer<typeof I9VerificationSchema>;
 
@@ -4126,6 +4166,10 @@ export const I9NotStartedSchema = /* @__PURE__ */ (() => z.object({
   hireDate: z.string().nullable(),
   /** Headshot URL; null = none on file. */
   photoUrl: z.string().nullable().optional(),
+  /** Where the person stands (peopleStatus.ts). Absent from older servers. */
+  workStatus: WorkStatusSchema.nullable().optional(),
+  /** Section 2 due (YYYY-MM-DD): 3 business days after hireDate. */
+  section2DueBy: z.string().nullable().optional(),
 }))();
 export type I9NotStarted = z.infer<typeof I9NotStartedSchema>;
 
@@ -4155,6 +4199,20 @@ export const I9UpsertInputSchema = /* @__PURE__ */ (() => z
       .regex(/^\d{4}-\d{2}-\d{2}$/, 'workAuthExpiresAt must be YYYY-MM-DD')
       .nullable()
       .optional(),
+    /** The day the Section 2 documents were examined (YYYY-MM-DD; owner,
+     *  2026-11-03): not after today, not before the hire date. Defaults to
+     *  today when Section 2 is ticked without one. */
+    section2ExaminedOn: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'section2ExaminedOn must be YYYY-MM-DD')
+      .nullable()
+      .optional(),
+    /** Why a completed Section 2 is being unticked — required then, and
+     *  kept in the audit trail with what it erased. */
+    reason: z.string().trim().min(3).max(500).optional(),
+    /** Section 1's citizenship status, typed from a paper I-9 by HR — only
+     *  when none is on file (an e-signed Section 1 is never overwritten). */
+    citizenshipStatus: z.enum(['US_CITIZEN', 'NON_CITIZEN_NATIONAL', 'LAWFUL_PERMANENT_RESIDENT', 'ALIEN_AUTHORIZED_TO_WORK']).optional(),
   })
   .refine(
     (v) =>
@@ -4164,6 +4222,90 @@ export const I9UpsertInputSchema = /* @__PURE__ */ (() => z
     { message: 'documentList is required when recording section 2', path: ['documentList'] }
   ))();
 export type I9UpsertInput = z.infer<typeof I9UpsertInputSchema>;
+
+/** The two Supplement B entries (owner, 2026-11-03). */
+export const I9_SUPPLEMENT_B_KINDS = ['REVERIFICATION', 'REHIRE'] as const;
+export type I9SupplementBKind = (typeof I9_SUPPLEMENT_B_KINDS)[number];
+
+/**
+ * An I-9 Supplement B entry (owner, 2026-11-03):
+ *   REVERIFICATION  a time-limited work authorization ran out: the new
+ *                   document, and its end (`newExpiresAt`; null = it never
+ *                   expires). Only for an alien authorized to work — citizens,
+ *                   nationals and permanent residents never re-verify.
+ *   REHIRE          the person came back within 3 years of the original
+ *                   I-9 and it is reused: the rehire date, plus a re-verified
+ *                   document when their authorization had ended by then.
+ * A document moves the I-9's workAuthExpiresAt to `newExpiresAt`, so that
+ * field always holds the current authorization's end.
+ */
+export const I9ReverificationInputSchema = /* @__PURE__ */ (() => z
+  .object({
+    kind: z.enum(I9_SUPPLEMENT_B_KINDS).optional(),
+    /** REHIRE: the day they were rehired (YYYY-MM-DD). */
+    rehiredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'rehiredOn must be YYYY-MM-DD').optional(),
+    documentTitle: z.string().trim().min(2).max(160).optional(),
+    documentNumber: z.string().trim().min(2).max(60).optional(),
+    issuingAuthority: z.string().trim().max(160).nullable().optional(),
+    newExpiresAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'newExpiresAt must be YYYY-MM-DD').nullable().optional(),
+    /** The day the documents were examined (YYYY-MM-DD); today when left out. Never after today. */
+    reviewedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'reviewedOn must be YYYY-MM-DD').optional(),
+    notes: z.string().trim().max(1000).nullable().optional(),
+  })
+  .refine((v) => (v.kind ?? 'REVERIFICATION') !== 'REVERIFICATION' || (!!v.documentTitle && !!v.documentNumber && v.newExpiresAt !== undefined), {
+    message: 'A re-verification needs the document, its number and its new expiry (or none)',
+    path: ['documentTitle'],
+  })
+  .refine((v) => v.kind !== 'REHIRE' || !!v.rehiredOn, { message: 'A rehire needs the rehire date', path: ['rehiredOn'] })
+  .refine((v) => !!v.documentTitle === !!v.documentNumber, { message: 'Give the document and its number together', path: ['documentNumber'] }))();
+export type I9ReverificationInput = z.infer<typeof I9ReverificationInputSchema>;
+
+/** One recorded Supplement B entry. The document number is never sent whole. */
+export const I9ReverificationSchema = /* @__PURE__ */ (() => z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  kind: z.enum(I9_SUPPLEMENT_B_KINDS),
+  rehiredOn: z.string().nullable(),
+  /** Null on a rehire with no document. */
+  documentTitle: z.string().nullable(),
+  documentNumberLast4: z.string().nullable(),
+  issuingAuthority: z.string().nullable(),
+  previousExpiresAt: z.string().nullable(),
+  newExpiresAt: z.string().nullable(),
+  reviewedOn: z.string(),
+  reviewedByEmail: z.string().nullable(),
+  notes: z.string().nullable(),
+  createdAt: z.string().datetime(),
+}))();
+export type I9Reverification = z.infer<typeof I9ReverificationSchema>;
+
+export const I9ReverificationListResponseSchema = /* @__PURE__ */ (() => z.object({
+  reverifications: z.array(I9ReverificationSchema),
+}))();
+export type I9ReverificationListResponse = z.infer<typeof I9ReverificationListResponseSchema>;
+
+/**
+ * Destroy I-9s past retention (owner, 2026-11-03): one person with the
+ * typed word DESTROY, or several with the typed count. Each record is
+ * checked again on the server; the answer says which were destroyed and
+ * which were refused, and why.
+ */
+export const I9_DESTROY_WORD = 'DESTROY';
+export const I9DestroyInputSchema = /* @__PURE__ */ (() => z.object({
+  confirm: z.string().trim(),
+}))();
+export type I9DestroyInput = z.infer<typeof I9DestroyInputSchema>;
+export const I9BulkDestroyInputSchema = /* @__PURE__ */ (() => z.object({
+  associateIds: z.array(UuidSchema).min(1).max(500),
+  /** The number of I-9s chosen, typed. */
+  confirm: z.string().trim(),
+}))();
+export type I9BulkDestroyInput = z.infer<typeof I9BulkDestroyInputSchema>;
+export const I9DestroyResponseSchema = /* @__PURE__ */ (() => z.object({
+  destroyed: z.array(z.object({ associateId: UuidSchema, documents: z.number().int().nonnegative() })),
+  refused: z.array(z.object({ associateId: UuidSchema, code: z.string(), message: z.string() })),
+}))();
+export type I9DestroyResponse = z.infer<typeof I9DestroyResponseSchema>;
 
 export const BgCheckStatusSchema = /* @__PURE__ */ (() => z.enum([
   'INITIATED',
@@ -4191,8 +4333,10 @@ export const BackgroundCheckSchema = /* @__PURE__ */ (() => z.object({
   status: BgCheckStatusSchema,
   initiatedAt: z.string().datetime(),
   completedAt: z.string().datetime().nullable(),
-  /** BACKGROUND_CHECK_RESULT documents on file for this associate — a
-   *  finalized status with zero reports is a decision with no evidence. */
+  /** BACKGROUND_CHECK_RESULT documents for THIS check — filed between its
+   *  initiation and the person's next check (2026-11-03; it used to be every
+   *  report the person ever had) — a finalized status with zero reports is a
+   *  decision with no evidence. */
   reportCount: z.number().int().nonnegative().optional(),
   /** FCRA adjudication (audit 2026-10-21 #14): ENGAGED | PRE_ADVERSE | ADVERSE. */
   adjudication: z.string().nullable().optional(),
@@ -4224,11 +4368,23 @@ export const AdverseActionRowSchema = /* @__PURE__ */ (() => z.object({
   result: z.string().nullable(),
   status: BgCheckStatusSchema,
   viaProvider: z.boolean(),
+  /** Where the person stands (peopleStatus.ts). Absent from older servers. */
+  workStatus: WorkStatusSchema.nullable().optional(),
 }))();
 export type AdverseActionRow = z.infer<typeof AdverseActionRowSchema>;
 
 export const AdverseActionListResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(AdverseActionRowSchema),
+  /** True when more checks matched than the worklist carries. */
+  truncated: z.boolean().optional(),
+  /** The group this worklist was asked for (complianceWorkforce.ts); absent when it was several. */
+  workforce: ComplianceWorkforceSchema.optional(),
+  /** Every group it was asked for — the worklist alone takes a comma list
+   *  (`?workforce=current,starting`, the Inbox's view: adverse action is
+   *  mostly about applicants; 2026-11-03). */
+  workforces: z.array(ComplianceWorkforceSchema).optional(),
+  /** How many of the worklist's people are in each group. */
+  workforceCounts: WorkforceCountsSchema.optional(),
 }))();
 export type AdverseActionListResponse = z.infer<typeof AdverseActionListResponseSchema>;
 
@@ -4278,6 +4434,28 @@ export const EeoApplicantReportSchema = /* @__PURE__ */ (() => z.object({
 }))();
 export type EeoApplicantReport = z.infer<typeof EeoApplicantReportSchema>;
 
+/**
+ * One person in the chosen group and the caller's reach, whether or not they
+ * were ever screened (2026-11-03): the tab's "No passed check" view and its
+ * "Last passed" column. The checks list alone could not show the people who
+ * have none.
+ */
+export const BackgroundPersonSchema = /* @__PURE__ */ (() => z.object({
+  associateId: UuidSchema,
+  associateName: z.string(),
+  associatePhotoUrl: z.string().nullable().optional(),
+  /** Their current placement's client — feeds the client filter. */
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable().optional(),
+  workStatus: WorkStatusSchema.nullable(),
+  /** Their newest check; null when they have never had one. */
+  latestCheckId: UuidSchema.nullable(),
+  latestStatus: BgCheckStatusSchema.nullable(),
+  /** When their newest PASSED check finished; null when none ever passed. */
+  lastPassedAt: z.string().datetime().nullable(),
+}))();
+export type BackgroundPerson = z.infer<typeof BackgroundPersonSchema>;
+
 export const BackgroundCheckListResponseSchema = /* @__PURE__ */ (() => z.object({
   checks: z.array(BackgroundCheckSchema),
   /** True when more checks matched than the list carries. */
@@ -4286,6 +4464,8 @@ export const BackgroundCheckListResponseSchema = /* @__PURE__ */ (() => z.object
   workforce: ComplianceWorkforceSchema.optional(),
   /** How many of this list's people are in each group — the chip counts. */
   workforceCounts: WorkforceCountsSchema.optional(),
+  /** Everyone in the group (and reach), checked or not. Absent from older servers. */
+  people: z.array(BackgroundPersonSchema).optional(),
 }))();
 export type BackgroundCheckListResponse = z.infer<typeof BackgroundCheckListResponseSchema>;
 
@@ -4298,11 +4478,15 @@ export const BackgroundUpdateInputSchema = /* @__PURE__ */ (() => z.object({
 }))();
 export type BackgroundUpdateInput = z.infer<typeof BackgroundUpdateInputSchema>;
 
+/** The groups a bulk-order roster lists (2026-11-03): never the people who left. */
+export const ScreeningRosterGroupSchema = /* @__PURE__ */ (() => z.enum(['current', 'starting', 'paused']))();
+export type ScreeningRosterGroup = z.infer<typeof ScreeningRosterGroupSchema>;
+
 /**
- * Bulk Checkr ordering — associates who have never been screened, shaped for
- * the provider's bulk-invitation CSV (email required; first name and phone
- * optional — Checkr collects DOB/SSN from the candidate directly, so no
- * heavy PII leaves this system).
+ * Bulk Checkr ordering — people never screened (no check, or a consent whose
+ * check never ran), shaped for the provider's bulk-invitation CSV (email
+ * required; first name and phone optional — Checkr collects DOB/SSN from the
+ * candidate directly, so no heavy PII leaves this system).
  */
 export const BackgroundPendingRowSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
@@ -4310,16 +4494,23 @@ export const BackgroundPendingRowSchema = /* @__PURE__ */ (() => z.object({
   lastName: z.string(),
   email: z.string(),
   phone: z.string().nullable(),
-  /** Same derivation as DirectoryStatus (defined inline — that schema is
-   *  declared later in this module): APPROVED application ⇒ ACTIVE,
-   *  in-flight ⇒ PENDING (onboarding), otherwise INACTIVE. */
+  /** Older clients' three words, kept for them: current ⇒ ACTIVE, starting
+   *  ⇒ PENDING, paused ⇒ INACTIVE. Read `group` instead. */
   status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']),
+  /** The person's group from their one status (complianceWorkforce.ts) —
+   *  the dialog ticks Current and Starting soon, leaves Paused unticked.
+   *  Absent from older servers. */
+  group: ScreeningRosterGroupSchema.optional(),
+  workStatus: WorkStatusSchema.nullable().optional(),
+  /** NOT_RUN when a consent is on file but its check never ran; null when
+   *  there is no check at all. */
+  lastStatus: BgCheckStatusSchema.nullable().optional(),
 }))();
 export type BackgroundPendingRow = z.infer<typeof BackgroundPendingRowSchema>;
 
 export const BackgroundPendingResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(BackgroundPendingRowSchema),
-  /** True when more than the 500-row cap matched — the CSV is partial. */
+  /** True when more than the roster's cap (5,000) matched — the CSV is partial. */
   truncated: z.boolean(),
 }))();
 export type BackgroundPendingResponse = z.infer<typeof BackgroundPendingResponseSchema>;
@@ -4336,7 +4527,9 @@ export type BackgroundBulkInitiateInput = z.infer<typeof BackgroundBulkInitiateI
 
 export const BackgroundBulkInitiateResponseSchema = /* @__PURE__ */ (() => z.object({
   created: z.number().int().nonnegative(),
-  /** Already had a check by the time this ran (raced with another admin). */
+  /** Already had a check in flight (ordered, in progress, needing review, or
+   *  in the adverse-action steps). A finished check no longer blocks a
+   *  re-screen (2026-11-03). */
   skipped: z.number().int().nonnegative(),
   /** The checks this call recorded. */
   ids: z.array(UuidSchema).optional(),
@@ -4380,6 +4573,19 @@ export const DrugTestStatusSchema = /* @__PURE__ */ (() => z.enum([
 ]))();
 export type DrugTestStatus = z.infer<typeof DrugTestStatusSchema>;
 
+/** Why a drug test was ordered — the lab's own vocabulary (the provider panel
+ *  sent it already); bulk and hand-recorded orders record one too (2026-11-03). */
+export const DRUG_TEST_REASONS = ['PRE_EMPLOYMENT', 'RANDOM', 'POST_ACCIDENT', 'REASONABLE_SUSPICION', 'RETURN_TO_DUTY', 'FOLLOW_UP'] as const;
+export type DrugTestReason = (typeof DRUG_TEST_REASONS)[number];
+export const DRUG_TEST_REASON_LABELS: Readonly<Record<DrugTestReason, string>> = {
+  PRE_EMPLOYMENT: 'Before they start',
+  RANDOM: 'Random selection',
+  POST_ACCIDENT: 'After an accident',
+  REASONABLE_SUSPICION: 'Reasonable suspicion',
+  RETURN_TO_DUTY: 'Returning to duty',
+  FOLLOW_UP: 'Follow-up',
+};
+
 export const DrugTestSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
@@ -4395,13 +4601,44 @@ export const DrugTestSchema = /* @__PURE__ */ (() => z.object({
   status: DrugTestStatusSchema,
   initiatedAt: z.string().datetime(),
   completedAt: z.string().datetime().nullable(),
-  /** DRUG_TEST_RESULT documents on file for this associate. */
+  /** DRUG_TEST_RESULT documents for THIS test — filed between its order and
+   *  the person's next test (2026-11-03; it used to be every result ever). */
   reportCount: z.number().int().nonnegative().optional(),
   /** Where the person stands (peopleStatus.ts) — the row's employment badge.
    *  Absent from older servers. */
   workStatus: WorkStatusSchema.nullable().optional(),
+  /** Why it was ordered (DRUG_TEST_REASONS); null on older orders. */
+  reason: z.string().nullable().optional(),
+  /** Obtained through a consumer reporting agency (Checkr, Sterling…): a
+   *  consumer report, so failing someone on it takes the FCRA steps. */
+  viaCra: z.boolean().optional(),
+  /** FCRA adjudication for a test through an agency: ENGAGED | PRE_ADVERSE | ADVERSE. */
+  adjudication: z.string().nullable().optional(),
+  preAdverseSentAt: z.string().datetime().nullable().optional(),
+  adverseWaitUntil: z.string().datetime().nullable().optional(),
+  adverseSentAt: z.string().datetime().nullable().optional(),
 }))();
 export type DrugTest = z.infer<typeof DrugTestSchema>;
+
+/** One person in the chosen group and reach, tested or not — the tab's "No
+ *  passed test" view and its "Last passed" column (2026-11-03). */
+export const DrugTestPersonSchema = /* @__PURE__ */ (() => z.object({
+  associateId: UuidSchema,
+  associateName: z.string(),
+  associatePhotoUrl: z.string().nullable().optional(),
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable().optional(),
+  workStatus: WorkStatusSchema.nullable(),
+  /** Their newest test; null when they have never had one. */
+  latestTestId: UuidSchema.nullable(),
+  latestStatus: DrugTestStatusSchema.nullable(),
+  /** When their newest PASSED test finished; null when none ever passed. */
+  lastPassedAt: z.string().datetime().nullable(),
+  /** Where the 60-day clock runs from: the newest pass's completion, else
+   *  (no test on record) the newest result filed. Null = never tested. */
+  lastResultAt: z.string().datetime().nullable(),
+}))();
+export type DrugTestPerson = z.infer<typeof DrugTestPersonSchema>;
 
 export const DrugTestListResponseSchema = /* @__PURE__ */ (() => z.object({
   tests: z.array(DrugTestSchema),
@@ -4411,6 +4648,8 @@ export const DrugTestListResponseSchema = /* @__PURE__ */ (() => z.object({
   workforce: ComplianceWorkforceSchema.optional(),
   /** How many of this list's people are in each group — the chip counts. */
   workforceCounts: WorkforceCountsSchema.optional(),
+  /** Everyone in the group (and reach), tested or not. Absent from older servers. */
+  people: z.array(DrugTestPersonSchema).optional(),
 }))();
 export type DrugTestListResponse = z.infer<typeof DrugTestListResponseSchema>;
 
@@ -4428,11 +4667,16 @@ export const DrugTestPendingRowSchema = /* @__PURE__ */ (() => z.object({
   lastName: z.string(),
   email: z.string(),
   phone: z.string().nullable(),
-  /** Same derivation as DirectoryStatus: APPROVED application ⇒ ACTIVE,
-   *  in-flight ⇒ PENDING (onboarding), otherwise INACTIVE. */
+  /** Older clients' three words, kept for them: current ⇒ ACTIVE, starting
+   *  ⇒ PENDING, paused ⇒ INACTIVE. Read `group` instead. */
   status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']),
-  /** When their newest result document was filed — null means never tested;
-   *  a date here means the result aged past the 60-day window. */
+  /** The person's group from their one status — the dialog ticks Current and
+   *  Starting soon, leaves Paused unticked. Absent from older servers. */
+  group: ScreeningRosterGroupSchema.optional(),
+  workStatus: WorkStatusSchema.nullable().optional(),
+  /** Where their 60-day clock runs from (the newest pass's completion, else
+   *  the newest result filed) — null means never tested; a date here means
+   *  it aged past the window. */
   lastResultAt: z.string().datetime().nullable(),
 }))();
 export type DrugTestPendingRow = z.infer<typeof DrugTestPendingRowSchema>;
@@ -4445,15 +4689,22 @@ export type DrugTestPendingResponse = z.infer<typeof DrugTestPendingResponseSche
 
 export const DrugTestBulkInitiateInputSchema = /* @__PURE__ */ (() => z.object({
   associateIds: z.array(UuidSchema).min(1).max(500),
-  provider: z.string().min(1).max(80).default('checkr'),
+  /** Who runs the test — the lab or agency the order went to; 'manual' when
+   *  not said (it used to default to 'checkr', which made every hand-recorded
+   *  test look like an agency report). */
+  provider: z.string().min(1).max(80).default('manual'),
   /** The provider's own reference, for an order of ONE person placed in its portal. */
   externalId: z.string().trim().max(120).optional(),
+  /** Why it was ordered. A return-to-duty or follow-up test may follow a failed one. */
+  reason: z.enum(DRUG_TEST_REASONS).optional(),
 }))();
 export type DrugTestBulkInitiateInput = z.infer<typeof DrugTestBulkInitiateInputSchema>;
 
 export const DrugTestBulkInitiateResponseSchema = /* @__PURE__ */ (() => z.object({
   created: z.number().int().nonnegative(),
-  /** Gained an open order by the time this ran (raced with another admin). */
+  /** Already had a test in flight or awaiting review (the Medical Review
+   *  Officer, or the adverse-action steps), or — for a routine order — a
+   *  failed newest test. */
   skipped: z.number().int().nonnegative(),
   /** The orders this call recorded. */
   ids: z.array(UuidSchema).optional(),
@@ -4481,11 +4732,26 @@ export const J1ProfileSchema = /* @__PURE__ */ (() => z.object({
   visaNumber: z.string().nullable(),
   sevisId: z.string().nullable(),
   country: z.string(),
-  /** Server-computed: days from now until programEndDate (negative = expired). */
+  /** Server-computed: calendar days from the company's today to programEndDate
+   *  (0 = the last program day; negative = ended). */
   daysUntilEnd: z.number().int(),
   /** Where the person stands (peopleStatus.ts) — the row's employment badge.
    *  Absent from older servers. */
   workStatus: WorkStatusSchema.nullable().optional(),
+  /** Cleared to work (owner, 2026-11-03): where programEndDate came from — an
+   *  open J-1 Program record (the DS-2019's program) when it ends later, else
+   *  this profile. The same end the scheduling block reads. */
+  programEndSource: z.enum(['program', 'profile']).optional(),
+  /** The DS-2019's own end date, from the Program record. */
+  ds2019ExpiresOn: z.string().nullable().optional(),
+  /** Program end + the grace period: they may stay in the country until then, not work. */
+  graceEndsOn: z.string().nullable().optional(),
+  /** Their next assigned shift. */
+  nextShift: ClearedShiftSchema.nullable().optional(),
+  /** The first assigned shift ahead that falls after the program end — scheduling refuses new ones. */
+  scheduledAfterEnd: ClearedShiftSchema.nullable().optional(),
+  /** The latest day they clocked in after the program ended. */
+  workedAfterEndOn: z.string().nullable().optional(),
 }))();
 export type J1Profile = z.infer<typeof J1ProfileSchema>;
 
@@ -5689,6 +5955,9 @@ export type SwapCreateInput = z.infer<typeof SwapCreateInputSchema>;
 
 export const SwapDecideInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().max(500).optional(),
+  /** "Approve anyway" past a work-authorization block (owner, 2026-11-03):
+   *  honoured only for a caller holding manage:compliance, audited. */
+  overrideWorkAuthorization: WorkAuthorizationOverrideSchema.optional(),
 }))();
 export type SwapDecideInput = z.infer<typeof SwapDecideInputSchema>;
 
@@ -6833,6 +7102,32 @@ export const EVerifyRosterRowSchema = /* @__PURE__ */ (() => z.object({
   /** Where the person stands (peopleStatus.ts) — the row's employment badge.
    *  Absent from older servers. */
   workStatus: WorkStatusSchema.nullable().optional(),
+  /** What the person chose after a mismatch notice (CONTEST | NO_CONTEST), as stored. */
+  tncDecision: z.string().nullable().optional(),
+  /** The day the referral window closes (YYYY-MM-DD), as stored. */
+  referralDeadline: z.string().nullable().optional(),
+  /** Why the case was closed in E-Verify, as stored. */
+  closureReason: z.string().nullable().optional(),
+  /** A case still open in E-Verify: pending, a mismatch, or referred, and not closed. */
+  caseOpen: z.boolean().optional(),
+  /** A rehire whose case belongs to an earlier employment (owner, 2026-11-03):
+   *  this employment has no case yet, so the case fields above read empty
+   *  and `previousCase` holds the old one. */
+  needsNewCase: z.boolean().optional(),
+  previousCase: z
+    .object({
+      caseNumber: z.string().nullable(),
+      status: EVerifyStatusSchema.nullable(),
+      caseOpenedAt: z.string().datetime().nullable(),
+      closedAt: z.string().datetime().nullable(),
+    })
+    .nullable()
+    .optional(),
+  /** Left on (YYYY-MM-DD): the last day worked of someone separated. */
+  leftOn: z.string().nullable().optional(),
+  /** A rehire whose earlier I-9 was reused on Supplement B, with an earlier
+   *  case that ended Employment Authorized: no new case is needed. */
+  earlierI9Reused: z.boolean().optional(),
 }))();
 export type EVerifyRosterRow = z.infer<typeof EVerifyRosterRowSchema>;
 
@@ -6852,6 +7147,10 @@ export const EVerifyRosterResponseSchema = /* @__PURE__ */ (() => z.object({
   workforce: ComplianceWorkforceSchema.optional(),
   /** How many of this list's people are in each group — the chip counts. */
   workforceCounts: WorkforceCountsSchema.optional(),
+  /** People who left (the Former group) whose case is still open in
+   *  E-Verify — each must be closed there ("employee no longer employed"),
+   *  whatever group the list shows. */
+  formerOpenCases: z.number().int().nonnegative().optional(),
 }))();
 export type EVerifyRosterResponse = z.infer<typeof EVerifyRosterResponseSchema>;
 
@@ -6931,6 +7230,24 @@ export const EVerifyCaseDetailSchema = /* @__PURE__ */ (() => z.object({
   closedAt: z.string().datetime().nullable(),
   blockers: z.array(EVerifyBlockerSchema),
   ready: z.boolean(),
+  /** As on the roster row: the stored mismatch choice, referral deadline and
+   *  closure reason, a case still open, and a rehire's earlier case. */
+  tncDecision: z.string().nullable().optional(),
+  referralDeadline: z.string().nullable().optional(),
+  closureReason: z.string().nullable().optional(),
+  caseOpen: z.boolean().optional(),
+  needsNewCase: z.boolean().optional(),
+  previousCase: z
+    .object({
+      caseNumber: z.string().nullable(),
+      status: EVerifyStatusSchema.nullable(),
+      caseOpenedAt: z.string().datetime().nullable(),
+      closedAt: z.string().datetime().nullable(),
+    })
+    .nullable()
+    .optional(),
+  workStatus: WorkStatusSchema.nullable().optional(),
+  earlierI9Reused: z.boolean().optional(),
 }))();
 export type EVerifyCaseDetail = z.infer<typeof EVerifyCaseDetailSchema>;
 

@@ -16,11 +16,12 @@ import {
   scopeShifts,
 } from '../lib/scope.js';
 import type { SessionUser } from '../types/express.js';
-import { can } from '@alto-people/shared';
+import { WorkAuthorizationOverrideSchema, can } from '@alto-people/shared';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { formatShiftLine } from '../lib/notifyShift.js';
 import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
+import { assertAuthorizedToWork, auditOverride } from '../lib/workAuthorization.js';
 import { declinedShiftIds } from '../lib/openShiftInvites.js';
 import { shiftTimezone } from '../lib/shiftZone.js';
 
@@ -611,6 +612,8 @@ qualificationsRouter.put(
       .object({
         status: z.enum(['APPROVED', 'REJECTED', 'WITHDRAWN']),
         decisionNote: z.string().max(2000).nullable().optional(),
+        /** "Approve anyway" past a work-authorization block: manage:compliance only, audited (owner, 2026-11-03). */
+        overrideWorkAuthorization: WorkAuthorizationOverrideSchema.optional(),
       })
       .parse(req.body);
     const claim = await prisma.openShiftClaim.findUnique({
@@ -657,6 +660,26 @@ qualificationsRouter.put(
     if (claim.status !== 'PENDING') {
       throw new HttpError(400, 'wrong_state', 'Claim is not pending.');
     }
+    // Cleared to work (owner, 2026-11-03): an approval never puts someone on
+    // a day after their work authorization or J-1 program ended — unless HR
+    // (manage:compliance) approves anyway with a reason, audited below.
+    const workAuth = {
+      actorUserId: req.user!.id,
+      via: 'claim_approve',
+      shiftId,
+      clientId: claim.shift.clientId,
+      canOverride: can(req.user!, 'manage:compliance'),
+      override: input.overrideWorkAuthorization ?? null,
+    };
+    const overridden =
+      input.status === 'APPROVED'
+        ? await assertAuthorizedToWork(
+            prisma,
+            { id: claim.associateId },
+            { startsAt: claim.shift.startsAt, endsAt: claim.shift.endsAt, timezone: claim.shift.locationRel?.timezone },
+            workAuth,
+          )
+        : null;
 
     await prisma.$transaction(async (tx) => {
       await tx.openShiftClaim.update({
@@ -688,6 +711,10 @@ qualificationsRouter.put(
         });
       }
     });
+
+    if (overridden && workAuth.override) {
+      auditOverride(claim.associateId, overridden.blockers, overridden.day, { ...workAuth, shiftId, reason: workAuth.override.reason });
+    }
 
     // A pickup can be a new hire's FIRST shift — Fieldglass handoff
     // (deduped inside; silent unless the associate is approved+scheduled).

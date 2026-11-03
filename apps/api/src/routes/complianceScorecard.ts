@@ -61,6 +61,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { ReportPdf } from '../lib/reportPdf.js';
 import { formatRef } from '../lib/emailTemplates.js';
 import { fmtDayInZone } from '../lib/humanDates.js';
+import { drugClocksFor, drugResultDue, drugResultExpiresAt } from '../lib/screeningRecords.js';
 import { companyWorkweek, dateKeyInZone, orgDateKey } from '../lib/timeAnomalies.js';
 import { METRICS } from '@alto-people/shared';
 
@@ -288,7 +289,6 @@ async function computeOnboardingSets(clientId?: string | null) {
   }
 
   // All signal queries fan out in parallel.
-  const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 3600 * 1000);
   const eighteenYearsAgo = new Date();
   eighteenYearsAgo.setFullYear(eighteenYearsAgo.getFullYear() - 18);
 
@@ -298,19 +298,13 @@ async function computeOnboardingSets(clientId?: string | null) {
   // meant ~250 associates holding two drug-test documents exhausted the
   // window and pushed healthy associates into "missing" — a compliance
   // dashboard reporting false criticals.
-  const [drugRows, bgRows, bgDocRows, i9Rows, w4Rows, policyAcks] =
+  const [drugClocks, bgRows, bgDocRows, i9Rows, w4Rows, policyAcks] =
     await Promise.all([
-      prisma.documentRecord.findMany({
-        take: ids.length,
-        distinct: ['associateId'],
-        where: {
-          associateId: { in: ids },
-          kind: 'DRUG_TEST_RESULT',
-          deletedAt: null,
-          createdAt: { gte: sixtyDaysAgo },
-        },
-        select: { associateId: true },
-      }),
+      // The 60-day clock by the Drug tests tab's rule (lib/screeningRecords,
+      // 2026-11-03): from the passed test's completion, not the day its PDF
+      // was uploaded — an old result filed late used to read as fresh here
+      // while the tab said the person was due.
+      drugClocksFor(ids),
       prisma.backgroundCheck.findMany({
         take: ids.length,
         distinct: ['associateId'],
@@ -357,7 +351,7 @@ async function computeOnboardingSets(clientId?: string | null) {
   const setOf = (rows: Array<{ associateId: string }>) =>
     new Set(rows.map((r) => r.associateId));
 
-  const drugSet = setOf(drugRows);
+  const drugSet = new Set(ids.filter((id) => !drugResultDue(drugClocks.get(id) ?? null)));
   const bgSet = new Set([...setOf(bgRows), ...setOf(bgDocRows)]);
   const i9Set = setOf(i9Rows);
   const eVerifyClearedSet = new Set(
@@ -647,31 +641,12 @@ export async function buildExpirationsTile(
   const activeIds = active.map((a) => a.associateId);
   const subjectById = new Map(active.map((a) => [a.associateId, a]));
 
-  // Drug test expiry is computed: createdAt + 60 days. Anything created in
-  // the last 90 days is in our window because the latest expiry is 60 days
-  // out from now (test created today expires 60 days from now).
-  const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 3600 * 1000);
-
-  const [drugDocs, i9Rows, j1Rows, certRows, expiringDocs, vaxRows, agreementRows] =
+  // Drug test expiry is computed: 60 days from the person's clock — their
+  // newest passed test's completion (the Drug tests tab's rule,
+  // lib/screeningRecords, 2026-11-03), one entry per person.
+  const [drugClocks, i9Rows, j1Rows, certRows, expiringDocs, vaxRows, agreementRows] =
     await Promise.all([
-      // LATEST drug test per associate — the old query pushed one item per
-      // document, so a retested associate showed a stale duplicate expiry.
-      prisma.documentRecord.findMany({
-        take: activeIds.length,
-        distinct: ['associateId'],
-        orderBy: { createdAt: 'desc' },
-        where: {
-          kind: 'DRUG_TEST_RESULT',
-          deletedAt: null,
-          createdAt: { gte: ninetyDaysAgo },
-          associateId: { in: activeIds },
-        },
-        select: {
-          associateId: true,
-          createdAt: true,
-          associate: { select: { firstName: true, lastName: true } },
-        },
-      }),
+      drugClocksFor(activeIds),
       prisma.i9Verification.findMany({
         take: 2000,
         where: {
@@ -765,18 +740,18 @@ export async function buildExpirationsTile(
 
   const items: ScorecardExpiringItem[] = [];
 
-  for (const d of drugDocs) {
-    const expiresAt = new Date(d.createdAt.getTime() + 60 * 24 * 3600 * 1000);
+  for (const [associateId, clock] of drugClocks) {
+    const expiresAt = drugResultExpiresAt(clock);
     if (expiresAt < now || expiresAt > ninetyDaysOut) continue;
-    const subj = subjectById.get(d.associateId);
+    const subj = subjectById.get(associateId);
     items.push({
       kind: 'DRUG_TEST',
       label: 'Drug test (60-day window)',
       expiresAt: expiresAt.toISOString(),
       daysUntil: Math.round((expiresAt.getTime() - now.getTime()) / 86_400_000),
       subject: {
-        associateId: d.associateId,
-        associateName: `${d.associate.firstName} ${d.associate.lastName}`,
+        associateId,
+        associateName: subj?.associateName ?? '',
         clientId: subj?.clientId ?? null,
         clientName: subj?.clientName ?? null,
       },

@@ -7,17 +7,19 @@ import { registerCapabilityMetrics, registerCapabilityRunner } from './agentCapa
 import { complianceAgentFor } from './complianceAgent.js';
 import { notifyAssociate } from './notify.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
-import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
+import { companyWorkweek, orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 import { toWaLang, type WaLang } from './whatsappContent.js';
-import { dateColumnKey } from './timezone.js';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
 
 /**
  * The Compliance agent's `coverage.credentials` (agent families step 5;
  * docs/agent-families-investigation.md §4).
  *
  *   A site (or every site of a client) may require a credential: a
- *   vaccination kind, a training by compliance tag, or a qualification
- *   (CredentialRequirement; nothing is required until someone sets it).
+ *   vaccination kind, a training by compliance tag, a qualification, or —
+ *   cleared to work, owner 2026-11-03 — a passed background check or drug
+ *   test no older than the requirement's maximum age (CredentialRequirement;
+ *   nothing is required until someone sets it).
  *   Once a week the agent measures each requirement: the people placed in
  *   scope (lib/activeDefinition placements) against those holding it
  *   current (not expired), writes the week (CredentialCoverageWeek), puts
@@ -31,7 +33,10 @@ type Db = PrismaClient | Prisma.TransactionClient;
 export const COVERAGE_CREDENTIALS = 'coverage.credentials';
 const ASK_CATEGORY = 'compliance.credentials';
 
-export type RequirementKind = 'VACCINATION' | 'TRAINING' | 'QUALIFICATION';
+export type RequirementKind = 'VACCINATION' | 'TRAINING' | 'QUALIFICATION' | 'BACKGROUND_CHECK' | 'DRUG_TEST';
+
+/** Screenings HR orders: measured like the rest, never asked of the person (they can't upload one). */
+export const SCREENING_KINDS: readonly string[] = ['BACKGROUND_CHECK', 'DRUG_TEST'];
 
 export interface RequirementRow {
   id: string;
@@ -41,12 +46,16 @@ export interface RequirementRow {
   vaccinationKind: string | null;
   complianceTag: string | null;
   qualificationId: string | null;
+  /** BACKGROUND_CHECK / DRUG_TEST: how old the latest passed one may be; null = any. */
+  maxAgeDays?: number | null;
   label: string;
 }
 
 /** Who is placed in the requirement's scope, and which of them hold it current. */
 export async function coverageOf(db: Db, tenantId: string, req: RequirementRow, now: Date): Promise<{ population: string[]; missing: string[] }> {
-  const placed = await placements(req.locationId ? { locationId: req.locationId, tenantId } : { clientId: req.clientId, tenantId }, db as PrismaClient);
+  // Neither a site nor a client: company-wide, everyone placed anywhere (owner, 2026-11-03).
+  const scope = req.locationId ? { locationId: req.locationId, tenantId } : req.clientId ? { clientId: req.clientId, tenantId } : { tenantId };
+  const placed = await placements(scope, db as PrismaClient);
   const population = [...placed.keys()];
   if (!population.length) return { population, missing: [] };
   const current = { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] };
@@ -68,6 +77,20 @@ export async function coverageOf(db: Db, tenantId: string, req: RequirementRow, 
       where: { associateId: { in: population }, qualificationId: req.qualificationId, deletedAt: null, ...current },
       select: { associateId: true },
     });
+    holders = rows.map((r) => r.associateId);
+  } else if (req.kind === 'BACKGROUND_CHECK' || req.kind === 'DRUG_TEST') {
+    // The latest PASSED one counts while it is no older than the maximum
+    // age, in company days (the same rule as lib/workAuthorization's
+    // Background and Drug test columns); its completion day, else its order day.
+    const since = req.maxAgeDays != null ? utcInstantOfLocalMidnight(addDaysToKey(orgDateKey(now), -req.maxAgeDays), companyWorkweek().timezone) : null;
+    const where = {
+      associateId: { in: population },
+      status: 'PASSED' as const,
+      ...(since ? { OR: [{ completedAt: { gte: since } }, { completedAt: null, initiatedAt: { gte: since } }] } : {}),
+    };
+    const rows = req.kind === 'BACKGROUND_CHECK'
+      ? await db.backgroundCheck.findMany({ where, select: { associateId: true } })
+      : await db.drugTest.findMany({ where, select: { associateId: true } });
     holders = rows.map((r) => r.associateId);
   }
   const held = new Set(holders);
@@ -107,12 +130,14 @@ const REQUIREMENT_SELECT = {
   vaccinationKind: true,
   complianceTag: true,
   qualificationId: true,
+  maxAgeDays: true,
   label: true,
   location: { select: { name: true } },
   client: { select: { name: true } },
 } as const;
 
-export const requirementPlace = (r: { location: { name: string } | null; client: { name: string } | null }) => r.location?.name ?? r.client?.name ?? 'This site';
+/** Where a requirement applies, as the desk reads it; a company-wide one is "Every client". */
+export const requirementPlace = (r: { location: { name: string } | null; client: { name: string } | null }) => r.location?.name ?? r.client?.name ?? 'Every client';
 
 export interface CredentialCoverageRun {
   measured: number;
@@ -138,7 +163,14 @@ export async function runCredentialCoverage(db: PrismaClient = defaultPrisma, no
     }
     out.measured += 1;
     if (missing.length) out.gaps += 1;
-    const place = requirementPlace(r);
+    // A company-wide ask names the employer ("Alto HR requires …"), not "Every client".
+    const place = r.location || r.client ? requirementPlace(r) : ((await db.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }))?.name ?? 'Your employer');
+    // A background check or drug test is HR's to order: the gap is on the
+    // desk (and the Cleared to work tab), not a message to the person.
+    if (SCREENING_KINDS.includes(r.kind)) {
+      logAgentAction(agent, { action: 'agent.credentials.measured', entityType: 'CredentialRequirement', entityId: r.id, scopes: [...capabilityDef(COVERAGE_CREDENTIALS)!.scopes], metadata: { weekOf: dateColumnKey(weekOf), population: population.length, missing: missing.length } });
+      continue;
+    }
     for (const associateId of missing) {
       const user = await db.user.findFirst({ where: { associateId, status: 'ACTIVE' }, select: { language: true } });
       const ask = credentialAsk(toWaLang(user?.language), r.label, place, r.kind);

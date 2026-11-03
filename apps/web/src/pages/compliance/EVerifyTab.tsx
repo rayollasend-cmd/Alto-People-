@@ -16,6 +16,8 @@ import {
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import { DeadlineStrip, matchesDeadlineDay } from './DeadlineStrip';
 import { sanitizeReturnPath } from './section2Verification';
+import { WORKFORCE_PARAM, WorkforceFilter, useComplianceWorkforce } from './WorkforceFilter';
+import { COMPLIANCE_WORKFORCE_DEFINITIONS, type ComplianceWorkforce } from '@alto-people/shared';
 import type {
   DocumentKind,
   EVerifyBlocker,
@@ -24,6 +26,7 @@ import type {
   EVerifyRosterRow,
   EVerifyStatus,
 } from '@alto-people/shared';
+import { PeopleStatusBadge, isWorkStatus, workStatusEnglish } from '@/components/ui/PeopleStatusBadge';
 import {
   getEVerifyCase,
   listEVerifyRoster,
@@ -161,7 +164,8 @@ const CITIZENSHIP_LABEL: Record<string, string> = {
   ALIEN_AUTHORIZED_TO_WORK: 'An alien authorized to work',
 };
 
-const STATUS_FILTER_VALUES = ['all', 'not_run', 'pending', 'authorized', 'issue', 'overdue'] as const;
+// open_left: a case still open in E-Verify for someone who left (owner, 2026-11-03).
+const STATUS_FILTER_VALUES = ['all', 'not_run', 'pending', 'authorized', 'issue', 'overdue', 'open_left'] as const;
 type StatusFilter = (typeof STATUS_FILTER_VALUES)[number];
 const HIRED_FILTER_VALUES = ['any', 'today', 'yesterday', 'week', 'month'] as const;
 type HiredFilter = (typeof HIRED_FILTER_VALUES)[number];
@@ -215,6 +219,40 @@ function matchesHiredFilter(hireDate: string | null, f: HiredFilter): boolean {
 
 const NO_ROWS: EVerifyRosterRow[] = [];
 
+/** The total tile, named by who it counts (PEOPLE-23; owner, 2026-11-03: the group on view). */
+const TOTAL_LABEL: Record<ComplianceWorkforce, string> = {
+  current: 'Current workforce',
+  starting: 'Starting soon',
+  paused: 'Paused',
+  former: 'Former',
+  all: 'Everyone on file',
+};
+
+/** E-Verify's closure reasons, in words (the provider panel's list). */
+const CLOSURE_LABEL: Record<string, string> = {
+  EMPLOYEE_CONTINUES_TO_WORK: 'They keep working here',
+  EMPLOYEE_NO_LONGER_EMPLOYED: 'They no longer work here',
+  TERMINATED_FOR_FINAL_NONCONFIRMATION: 'Employment ended because of the final nonconfirmation',
+  INCORRECT_DATA: 'Opened with wrong information',
+  DUPLICATE_CASE: 'Duplicate of another case',
+};
+
+/** What the person chose after a mismatch notice, in words. */
+const TNC_DECISION_LABEL: Record<string, string> = {
+  CONTEST: 'Taking action on the mismatch',
+  NO_CONTEST: 'Not taking action',
+};
+
+/**
+ * No case for this employment at all — the rows whose deadline is still
+ * open (a case recorded by hand with an outcome but no opened date has met
+ * its clock; a rehire's earlier case reads empty, so theirs is open).
+ */
+const noCase = (r: EVerifyRosterRow) => !r.caseNumber && !r.status && !r.caseOpenedAt;
+
+/** A case still open in E-Verify for someone who has left — it must be closed there. */
+const openForLeaver = (r: EVerifyRosterRow) => !!r.caseOpen && r.workStatus === 'SEPARATED';
+
 export function EVerifyTab({ canManage }: { canManage: boolean }) {
   // ?associateId= deep-links one person's case (the scorecard's Fix links,
   // the profile document vault, and application checklists all send it) —
@@ -239,14 +277,18 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   });
   const deepLinkOpened = useRef(false);
   const deepLinkConsumed = useRef(false);
+  // Who the list is about (owner, 2026-11-03): the current workforce unless
+  // a link names a group (?workforce=, this visit) or one person (All).
+  const { workforce, setWorkforce } = useComplianceWorkforce({ wide: !!deepLinkAssociateId });
   useEffect(() => {
     if (deepLinkConsumed.current) return;
-    if (!deepLinkParams.has('associateId') && !deepLinkParams.has('return') && !deepLinkParams.has('status')) return;
+    if (!['associateId', 'return', 'status', WORKFORCE_PARAM].some((k) => deepLinkParams.has(k))) return;
     deepLinkConsumed.current = true;
     const params = new URLSearchParams(deepLinkParams);
     params.delete('associateId');
     params.delete('return');
     params.delete('status');
+    params.delete(WORKFORCE_PARAM);
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
   const [query, setQuery] = useState('');
@@ -261,7 +303,10 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const [filterOverride, setFilterOverride] = useState<StatusFilter | null>(
     deepLinkStatus ?? (deepLinkAssociateId ? 'all' : null),
   );
-  const filter = filterOverride ?? storedFilter;
+  const pickedFilter = filterOverride ?? storedFilter;
+  // "Case open, person left" is a Former / All view: a saved pick of it
+  // never empties the current workforce's list.
+  const filter: StatusFilter = pickedFilter === 'open_left' && workforce !== 'former' && workforce !== 'all' ? 'all' : pickedFilter;
   const setFilter = (f: StatusFilter) => {
     setFilterOverride(null);
     setStoredFilter(f);
@@ -320,24 +365,12 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const canOpenCase = user ? hasCapability(user.role, 'manage:compliance') : false;
 
   const refreshQuery = useQuery({
-    queryKey: ['EVerifyTab', 'rows'],
-    queryFn: () => listEVerifyRoster(),
+    queryKey: ['EVerifyTab', 'rows', workforce],
+    queryFn: () => listEVerifyRoster({ workforce }),
   });
   const rows: EVerifyRosterRow[] | null = refreshQuery.isError ? NO_ROWS : (refreshQuery.data?.rows ?? null);
-  const counts: {
-    total: number;
-    authorized: number;
-    pending: number;
-    nonconfirmation: number;
-    notRun: number;
-    overdue: number;
-    blocked: number;
-  } | null = refreshQuery.data?.counts ?? null;
   const truncated = refreshQuery.data?.truncated ?? false;
-  // People with no case yet whose case can't be sent (PEOPLE-27): the API's
-  // `blocked` also counted everyone already authorized ("Blocked 44" beside
-  // "Authorized 37"). Same rows the counts are made from.
-  const cantSubmit = (rows ?? []).filter((r) => r.status === null && !r.ready).length;
+  const formerOpenCases = refreshQuery.data?.formerOpenCases ?? 0;
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load the roster.' : null;
   const refresh = async () => {
     await refreshQuery.refetch();
@@ -365,7 +398,7 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
         return false;
       }
       if (!matchesHiredFilter(r.hireDate, hired)) return false;
-      if (dueDay && !(r.dueBy && !r.caseOpenedAt && matchesDeadlineDay(r.dueBy, dueDay))) return false;
+      if (dueDay && !(r.dueBy && noCase(r) && matchesDeadlineDay(r.dueBy, dueDay))) return false;
       if (clientFilter && (clientFilter === 'none' ? !!r.clientId : r.clientId !== clientFilter)) {
         return false;
       }
@@ -383,6 +416,8 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           );
         case 'overdue':
           return r.overdue;
+        case 'open_left':
+          return openForLeaver(r);
         default:
           return true;
       }
@@ -419,6 +454,30 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   }, [rows]);
   const hasUnattributed = (rows ?? []).some((r) => !r.clientId);
 
+  // The tiles count the rows on view (owner, 2026-11-03): the group the
+  // server sent, in the client in scope — not a count over everyone ever
+  // onboarded. Each number is the filter for the rows it counts.
+  const counts = useMemo(() => {
+    const inScope = (rows ?? []).filter((r) => !clientFilter || (clientFilter === 'none' ? !r.clientId : r.clientId === clientFilter));
+    return {
+      total: inScope.length,
+      authorized: inScope.filter((r) => r.status === 'EMPLOYMENT_AUTHORIZED').length,
+      pending: inScope.filter((r) => r.status === 'PENDING').length,
+      nonconfirmation: inScope.filter((r) => r.status === 'TENTATIVE_NONCONFIRMATION' || r.status === 'FINAL_NONCONFIRMATION').length,
+      notRun: inScope.filter((r) => r.status === null).length,
+      overdue: inScope.filter((r) => r.overdue).length,
+      // People with no case yet whose case can't be sent (PEOPLE-27): an
+      // authorized person isn't "blocked".
+      cantSubmit: inScope.filter((r) => r.status === null && !r.ready).length,
+      openLeft: inScope.filter(openForLeaver).length,
+    };
+  }, [rows, clientFilter]);
+  const showLeavers = workforce === 'former' || workforce === 'all';
+  const showLeftOpen = () => {
+    setWorkforce('former');
+    setFilter('open_left');
+  };
+
   return (
     <div>
       <DirectorateHeader
@@ -431,19 +490,16 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
 
       {/* Snapshot — the "how are we doing on E-Verify" question, answered
           without scrolling a table. */}
-      {/* (cantSubmit: people with no case yet whose case can't be sent — an
-          authorized person isn't "blocked"; the counts come from these same rows.) */}
-      {counts && counts.total > 0 && (
+      {rows && rows.length > 0 && (
         <KpiStrip>
           {/* Each number is the filter for the rows it counts. */}
-          {/* Named by who it counts (PEOPLE-23): everyone hired or still
-              onboarding — not the People page's "Working" or "On the books". */}
+          {/* Named by who it counts (PEOPLE-23): the group on view. */}
           <Kpi
-            label="Hired or onboarding"
+            label={TOTAL_LABEL[workforce]}
             value={counts.total}
             onClick={() => setFilter('all')}
             active={filter === 'all'}
-            hint="Everyone hired or still onboarding: anyone whose application wasn't declined or cancelled. Shows them all."
+            hint={`${COMPLIANCE_WORKFORCE_DEFINITIONS[workforce]} Shows them all.`}
           />
           <Kpi label="Authorized" value={counts.authorized} tone="text-success" onClick={() => setFilter('authorized')} active={filter === 'authorized'} />
           <Kpi label="Pending" value={counts.pending} onClick={() => setFilter('pending')} active={filter === 'pending'} />
@@ -466,11 +522,38 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
               work" (PEOPLE-27). It counts cases that can't be SUBMITTED yet. */}
           <Kpi
             label="Can't submit yet"
-            value={cantSubmit}
-            tone={cantSubmit > 0 ? 'text-warning' : undefined}
+            value={counts.cantSubmit}
+            tone={counts.cantSubmit > 0 ? 'text-warning' : undefined}
             hint="People whose E-Verify case can't be sent yet: something it needs is missing (a finished I-9, a readable SSN, a date of birth or a hire date). Nobody here is barred from working; each row says what's missing."
           />
+          {showLeavers && (
+            <Kpi
+              label="Case open, person left"
+              value={counts.openLeft}
+              tone={counts.openLeft > 0 ? 'text-alert' : undefined}
+              onClick={() => setFilter('open_left')}
+              active={filter === 'open_left'}
+              hint="People who left whose E-Verify case is still open (waiting, a mismatch, or referred). Close each one in E-Verify with the reason “employee no longer employed”."
+            />
+          )}
         </KpiStrip>
+      )}
+
+      {/* Whatever group is on view: a case left open by someone who left
+          must be closed in E-Verify, and nothing else would say so. */}
+      {!showLeavers && formerOpenCases > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-alert/40 bg-alert/[0.06] p-3 text-sm">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-alert" aria-hidden="true" />
+          <span className="min-w-0 flex-1 text-silver">
+            {formerOpenCases === 1
+              ? '1 person who left still has an open E-Verify case.'
+              : `${formerOpenCases} people who left still have an open E-Verify case.`}{' '}
+            Close each one in E-Verify with the reason “employee no longer employed”.
+          </span>
+          <Button size="sm" variant="outline" onClick={showLeftOpen}>
+            Show them
+          </Button>
+        </div>
       )}
 
       {rows && (
@@ -478,22 +561,33 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           title="Case deadlines"
           what="E-Verify cases to open"
           // Open deadlines only: a case already opened has met its clock.
-          dueDates={rows.filter((r) => !r.caseOpenedAt).map((r) => r.dueBy)}
+          dueDates={rows.filter(noCase).map((r) => r.dueBy)}
           selectedDay={dueDay}
           onSelectDay={setDueDay}
         />
       )}
 
+      {/* The roster has no page size; a ceiling far past any real roster
+          is the only cut, and it is never silent. */}
       {truncated && (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <div className="text-silver">
-            Showing the first {rows?.length ?? 0} associates — the roster is
-            larger than one page. Narrow with the search box to find someone
-            who isn&apos;t listed.
+            This group is larger than the {rows?.length.toLocaleString('en-US') ?? 0} people the list can show at once, so some are missing. Pick a smaller group.
           </div>
         </div>
       )}
+
+      <WorkforceFilter
+        className="mb-2 flex flex-wrap gap-2"
+        value={workforce}
+        onChange={(w) => {
+          setWorkforce(w);
+          // "Case open, person left" is a Former/All view.
+          if (filter === 'open_left' && w !== 'former' && w !== 'all') setFilter('all');
+        }}
+        counts={refreshQuery.data?.workforceCounts}
+      />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <SearchInput
@@ -517,6 +611,7 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           <option value="authorized">Authorized</option>
           <option value="issue">Nonconfirmation</option>
           <option value="overdue">Overdue</option>
+          {showLeavers && <option value="open_left">Case open, person left</option>}
         </Select>
         <Select
           value={clientFilter}
@@ -563,11 +658,14 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           className="ml-auto"
           disabled={visible.length === 0}
           onClick={() =>
-            downloadCsv(`everify-list-${ymdLocal()}.csv`, [
+            // The group is in the file's name, and each person's standing in
+            // a column (owner, 2026-11-03). The name stays whole: splitting at
+            // the first space turned "Mary Ann Lee" into first "Mary", last "Ann Lee".
+            downloadCsv(`everify-${workforce}-${ymdLocal()}.csv`, [
               [
-                'Last name',
-                'First name',
+                'Name',
                 'Email',
+                'Employment',
                 'Client',
                 'Hire date',
                 'E-Verify case number',
@@ -576,23 +674,36 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
                 'Case closed',
                 'Due by',
                 'Overdue',
+                'Mismatch decision',
+                'Referral deadline',
+                'Closure reason',
+                'Note',
               ],
-              ...visible.map((r) => {
-                const [first, ...rest] = r.associateName.split(' ');
-                return [
-                  rest.join(' '),
-                  first,
-                  r.associateEmail,
-                  r.clientName ?? '',
-                  r.hireDate ?? '',
-                  r.caseNumber ?? 'NO CASE ON FILE',
-                  r.status?.replace(/_/g, ' ') ?? 'NOT RUN',
-                  r.caseOpenedAt ? r.caseOpenedAt.slice(0, 10) : '',
-                  r.closedAt ? r.closedAt.slice(0, 10) : '',
-                  r.dueBy ?? '',
-                  r.overdue ? 'YES' : '',
-                ];
-              }),
+              ...visible.map((r) => [
+                r.associateName,
+                r.associateEmail,
+                isWorkStatus(r.workStatus) ? workStatusEnglish(r.workStatus) : '',
+                r.clientName ?? '',
+                r.hireDate ?? '',
+                r.caseNumber ?? 'NO CASE ON FILE',
+                r.status?.replace(/_/g, ' ') ?? 'NOT RUN',
+                r.caseOpenedAt ? r.caseOpenedAt.slice(0, 10) : '',
+                r.closedAt ? r.closedAt.slice(0, 10) : '',
+                r.dueBy ?? '',
+                r.overdue ? 'YES' : '',
+                r.tncDecision ? (TNC_DECISION_LABEL[r.tncDecision] ?? r.tncDecision) : '',
+                r.referralDeadline ?? '',
+                r.closureReason ? (CLOSURE_LABEL[r.closureReason] ?? r.closureReason) : '',
+                r.earlierI9Reused
+                  ? 'Rehire: earlier I-9 reused (no new case needed)'
+                  : r.needsNewCase
+                  ? r.previousCase?.caseNumber
+                    ? `Rehired: case ${r.previousCase.caseNumber} was for an earlier job`
+                    : 'Rehired: the last case was for an earlier job'
+                  : openForLeaver(r)
+                    ? 'Left with the case still open'
+                    : '',
+              ]),
             ])
           }
         >
@@ -607,7 +718,11 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
         <EmptyState
           icon={ShieldCheck}
           title="Nobody matches this filter"
-          description="Clear the search, status, or hire-date filter to see the full roster."
+          description={
+            rows.length === 0
+              ? `Nobody in “${TOTAL_LABEL[workforce]}” is on the E-Verify list. Pick another group above.`
+              : 'Clear the search, status, or hire-date filter to see everyone in this group.'
+          }
         />
       ) : (
         <Card className="overflow-hidden">
@@ -667,7 +782,7 @@ function RosterRow({ row, onOpen }: { row: EVerifyRosterRow; onOpen: (() => void
     >
       <Avatar src={personPhotoUrl({ photoUrl: row.associatePhotoUrl, associateId: row.associateId })} name={row.associateName} email={row.associateEmail} size="sm" />
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm text-white">{row.associateName}</span>
           {/* The "indicate it by their name" ask — status sits with the person,
               not in a column you have to scan across to. */}
@@ -678,14 +793,46 @@ function RosterRow({ row, onOpen }: { row: EVerifyRosterRow; onOpen: (() => void
           ) : (
             <Badge variant="default">Not run</Badge>
           )}
-          {row.overdue && <Badge variant="destructive">Overdue</Badge>}
+          {/* Overdue only beside "Not run": a case on file has met its clock. */}
+          {row.overdue && !row.status && <Badge variant="destructive">Overdue</Badge>}
+          {row.needsNewCase && (
+            <Badge variant="pending" title="Rehired: the case on file was opened for an earlier job, so this one needs a case of its own.">
+              Rehired — new case needed
+            </Badge>
+          )}
+          {row.earlierI9Reused && (
+            <Badge variant="info" title="Rehired within 3 years: the earlier I-9 was reused on Supplement B and the earlier case ended Employment Authorized.">
+              Rehire — earlier I-9 reused (no new case needed)
+            </Badge>
+          )}
+          {openForLeaver(row) && (
+            <Badge variant="destructive" title="This person has left. Close the case in E-Verify with the reason “employee no longer employed”.">
+              Case still open
+            </Badge>
+          )}
+          {/* Where the person stands (owner, 2026-11-03): someone who left
+              never reads as a hire waiting on a case. */}
+          {isWorkStatus(row.workStatus) && <PeopleStatusBadge status={row.workStatus} />}
         </div>
         <div className="mt-0.5 truncate text-xs text-silver/70">
           {row.associateEmail}
           {row.clientName ? ` · ${row.clientName}` : ''}
           {row.ssnLast4 ? ` · SSN ••••${row.ssnLast4}` : ''}
           {row.caseNumber ? ` · Case ${row.caseNumber}` : ''}
+          {row.leftOn ? ` · Left ${fmtDate(row.leftOn)}` : ''}
         </div>
+        {/* What E-Verify said after the case opened, when it is on file. */}
+        {(row.tncDecision || row.referralDeadline || row.closureReason) && (
+          <div className="mt-0.5 truncate text-xs text-silver/70">
+            {[
+              row.tncDecision ? (TNC_DECISION_LABEL[row.tncDecision] ?? row.tncDecision) : null,
+              row.referralDeadline ? `Referral deadline ${fmtDate(row.referralDeadline)}` : null,
+              row.closureReason ? `Closed: ${(CLOSURE_LABEL[row.closureReason] ?? row.closureReason).toLowerCase()}` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </div>
+        )}
       </div>
 
       <div className="text-xs tabular-nums text-silver">
@@ -1020,6 +1167,48 @@ function CaseDrawer({
             </Section>
 
             <Section title="Case">
+              {/* A rehire's case on file belongs to the earlier job (owner,
+                  2026-11-03): this one needs its own, and the recorder
+                  below starts empty for it. */}
+              {detail.needsNewCase && (
+                <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-xs">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+                  <span className="text-silver">
+                    Rehired. The case on file
+                    {detail.previousCase?.caseNumber ? ` (${detail.previousCase.caseNumber})` : ''} was opened for an earlier
+                    job. Open a new case in E-Verify for this one and record it below.
+                  </span>
+                </div>
+              )}
+              {detail.earlierI9Reused && (
+                <p className="mb-3 rounded-md border border-navy-secondary p-3 text-xs text-silver">
+                  Rehire — the earlier I-9 was reused on Supplement B and the earlier case ended Employment Authorized, so no
+                  new case is needed for this job.
+                </p>
+              )}
+              {detail.caseOpen && detail.workStatus === 'SEPARATED' && (
+                <div className="mb-3 flex items-start gap-2 rounded-md border border-alert/40 bg-alert/[0.06] p-3 text-xs">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-alert" aria-hidden="true" />
+                  <span className="text-silver">
+                    This person has left and the case is still open. Close it in E-Verify with the reason “employee no
+                    longer employed”, then record the closing here.
+                  </span>
+                </div>
+              )}
+              {/* What E-Verify said after the case opened, as stored. */}
+              {(detail.tncDecision || detail.referralDeadline || detail.closureReason) && (
+                <div className="mb-3 grid grid-cols-2 gap-4">
+                  {detail.tncDecision && (
+                    <CopyField label="Mismatch decision" value={TNC_DECISION_LABEL[detail.tncDecision] ?? detail.tncDecision} />
+                  )}
+                  {detail.referralDeadline && (
+                    <CopyField label="Referral deadline" value={fmtDate(detail.referralDeadline)} mono />
+                  )}
+                  {detail.closureReason && (
+                    <CopyField label="Closure reason" value={CLOSURE_LABEL[detail.closureReason] ?? detail.closureReason} />
+                  )}
+                </div>
+              )}
               <EVerifyProviderPanel
                 associateId={associateId}
                 personName={`${detail.firstName} ${detail.lastName}`}

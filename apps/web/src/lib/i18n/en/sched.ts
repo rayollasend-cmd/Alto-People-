@@ -61,6 +61,8 @@ export const enSched = {
   'sched.openPickUp': 'Pick up',
   'sched.pickupToast': 'Pickup requested — your manager will confirm it.',
   'sched.pickupFailed': 'Could not request this shift.',
+  // Cleared to work (owner, 2026-11-03): no shifts after a work permit or J-1 program ends.
+  'sched.pickupNotCleared': "You can't pick up shifts after your work permit or J-1 program ends. Talk to HR.",
   'sched.withdrawFailed': 'Could not withdraw the request.',
   'sched.pickupConfirmTitle': 'Request this shift?',
   'sched.pickupConfirmNote': "Your manager confirms pickups before they're final.",

@@ -78,6 +78,9 @@ async function readyAssociate(clientId: string, name = 'Ready') {
 }
 
 describe('GET /compliance/everify — roster', () => {
+  // These fixtures are mid-onboarding (a draft application: "Starting soon"),
+  // so the roster is read whole (?workforce=all); the groups have their own
+  // tests (everifyI9Workforce.test.ts).
   // The existing /compliance/i9 list is driven by I9Verification rows, so it
   // cannot show anyone who hasn't started an I-9 — exactly the people this
   // queue is for. This is the reason the roster is Associate-driven.
@@ -87,7 +90,7 @@ describe('GET /compliance/everify — roster', () => {
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);
 
-    const res = await a.get('/compliance/everify');
+    const res = await a.get('/compliance/everify?workforce=all');
     expect(res.status).toBe(200);
 
     const row = res.body.rows.find(
@@ -105,7 +108,7 @@ describe('GET /compliance/everify — roster', () => {
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);
 
-    const res = await a.get('/compliance/everify');
+    const res = await a.get('/compliance/everify?workforce=all');
     const row = res.body.rows.find(
       (r: { associateId: string }) => r.associateId === ready.id,
     );
@@ -127,7 +130,7 @@ describe('GET /compliance/everify — roster', () => {
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);
 
-    const res = await a.get('/compliance/everify');
+    const res = await a.get('/compliance/everify?workforce=all');
     const row = res.body.rows.find(
       (r: { associateId: string }) => r.associateId === ready.id,
     );
@@ -137,7 +140,7 @@ describe('GET /compliance/everify — roster', () => {
     // Mid-onboarding associates (no approval, no assignment) stay
     // unattributed rather than guessing.
     const fresh = await onboardingAssociate(client.id, 'Unplaced');
-    const res2 = await a.get('/compliance/everify');
+    const res2 = await a.get('/compliance/everify?workforce=all');
     const freshRow = res2.body.rows.find(
       (r: { associateId: string }) => r.associateId === fresh.id,
     );
@@ -158,7 +161,7 @@ describe('GET /compliance/everify — roster', () => {
 
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);
-    const res = await a.get('/compliance/everify');
+    const res = await a.get('/compliance/everify?workforce=all');
 
     expect(
       res.body.rows.find((r: { associateId: string }) => r.associateId === declined.id),
@@ -180,7 +183,7 @@ describe('GET /compliance/everify — roster', () => {
 
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);
-    const res = await a.get('/compliance/everify');
+    const res = await a.get('/compliance/everify?workforce=all');
 
     expect(res.body.counts.total).toBe(2);
     expect(res.body.counts.authorized).toBe(1);
@@ -200,7 +203,7 @@ describe('GET /compliance/everify — roster', () => {
     });
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);
-    const res = await a.get('/compliance/everify');
+    const res = await a.get('/compliance/everify?workforce=all');
     expect(res.body.counts.pending).toBe(1);
     expect(res.body.counts.blocked).toBe(1);
   });
@@ -399,7 +402,7 @@ describe('POST /compliance/everify/:associateId/case', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('EMPLOYMENT_AUTHORIZED');
 
-    const roster = await a.get('/compliance/everify');
+    const roster = await a.get('/compliance/everify?workforce=all');
     const row = roster.body.rows.find(
       (r: { associateId: string }) => r.associateId === ready.id,
     );
@@ -437,7 +440,7 @@ describe('POST /compliance/everify/:associateId/case', () => {
     expect(res.status).toBe(200);
     expect(res.body.caseNumber).toBe('2026-1');
 
-    const roster = await a.get('/compliance/everify');
+    const roster = await a.get('/compliance/everify?workforce=all');
     const row = roster.body.rows.find(
       (r: { associateId: string }) => r.associateId === fresh.id,
     );

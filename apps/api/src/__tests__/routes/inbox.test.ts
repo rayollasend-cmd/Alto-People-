@@ -246,9 +246,13 @@ describe('GET /me/inbox', () => {
     });
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const body = await inboxFor(user.email);
-    expect(body.sources.find((s) => s.key === 'i9-section2')).toMatchObject({ count: 1, path: '/compliance?tab=i9' });
-    // Role walk HR 3: the link carries the filter its count uses.
-    expect(body.sources.find((s) => s.key === 'everify')).toMatchObject({ count: 1, path: '/compliance?tab=everify&status=not_run' });
+    // The current workforce's I-9s ready for Section 2, linked to exactly
+    // that view (owner, 2026-11-03).
+    expect(body.sources.find((s) => s.key === 'i9-section2')).toMatchObject({ count: 1, path: '/compliance?tab=i9&status=ready&workforce=current' });
+    // Role walk HR 3: the link carries the filter its count uses — the
+    // roster's "Not yet run" rows: everyone current with no case for this
+    // job (the signed one and the examined one; the authorized one has one).
+    expect(body.sources.find((s) => s.key === 'everify')).toMatchObject({ count: 2, path: '/compliance?tab=everify&status=not_run&workforce=current' });
 
     // The shift supervisor has no compliance desk.
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });

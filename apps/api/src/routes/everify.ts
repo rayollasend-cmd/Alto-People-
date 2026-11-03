@@ -1,12 +1,17 @@
 import { Router } from 'express';
+import type { Prisma } from '@prisma/client';
 import {
   EVerifyCaseDetailSchema,
   EVerifyCaseInputSchema,
   EVerifyIdentityInputSchema,
   EVerifyRosterResponseSchema,
   IDENTITY_DOCUMENT_KINDS,
+  type ComplianceWorkforce,
+  type EVerifyRosterResponse,
+  type EVerifyRosterRow,
   type EVerifyStatus,
 } from '@alto-people/shared';
+import type { SessionUser } from '../types/express.js';
 import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { dateColumnKey } from '../lib/timezone.js';
@@ -15,14 +20,14 @@ import { requireCapability } from '../middleware/auth.js';
 import { recordComplianceEvent } from '../lib/audit.js';
 import { tryDecryptString } from '../lib/crypto.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
-import {
-  evaluateEVerifyReadiness,
-  isEVerifyOverdue,
-} from '../lib/everifyReadiness.js';
+import { evaluateEVerifyReadiness } from '../lib/everifyReadiness.js';
 import { primaryClientsForAssociates } from '../lib/associateClients.js';
-import { scopeAssociates } from '../lib/scope.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { hireDatesFor } from '../lib/hireDate.js';
+import { countWorkforce, readWorkforce, workforceFromQuery, type WorkforceReading } from '../lib/complianceWorkforce.js';
+import { peopleStandings } from '../lib/peopleStatus.js';
+import { caseFromEarlierEmployment, earlierI9Reused, eVerifyCaseOpen, eVerifyDueBy, eVerifyOverdue } from '../lib/hiringCompliance.js';
+import { employmentSpellsFor, i9ListReach, perRequest, rehiresFor, terminationDaysFor, workforceForRequest } from '../lib/i9Records.js';
 
 /**
  * E-Verify directorate — a staging surface for the federal E-Verify portal.
@@ -40,6 +45,13 @@ import { hireDatesFor } from '../lib/hireDate.js';
  * scorecard has been reading that field (and always finding null) since it
  * shipped, so its "E-Verify cleared" signal could never be earned.
  *
+ * WHO THE LIST IS ABOUT (owner, 2026-11-03). The roster used to start from
+ * everyone ever onboarded — 524 people in production, cut silently at 500,
+ * ~70% of them gone — and the 24 current hires with no case were lost in
+ * it. It now opens on the current workforce (`?workforce=`, default
+ * current; lib/complianceWorkforce), with no cap a real roster reaches, and
+ * every by-id route answers only inside the caller's reach.
+ *
  * Mounted at /compliance/everify, inheriting the compliance router's
  * view:compliance guard. Anything returning a decrypted SSN adds MANAGE on
  * top — see the detail route.
@@ -48,8 +60,11 @@ export const everifyRouter = Router();
 
 const MANAGE = requireCapability('manage:compliance');
 
-/** Cap mirrors the other compliance lists; reported so a cut is never silent. */
-const EVERIFY_ROSTER_MAX = 500;
+/**
+ * A ceiling, not a page: the whole company is a few hundred people. Past
+ * it the response says `truncated` and the tab says so — never a silent cut.
+ */
+const EVERIFY_ROSTER_MAX = 5000;
 
 const NONCONFIRMATION: EVerifyStatus[] = [
   'TENTATIVE_NONCONFIRMATION',
@@ -68,8 +83,221 @@ const EVERIFY_PACKET_KIND = 'I9_VERIFICATION_RESULT' as const;
 /** A date column's YYYY-MM-DD (hire, birth and expiry dates; dueBy is business days after a hire date). */
 const ymd = dateColumnKey;
 
+/** The one hire date (lib/hireDate) as a date column value. */
+const dayOf = (key: string | null | undefined): Date | null => (key ? new Date(`${key}T00:00:00.000Z`) : null);
+
+/** A person by id, inside the caller's reach (404 outside it — nothing revealed). */
+function personWhere(user: SessionUser, associateId: string): Prisma.AssociateWhereInput {
+  return { AND: [{ id: associateId, deletedAt: null, tenantId: tenantIdForWrite() }, i9ListReach(user)] };
+}
+
+/** The I-9's E-Verify columns a case reading needs. */
+const CASE_SELECT = {
+  eVerifyCaseNumber: true,
+  eVerifyStatus: true,
+  eVerifyCaseOpenedAt: true,
+  eVerifyClosedAt: true,
+  eVerifyDueBy: true,
+  eVerifyTncDecision: true,
+  eVerifyReferredAt: true,
+  eVerifyReferralDeadline: true,
+  eVerifyClosureReason: true,
+} as const;
+
+interface CaseColumns {
+  eVerifyCaseNumber: string | null;
+  eVerifyStatus: EVerifyStatus | null;
+  eVerifyCaseOpenedAt: Date | null;
+  eVerifyClosedAt: Date | null;
+  eVerifyDueBy: Date | null;
+  eVerifyTncDecision: string | null;
+  eVerifyReferredAt: Date | null;
+  eVerifyReferralDeadline: Date | null;
+  eVerifyClosureReason: string | null;
+}
+
 /**
- * Everyone onboarded or currently onboarding.
+ * The case as THIS employment sees it. A rehire whose stored case was
+ * opened for an earlier employment has no case yet (owner, 2026-11-03): the
+ * case fields read empty, the old case moves to `previousCase`, and the due
+ * day runs from the new first day — the row reads "Not yet run", not done.
+ * Unless the earlier I-9 was reused on a REHIRE Supplement B for this
+ * employment and that earlier case ended Employment Authorized: then the
+ * authorization stands and no new case is needed (earlierI9Reused).
+ */
+function caseReading(
+  i9: CaseColumns | null,
+  hireKey: string | null,
+  spells: ReadonlyArray<{ hireDate: Date; endDate: Date | null }>,
+  rehires: ReadonlyArray<{ rehiredOn: string; reviewedOn: string }>,
+  now: Date,
+) {
+  const fromEarlier = !!i9 && caseFromEarlierEmployment(i9.eVerifyCaseOpenedAt, hireKey, spells);
+  const reused = fromEarlier && earlierI9Reused(i9?.eVerifyStatus, rehires, hireKey);
+  const needsNewCase = fromEarlier && !reused;
+  const cur = i9 && !needsNewCase ? i9 : null;
+  const hasCase = !!cur && !!(cur.eVerifyCaseNumber || cur.eVerifyStatus || cur.eVerifyCaseOpenedAt);
+  const dueBy = eVerifyDueBy(hireKey, cur?.eVerifyDueBy ?? null);
+  return {
+    caseNumber: cur?.eVerifyCaseNumber ?? null,
+    status: cur?.eVerifyStatus ?? null,
+    caseOpenedAt: cur?.eVerifyCaseOpenedAt?.toISOString() ?? null,
+    closedAt: cur?.eVerifyClosedAt?.toISOString() ?? null,
+    tncDecision: cur?.eVerifyTncDecision ?? null,
+    referralDeadline: cur?.eVerifyReferralDeadline ? ymd(cur.eVerifyReferralDeadline) : null,
+    closureReason: cur?.eVerifyClosureReason ?? null,
+    caseOpen: !!cur && eVerifyCaseOpen(cur),
+    needsNewCase,
+    earlierI9Reused: reused,
+    previousCase:
+      needsNewCase && i9
+        ? {
+            caseNumber: i9.eVerifyCaseNumber,
+            status: i9.eVerifyStatus,
+            caseOpenedAt: i9.eVerifyCaseOpenedAt?.toISOString() ?? null,
+            closedAt: i9.eVerifyClosedAt?.toISOString() ?? null,
+          }
+        : null,
+    dueBy: dueBy ? ymd(dueBy) : null,
+    overdue: eVerifyOverdue(dueBy, hasCase, now),
+  };
+}
+
+/** The roster's people: onboarded or onboarding (any application that wasn't declined), in the caller's reach. */
+function rosterWhere(user: SessionUser): Prisma.AssociateWhereInput {
+  return {
+    AND: [
+      { deletedAt: null, tenantId: tenantIdForWrite() },
+      i9ListReach(user),
+      { applications: { some: { deletedAt: null, status: { notIn: ['REJECTED', 'CANCELLED'] } } } },
+    ],
+  };
+}
+
+/**
+ * The roster for one group, with its counts — the list route's body, and
+ * what the Inbox counts (so the Inbox number is the list it opens).
+ */
+export async function everifyRoster(
+  user: SessionUser,
+  workforce: ComplianceWorkforce,
+  opts: { now?: Date; reading?: WorkforceReading } = {},
+): Promise<EVerifyRosterResponse> {
+  const now = opts.now ?? new Date();
+  const reading = opts.reading ?? (await readWorkforce(tenantIdForWrite(), now));
+
+  // Everyone the roster could show, light: the chip counts, and the cases
+  // left open by people who left, are about the whole roster in reach.
+  const population = await prisma.associate.findMany({
+    where: rosterWhere(user),
+    select: { id: true, i9Verification: { select: { eVerifyStatus: true, eVerifyClosedAt: true, eVerifyReferredAt: true } } },
+  });
+  const workforceCounts = countWorkforce(population.map((p) => p.id), reading);
+  const formerOpenCases = population.filter((p) => reading.groupOf(p.id) === 'former' && !!p.i9Verification && eVerifyCaseOpen(p.i9Verification)).length;
+  const groupIds = population.filter((p) => reading.includes(p.id, workforce)).map((p) => p.id);
+
+  const fetched = groupIds.length
+    ? await prisma.associate.findMany({
+        where: { id: { in: groupIds } },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+        take: EVERIFY_ROSTER_MAX + 1,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          dob: true,
+          hireDate: true,
+          separatedAt: true,
+          ssnLast4: true,
+          photoS3Key: true,
+          photoUpdatedAt: true,
+          i9Verification: {
+            select: {
+              section1CompletedAt: true,
+              section2CompletedAt: true,
+              citizenshipStatus: true,
+              ...CASE_SELECT,
+            },
+          },
+          w4Submission: { select: { ssnEncrypted: true } },
+        },
+      })
+    : [];
+  const truncated = fetched.length > EVERIFY_ROSTER_MAX;
+  const page = truncated ? fetched.slice(0, EVERIFY_ROSTER_MAX) : fetched;
+  const ids = page.map((a) => a.id);
+  const [placement, hired, spells, ended, rehires] = await Promise.all([
+    // Current client per associate, for the roster's client filter.
+    primaryClientsForAssociates(ids),
+    // The one hire date (lib/hireDate, PEOPLE-10): the employment record's, the same
+    // date the person's record shows — it also sets E-Verify's three-day deadline.
+    hireDatesFor(prisma, ids),
+    employmentSpellsFor(prisma, ids),
+    terminationDaysFor(prisma, page),
+    rehiresFor(prisma, ids),
+  ]);
+
+  const rows: EVerifyRosterRow[] = page.map((a) => {
+    const i9 = a.i9Verification;
+    const hireKey = hired.get(a.id)?.date ?? (a.hireDate ? ymd(a.hireDate) : null);
+    const readiness = evaluateEVerifyReadiness({
+      hasI9: !!i9,
+      section1CompletedAt: i9?.section1CompletedAt ?? null,
+      section2CompletedAt: i9?.section2CompletedAt ?? null,
+      citizenshipStatus: i9?.citizenshipStatus ?? null,
+      // Presence only here. Decrypting every row's SSN to compute a queue
+      // boolean would be a lot of crypto per page load; the detail route
+      // reports an unreadable blob when the case is actually opened.
+      hasReadableSsn: !!a.w4Submission?.ssnEncrypted,
+      dob: a.dob,
+      hireDate: dayOf(hireKey),
+    });
+    const c = caseReading(i9, hireKey, spells.get(a.id) ?? [], rehires.get(a.id) ?? [], now);
+    return {
+      associateId: a.id,
+      associateName: `${a.firstName} ${a.lastName}`,
+      associateEmail: a.email,
+      associatePhotoUrl: profilePhotoUrlFor(a),
+      clientId: placement.get(a.id)?.clientId ?? null,
+      clientName: placement.get(a.id)?.clientName ?? null,
+      hireDate: hireKey,
+      ssnLast4: a.ssnLast4,
+      ...c,
+      blockers: readiness.blockers,
+      ready: readiness.ready,
+      workStatus: reading.statusOf(a.id),
+      leftOn: ended.get(a.id) ?? null,
+    };
+  });
+
+  const counts = {
+    total: rows.length,
+    authorized: rows.filter((r) => r.status === 'EMPLOYMENT_AUTHORIZED').length,
+    pending: rows.filter((r) => r.status === 'PENDING').length,
+    nonconfirmation: rows.filter((r) => r.status !== null && NONCONFIRMATION.includes(r.status)).length,
+    notRun: rows.filter((r) => r.status === null).length,
+    overdue: rows.filter((r) => r.overdue).length,
+    // "Can't submit yet": no case for this employment and something still missing.
+    // A person with a case isn't blocked, whatever the readiness check says about re-submitting.
+    blocked: rows.filter((r) => !r.ready && r.caseNumber === null && r.status === null).length,
+  };
+
+  return { rows, counts, truncated, workforce, workforceCounts, formerOpenCases };
+}
+
+/**
+ * The current workforce's roster for one request — the Inbox's two E-Verify
+ * sources count from the same rows the linked list shows.
+ */
+const currentRosterMemo = new WeakMap<object, Promise<EVerifyRosterResponse>>();
+export function currentEVerifyRoster(user: SessionUser): Promise<EVerifyRosterResponse> {
+  return perRequest(currentRosterMemo, () => workforceForRequest(user).then((reading) => everifyRoster(user, 'current', { reading })));
+}
+
+/**
+ * Everyone onboarded or currently onboarding, in one group (`?workforce=`,
+ * default current).
  *
  * Driven by Associate, deliberately — NOT by I9Verification the way
  * GET /compliance/i9 is. Someone mid-onboarding has no I-9 row yet, so an
@@ -78,104 +306,8 @@ const ymd = dateColumnKey;
  */
 everifyRouter.get('/', async (req, res, next) => {
   try {
-    const rows = await prisma.associate.findMany({
-      where: {
-        deletedAt: null,
-        tenantId: tenantIdForWrite(),
-        // The caller's reach: a store-bound office account sees its own people.
-        AND: [scopeAssociates(req.user!)],
-        // Onboarded or onboarding: any application that wasn't declined.
-        applications: { some: { deletedAt: null, status: { notIn: ['REJECTED', 'CANCELLED'] } } },
-      },
-      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
-      take: EVERIFY_ROSTER_MAX + 1,
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        dob: true,
-        hireDate: true,
-        ssnLast4: true,
-        photoS3Key: true,
-        photoUpdatedAt: true,
-        i9Verification: {
-          select: {
-            section1CompletedAt: true,
-            section2CompletedAt: true,
-            citizenshipStatus: true,
-            eVerifyCaseNumber: true,
-            eVerifyStatus: true,
-            eVerifyCaseOpenedAt: true,
-            eVerifyClosedAt: true,
-          },
-        },
-        w4Submission: { select: { ssnEncrypted: true } },
-      },
-    });
-
-    const truncated = rows.length > EVERIFY_ROSTER_MAX;
-    const page = truncated ? rows.slice(0, EVERIFY_ROSTER_MAX) : rows;
-    const now = new Date();
-    // Current client per associate, for the roster's client filter.
-    const placement = await primaryClientsForAssociates(page.map((a) => a.id));
-    // The one hire date (lib/hireDate, PEOPLE-10): the employment record's, the same
-    // date the person's record shows — it also sets E-Verify's three-day deadline.
-    const hired = await hireDatesFor(prisma, page.map((a) => a.id));
-
-    const out = page.map((a) => {
-      const i9 = a.i9Verification;
-      const readiness = evaluateEVerifyReadiness({
-        hasI9: !!i9,
-        section1CompletedAt: i9?.section1CompletedAt ?? null,
-        section2CompletedAt: i9?.section2CompletedAt ?? null,
-        citizenshipStatus: i9?.citizenshipStatus ?? null,
-        // Presence only here. Decrypting every row's SSN to compute a queue
-        // boolean would be a lot of crypto per page load; the detail route
-        // reports an unreadable blob when the case is actually opened.
-        hasReadableSsn: !!a.w4Submission?.ssnEncrypted,
-        dob: a.dob,
-        hireDate: hired.get(a.id) ? new Date(`${hired.get(a.id)!.date}T00:00:00.000Z`) : a.hireDate,
-      });
-      return {
-        associateId: a.id,
-        associateName: `${a.firstName} ${a.lastName}`,
-        associateEmail: a.email,
-        associatePhotoUrl: profilePhotoUrlFor(a),
-        clientId: placement.get(a.id)?.clientId ?? null,
-        clientName: placement.get(a.id)?.clientName ?? null,
-        hireDate: hired.get(a.id)?.date ?? (a.hireDate ? ymd(a.hireDate) : null),
-        ssnLast4: a.ssnLast4,
-        caseNumber: i9?.eVerifyCaseNumber ?? null,
-        status: i9?.eVerifyStatus ?? null,
-        caseOpenedAt: i9?.eVerifyCaseOpenedAt?.toISOString() ?? null,
-        closedAt: i9?.eVerifyClosedAt?.toISOString() ?? null,
-        dueBy: readiness.dueBy ? ymd(readiness.dueBy) : null,
-        overdue: isEVerifyOverdue(
-          readiness.dueBy,
-          i9?.eVerifyCaseOpenedAt ?? null,
-          now,
-        ),
-        blockers: readiness.blockers,
-        ready: readiness.ready,
-      };
-    });
-
-    const counts = {
-      total: out.length,
-      authorized: out.filter((r) => r.status === 'EMPLOYMENT_AUTHORIZED').length,
-      pending: out.filter((r) => r.status === 'PENDING').length,
-      nonconfirmation: out.filter(
-        (r) => r.status !== null && NONCONFIRMATION.includes(r.status),
-      ).length,
-      notRun: out.filter((r) => r.status === null).length,
-      overdue: out.filter((r) => r.overdue).length,
-      // "Can't submit yet": no case opened and something still missing. A person with a
-      // case isn't blocked, whatever the readiness check says about re-submitting.
-      blocked: out.filter((r) => !r.ready && r.caseNumber === null && r.status === null).length,
-    };
-
-    res.json(EVerifyRosterResponseSchema.parse({ rows: out, counts, truncated }));
+    const body = await everifyRoster(req.user!, workforceFromQuery(req.query));
+    res.json(EVerifyRosterResponseSchema.parse(body));
   } catch (err) {
     next(err);
   }
@@ -191,8 +323,10 @@ everifyRouter.get('/', async (req, res, next) => {
  */
 everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
   try {
+    // Inside the caller's reach (owner, 2026-11-03): another store's person is
+    // a 404 here, as on the list.
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.associateId, deletedAt: null, tenantId: tenantIdForWrite() },
+      where: personWhere(req.user!, req.params.associateId),
       select: {
         id: true,
         firstName: true,
@@ -210,10 +344,7 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
             alienRegistrationNumberEnc: true,
             workAuthExpiresAt: true,
             documentList: true,
-            eVerifyCaseNumber: true,
-            eVerifyStatus: true,
-            eVerifyCaseOpenedAt: true,
-            eVerifyClosedAt: true,
+            ...CASE_SELECT,
             section2Verifier: { select: { email: true } },
           },
         },
@@ -223,6 +354,16 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
     if (!associate) {
       throw new HttpError(404, 'not_found', 'Associate not found.');
     }
+    // The one hire date (lib/hireDate), as on the roster row, and the spells
+    // that tell a rehire's earlier case from this employment's.
+    const [hired, spells, standing, rehires] = await Promise.all([
+      hireDatesFor(prisma, [associate.id]),
+      employmentSpellsFor(prisma, [associate.id]),
+      // Where this one person stands (lib/peopleStatus) — not the whole company's reading.
+      peopleStandings({ tenantId: tenantIdForWrite(), associateIds: [associate.id] }),
+      rehiresFor(prisma, [associate.id]),
+    ]);
+    const hireKey = hired.get(associate.id)?.date ?? (associate.hireDate ? ymd(associate.hireDate) : null);
 
     /**
      * FIRST DAY WORKED, WHICH IS NOT THE HIRE DATE.
@@ -265,8 +406,9 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
       citizenshipStatus: i9?.citizenshipStatus ?? null,
       hasReadableSsn: !!ssn,
       dob: associate.dob,
-      hireDate: associate.hireDate,
+      hireDate: dayOf(hireKey),
     });
+    const c = caseReading(i9, hireKey, spells.get(associate.id) ?? [], rehires.get(associate.id) ?? [], new Date());
 
     // Same identity-document set the I-9 verifier screen shows, with the same
     // front/back derivation from the filename tag and the same fileAvailable
@@ -368,20 +510,12 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
         section1CompletedAt: i9?.section1CompletedAt?.toISOString() ?? null,
         section2CompletedAt: i9?.section2CompletedAt?.toISOString() ?? null,
         section2VerifierEmail: i9?.section2Verifier?.email ?? null,
-        hireDate: associate.hireDate ? ymd(associate.hireDate) : null,
+        hireDate: hireKey,
         firstClockInAt: firstShift?.clockInAt.toISOString() ?? null,
-        dueBy: readiness.dueBy ? ymd(readiness.dueBy) : null,
-        overdue: isEVerifyOverdue(
-          readiness.dueBy,
-          i9?.eVerifyCaseOpenedAt ?? null,
-          new Date(),
-        ),
-        caseNumber: i9?.eVerifyCaseNumber ?? null,
-        status: i9?.eVerifyStatus ?? null,
-        caseOpenedAt: i9?.eVerifyCaseOpenedAt?.toISOString() ?? null,
-        closedAt: i9?.eVerifyClosedAt?.toISOString() ?? null,
+        ...c,
         blockers: readiness.blockers,
         ready: readiness.ready,
+        workStatus: standing.people.get(associate.id)?.status ?? null,
       }),
     );
   } catch (err) {
@@ -397,8 +531,8 @@ everifyRouter.post('/:associateId/case', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.associateId, deletedAt: null, tenantId: tenantIdForWrite() },
-      select: { id: true, i9Verification: { select: { id: true } } },
+      where: personWhere(req.user!, req.params.associateId),
+      select: { id: true, hireDate: true, i9Verification: { select: { id: true, ...CASE_SELECT } } },
     });
     if (!associate) {
       throw new HttpError(404, 'not_found', 'Associate not found.');
@@ -419,9 +553,37 @@ everifyRouter.post('/:associateId/case', MANAGE, async (req, res, next) => {
       ).id;
 
     const d = parsed.data;
+    // A rehire opening this employment's case (owner, 2026-11-03): the stored
+    // case belongs to an earlier employment, so its closing stamp, mismatch
+    // choice, referral and closure reason must not carry over onto the new
+    // one. The old case is kept in the audit row below.
+    const stored = associate.i9Verification;
+    const [hired, spells] = await Promise.all([hireDatesFor(prisma, [associate.id]), employmentSpellsFor(prisma, [associate.id])]);
+    const hireKey = hired.get(associate.id)?.date ?? (associate.hireDate ? ymd(associate.hireDate) : null);
+    const opensNewCase =
+      !!stored &&
+      caseFromEarlierEmployment(stored.eVerifyCaseOpenedAt, hireKey, spells.get(associate.id) ?? []) &&
+      (!!d.caseOpenedAt || (d.caseNumber !== undefined && d.caseNumber !== stored.eVerifyCaseNumber));
     const row = await prisma.i9Verification.update({
       where: { id: i9Id },
       data: {
+        ...(opensNewCase
+          ? {
+              eVerifyCaseNumber: null,
+              eVerifyStatus: null,
+              eVerifyClosedAt: null,
+              eVerifyDueBy: null,
+              eVerifyRawStatus: null,
+              eVerifyTncNotifiedAt: null,
+              eVerifyTncDecision: null,
+              eVerifyReferredAt: null,
+              eVerifyReferralDeadline: null,
+              eVerifyClosureReason: null,
+              eVerifyConnectionId: null,
+              eVerifyLastSyncAt: null,
+              eVerifyLastError: null,
+            }
+          : {}),
         ...(d.caseNumber !== undefined ? { eVerifyCaseNumber: d.caseNumber } : {}),
         ...(d.status !== undefined ? { eVerifyStatus: d.status } : {}),
         ...(d.caseOpenedAt !== undefined
@@ -451,6 +613,17 @@ everifyRouter.post('/:associateId/case', MANAGE, async (req, res, next) => {
         // Flag when the shell was created by this very call — the audit
         // trail should say the I-9 record began life as a case backfill.
         ...(associate.i9Verification ? {} : { i9CreatedByCaseBackfill: true }),
+        // A rehire's new case: the earlier employment's case it replaced.
+        ...(opensNewCase && stored
+          ? {
+              previousCase: {
+                caseNumber: stored.eVerifyCaseNumber,
+                status: stored.eVerifyStatus,
+                caseOpenedAt: stored.eVerifyCaseOpenedAt?.toISOString() ?? null,
+                closedAt: stored.eVerifyClosedAt?.toISOString() ?? null,
+              },
+            }
+          : {}),
       },
       req,
     });
@@ -479,7 +652,7 @@ everifyRouter.patch('/:associateId/identity', MANAGE, async (req, res, next) => 
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.associateId, deletedAt: null, tenantId: tenantIdForWrite() },
+      where: personWhere(req.user!, req.params.associateId),
       select: { id: true, middleInitial: true, otherLastNames: true },
     });
     if (!associate) {

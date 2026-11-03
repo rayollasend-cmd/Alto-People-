@@ -60,17 +60,22 @@ describe('I-9 retention and reverification', () => {
     expect(ymd(i9RetainUntil(new Date('2020-01-10'), new Date('2021-01-01T09:00:00Z'))!)).toBe('2023-01-10');
     expect(ymd(i9RetainUntil(new Date('2025-03-01'), null)!)).toBe('2028-03-01');
     expect(i9RetainUntil(null, new Date())).toBeNull();
-    expect(ymd(i9ReverifyDueAt(new Date('2026-12-31'))!)).toBe('2026-12-31');
-    expect(i9ReverifyDueAt(null)).toBeNull();
+    // The last day worked as a day (owner, 2026-11-03): a year from 2026-06-01.
+    expect(ymd(i9RetainUntil('2024-01-10', '2026-06-01')!)).toBe('2027-06-01');
+    expect(ymd(i9ReverifyDueAt(new Date('2026-12-31'), 'ALIEN_AUTHORIZED_TO_WORK')!)).toBe('2026-12-31');
+    expect(i9ReverifyDueAt(null, 'ALIEN_AUTHORIZED_TO_WORK')).toBeNull();
+    // A green card's expiry is not a re-verification trigger; citizens never re-verify.
+    expect(i9ReverifyDueAt(new Date('2026-12-31'), 'LAWFUL_PERMANENT_RESIDENT')).toBeNull();
+    expect(i9ReverifyDueAt(new Date('2026-12-31'), 'US_CITIZEN')).toBeNull();
   });
 
   it('lists reverification due and past-retention I-9s, and the Inbox counts them with the same predicate', async () => {
     const expiring = await createAssociate({ firstName: 'Ana', lastName: 'Expiring' });
     await prisma.associate.update({ where: { id: expiring.id }, data: { hireDate: new Date('2025-02-01') } });
-    await prisma.i9Verification.create({ data: { associateId: expiring.id, workAuthExpiresAt: new Date(`${ymd(daysFromNow(30))}T00:00:00.000Z`) } });
+    await prisma.i9Verification.create({ data: { associateId: expiring.id, citizenshipStatus: 'ALIEN_AUTHORIZED_TO_WORK', workAuthExpiresAt: new Date(`${ymd(daysFromNow(30))}T00:00:00.000Z`) } });
 
     const later = await createAssociate({ firstName: 'Ben', lastName: 'Later' });
-    await prisma.i9Verification.create({ data: { associateId: later.id, workAuthExpiresAt: new Date(`${ymd(daysFromNow(200))}T00:00:00.000Z`) } });
+    await prisma.i9Verification.create({ data: { associateId: later.id, citizenshipStatus: 'ALIEN_AUTHORIZED_TO_WORK', workAuthExpiresAt: new Date(`${ymd(daysFromNow(200))}T00:00:00.000Z`) } });
 
     const gone = await createAssociate({ firstName: 'Cora', lastName: 'Gone' });
     await prisma.associate.update({ where: { id: gone.id }, data: { hireDate: new Date('2019-05-01'), separatedAt: new Date('2022-02-01T12:00:00Z') } });
@@ -92,8 +97,9 @@ describe('I-9 retention and reverification', () => {
 
     const inbox = await hr.get('/me/inbox');
     const src = (k: string) => inbox.body.sources.find((s: { key: string }) => s.key === k);
-    expect(src('i9-reverification')).toMatchObject({ count: 1, path: '/compliance?tab=i9&status=work_auth' });
-    expect(src('i9-retention')).toMatchObject({ count: 1, path: '/compliance?tab=i9&status=retention' });
+    // The Inbox links carry the group their count is about (owner, 2026-11-03).
+    expect(src('i9-reverification')).toMatchObject({ count: 1, path: '/compliance?tab=i9&status=work_auth&workforce=current' });
+    expect(src('i9-retention')).toMatchObject({ count: 1, path: '/compliance?tab=i9&status=retention&workforce=former' });
   });
 });
 
@@ -301,6 +307,6 @@ describe('FCRA adverse action for checks recorded by hand', () => {
 
     const inbox = await hr.get('/me/inbox');
     // The decision (NEEDS_REVIEW, no adjudication) and the final notice now due.
-    expect(inbox.body.sources.find((s: { key: string }) => s.key === 'screening-decisions')).toMatchObject({ count: 2, path: '/compliance?tab=background' });
+    expect(inbox.body.sources.find((s: { key: string }) => s.key === 'screening-decisions')).toMatchObject({ count: 2, path: '/compliance?tab=background&workforce=current,starting' });
   });
 });

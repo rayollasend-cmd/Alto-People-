@@ -2496,6 +2496,7 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'sched.pickupConfirmNote': 'Alma istekleri kesinleşmeden önce yöneticiniz onaylar.',
   'sched.pickupConfirmTitle': 'Bu vardiya istensin mi?',
   'sched.pickupFailed': 'Bu vardiya istenemedi.',
+  'sched.pickupNotCleared': 'Çalışma izniniz veya J-1 programınız bittikten sonraki vardiyaları alamazsınız. İnsan kaynaklarıyla konuşun.',
   'sched.pickupToast': 'Alma isteği gönderildi — yöneticiniz onaylayacak.',
   'sched.refresh': 'Yenile',
   'sched.startsIn': '{time} sonra başlıyor',

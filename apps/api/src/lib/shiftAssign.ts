@@ -4,6 +4,7 @@ import { HttpError } from '../middleware/error.js';
 import { formatDateInZone, formatTimeInZone } from './timezone.js';
 import { companyWorkweek } from './timeAnomalies.js';
 import { assertClientAllowed } from './programRules.js';
+import { assertAuthorizedToWork, auditOverride } from './workAuthorization.js';
 import { emitShiftEvent } from './webhookEvents.js';
 
 /**
@@ -11,8 +12,9 @@ import { emitShiftEvent } from './webhookEvents.js';
  *
  *   A supervisor assigning from the schedule (POST /scheduling/shifts/:id/assign)
  *   and the Workforce agent carrying out an approved fill go through the same
- *   checks: the person still works here, the H-2B petition's client, approved
- *   time off and declared days off, no overlapping shift, and the rest gap.
+ *   checks: the person still works here, the H-2B petition's client, the
+ *   right to work that day (lib/workAuthorization), approved time off and
+ *   declared days off, no overlapping shift, and the rest gap.
  *   These helpers moved here from routes/scheduling.ts unchanged.
  */
 
@@ -202,12 +204,33 @@ export async function assignWithinRules(
   db: PrismaClient,
   shift: { id: string; clientId: string | null; startsAt: Date; endsAt: Date; locationRel: { timezone: string | null } | null },
   associate: { id: string; firstName: string; lastName: string; deactivatedAt: Date | null; separatedAt: Date | null },
-  opts: { actorUserId: string | null; via: string; overrideUnavailability?: boolean; overrideRestGap?: boolean; expectUnassigned?: boolean },
+  opts: {
+    actorUserId: string | null;
+    via: string;
+    overrideUnavailability?: boolean;
+    overrideRestGap?: boolean;
+    expectUnassigned?: boolean;
+    /** Cleared to work: whether the caller holds manage:compliance, and their "Assign anyway" reason. Absent = never overridden (the agents). */
+    workAuthorization?: { canOverride: boolean; override?: { reason: string } | null };
+  },
 ): Promise<AssignedShift> {
   assertEmployed(associate);
   // An H-2B worker may only be scheduled at the client on their petition.
   // The H-2B rule names a client; a client-less shift (a direct employer) is the employer itself, step 4 moves the rule to the employer of record.
   if (shift.clientId) await assertClientAllowed(db, associate, shift.clientId, { actorUserId: opts.actorUserId, via: opts.via, shiftId: shift.id });
+  // Cleared to work (owner, 2026-11-03): a HARD block on a shift that falls
+  // after the person's work authorization or J-1 program ended, or after an
+  // E-Verify final nonconfirmation. Only HR (manage:compliance) may assign
+  // anyway, with a reason, audited once the assignment lands.
+  const workAuthCtx = {
+    actorUserId: opts.actorUserId,
+    via: opts.via,
+    shiftId: shift.id,
+    clientId: shift.clientId,
+    canOverride: opts.workAuthorization?.canOverride ?? false,
+    override: opts.workAuthorization?.override ?? null,
+  };
+  const overridden = await assertAuthorizedToWork(db, associate, { startsAt: shift.startsAt, endsAt: shift.endsAt, timezone: shift.locationRel?.timezone }, workAuthCtx);
 
   // Conflict + unavailability checks + write in one transaction so two
   // managers can't assign the same associate to overlapping shifts at
@@ -260,6 +283,9 @@ export async function assignWithinRules(
       include: ASSIGN_INCLUDE,
     });
   });
+  if (overridden && workAuthCtx.override) {
+    auditOverride(associate.id, overridden.blockers, overridden.day, { ...workAuthCtx, shiftId: shift.id, reason: workAuthCtx.override.reason.trim() });
+  }
   // Brief 2-4: shift.changed for every assign, wherever it came from (app, /v1, agents).
   emitShiftEvent(assigned.id, 'assigned');
   return assigned;

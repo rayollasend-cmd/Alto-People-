@@ -1623,7 +1623,8 @@ export function DeactivateDialog({
             disabled, the kiosk rejects new clock-ins, and upcoming assigned
             shifts are released back to open. Everything on their record is
             kept — Reactivate restores them in one click, with no
-            re-onboarding.
+            re-onboarding. A pause longer than 120 days becomes a separation
+            automatically; HR is told 10 days before.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={deactivate} className="grid gap-3">

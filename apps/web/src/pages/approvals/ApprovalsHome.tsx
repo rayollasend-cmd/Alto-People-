@@ -84,6 +84,7 @@ import { useInbox } from '@/lib/inboxApi';
 import { INBOX_QUERY_KEY, inboxCountFor } from '@/lib/inboxCounts';
 import '@/lib/i18n/en/appr';
 import '@/lib/i18n/en/tabs';
+import { WorkAuthDeclined, useWorkAuthAsk, withWorkAuthOverride } from '@/pages/scheduling/workAuthorizationBlock';
 
 /**
  * One inbox for everything waiting on a manager's decision. Before this
@@ -1584,6 +1585,10 @@ function DenyDialog({
 /* --------------------------------------------------- swaps panel */
 
 function SwapsPanel() {
+  // Cleared to work (owner, 2026-11-03): HR may approve a swap anyway, with a reason.
+  const workAuthAsk = useWorkAuthAsk();
+  const approveSwap = (id: string) =>
+    withWorkAuthOverride((o) => (o ? managerApproveSwap(id, { overrideWorkAuthorization: o }) : managerApproveSwap(id)), workAuthAsk);
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const showClient = !useClientBounded();
@@ -1601,7 +1606,7 @@ function SwapsPanel() {
   const kb = useListKeyboard({
     items: items ?? [],
     idOf: (x) => x.id,
-    onApprove: (x) => void decide(x.id, () => managerApproveSwap(x.id), 'Swap approved.'),
+    onApprove: (x) => void decide(x.id, () => approveSwap(x.id), 'Swap approved.'),
     onDecline: (x) => void decide(x.id, () => managerRejectSwap(x.id), 'Swap rejected.'),
     enabled: pendingId === null && !bulkBusy,
   });
@@ -1622,6 +1627,8 @@ function SwapsPanel() {
       toast.success(successMsg);
       await queryClient.invalidateQueries({ queryKey: SWAPS_KEY });
     } catch (err) {
+      // HR declined "Approve anyway": nothing happened, nothing to say.
+      if (err instanceof WorkAuthDeclined) return;
       toast.error(err instanceof ApiError ? err.message : 'Action failed.');
     } finally {
       setPendingId(null);
@@ -1734,7 +1741,7 @@ function SwapsPanel() {
                   <Button
                     size="sm"
                     onClick={() =>
-                      decide(s.id, () => managerApproveSwap(s.id), 'Swap approved.')
+                      decide(s.id, () => approveSwap(s.id), 'Swap approved.')
                     }
                     disabled={pendingId === s.id || bulkBusy}
                   >
@@ -1763,6 +1770,10 @@ function SwapsPanel() {
 /* --------------------------------------------------- pickups panel */
 
 function PickupsPanel() {
+  // Cleared to work (owner, 2026-11-03): HR may approve a pickup anyway, with a reason.
+  const workAuthAsk = useWorkAuthAsk();
+  const approvePickup = (id: string, who: string) =>
+    withWorkAuthOverride((o) => (o ? approveOpenShiftClaim(id, { overrideWorkAuthorization: o }) : approveOpenShiftClaim(id)), workAuthAsk, who);
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const showClient = !useClientBounded();
@@ -1780,7 +1791,7 @@ function PickupsPanel() {
   const kb = useListKeyboard({
     items: items ?? [],
     idOf: (x) => x.id,
-    onApprove: (x) => void decide(x.id, () => approveOpenShiftClaim(x.id), 'Pickup approved — shift assigned.'),
+    onApprove: (x) => void decide(x.id, () => approvePickup(x.id, x.associateName), 'Pickup approved — shift assigned.'),
     onDecline: (x) => void decide(x.id, () => rejectOpenShiftClaim(x.id), 'Pickup rejected.'),
     enabled: pendingId === null && !bulkBusy,
   });
@@ -1801,6 +1812,8 @@ function PickupsPanel() {
       toast.success(successMsg);
       await queryClient.invalidateQueries({ queryKey: PICKUPS_KEY });
     } catch (err) {
+      // HR declined "Approve anyway": nothing happened, nothing to say.
+      if (err instanceof WorkAuthDeclined) return;
       toast.error(err instanceof ApiError ? err.message : 'Action failed.');
     } finally {
       setPendingId(null);
@@ -1898,7 +1911,7 @@ function PickupsPanel() {
                     onClick={() =>
                       decide(
                         c.id,
-                        () => approveOpenShiftClaim(c.id),
+                        () => approvePickup(c.id, c.associateName),
                         'Pickup approved — shift assigned.',
                       )
                     }

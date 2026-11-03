@@ -600,6 +600,7 @@ model User {
   preTripChecks                     PreTripCheck[]                @relation("PreTripDriver")
   transportIncidentsReported        TransportIncident[]           @relation("TransportIncidentReporter")
   i9VerificationsAsRep              I9Verification[]              @relation("I9Verifier")
+  i9ReverificationsReviewed         I9Reverification[]            @relation("I9Reverifier")
   auditLogActions                   AuditLog[]                    @relation("AuditActor")
   timeApprovals                     TimeEntry[]                   @relation("TimeApprover")
   createdShifts                     Shift[]                       @relation("ShiftCreator")
@@ -2417,6 +2418,16 @@ model Associate {
   // again the same night (their last clock-in may be months old).
   dormancyWarnedAt        DateTime?                @db.Timestamptz(6)
   reactivatedAt           DateTime?                @db.Timestamptz(6)
+  // Paused over 120 days becomes a separation (lib/pausedSeparation.ts;
+  // owner, 2026-11-03). pauseSeparationNoticeAt stamps HR's heads-up at
+  // 110 days paused; a stamp older than the current pause (deactivatedAt)
+  // belongs to an earlier pause, so a new pause is announced afresh and
+  // nobody is separated by the rule un-announced. pauseSeparationHeldAt
+  // stamps the last time HR was told the rule couldn't separate this
+  // person (company property still out), so that reminder comes weekly,
+  // not every sweep.
+  pauseSeparationNoticeAt DateTime?                @db.Timestamptz(6)
+  pauseSeparationHeldAt   DateTime?                @db.Timestamptz(6)
   createdAt               DateTime                 @default(now()) @db.Timestamptz(6)
   updatedAt               DateTime                 @updatedAt @db.Timestamptz(6)
   deletedAt               DateTime?                @db.Timestamptz(6)
@@ -2433,6 +2444,7 @@ model Associate {
   readyToWorkHandoff       ReadyToWorkHandoff?
   policyAcks               PolicyAcknowledgment[]
   i9Verification           I9Verification?
+  i9Reverifications        I9Reverification[]
   eeoSelfId                EeoSelfIdentification?
   w4Submission             W4Submission?
   payoutMethods            PayoutMethod[]
@@ -3410,6 +3422,12 @@ model DrugTest {
   mroVerifiedAt      DateTime?      @db.Timestamptz(6)
   lastSyncAt         DateTime?      @db.Timestamptz(6)
   lastError          String?        @db.VarChar(500)
+  /// FCRA adjudication for a test obtained through a consumer reporting
+  /// agency (2026-11-03): ENGAGED | PRE_ADVERSE | ADVERSE, as on BackgroundCheck.
+  adjudication       String?        @db.VarChar(20)
+  preAdverseSentAt   DateTime?      @db.Timestamptz(6)
+  adverseWaitUntil   DateTime?      @db.Timestamptz(6)
+  adverseSentAt      DateTime?      @db.Timestamptz(6)
   associate          Associate      @relation(fields: [associateId], references: [id], onDelete: Restrict)
 
   @@index([associateId])
@@ -3474,11 +3492,61 @@ model I9Verification {
   eVerifyClosureReason       String?              @db.VarChar(60)
   eVerifyLastSyncAt          DateTime?            @db.Timestamptz(6)
   eVerifyLastError           String?              @db.VarChar(500)
+  /// The day HR examined the Section 2 documents (owner, 2026-11-03): typed on a
+  /// manual or paper Section 2, which is often recorded days after it happened.
+  /// Null on Section 2s recorded before this column, and on the onboarding
+  /// verifier's (examined the moment it was recorded: section2CompletedAt).
+  section2ExaminedOn         DateTime?            @db.Date
   associate                  Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
   section2Verifier           User?                @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
+  reverifications            I9Reverification[]
   createdAt                  DateTime             @default(now()) @db.Timestamptz(6)
   updatedAt                  DateTime             @updatedAt @db.Timestamptz(6)
 
+  @@index([tenantId])
+}
+
+/// One Supplement B entry on an I-9 (owner 2026-11-03). `kind`:
+///   REVERIFICATION  the new document HR examined when a time-limited work
+///                   authorization ran out;
+///   REHIRE          the person came back within 3 years of the original I-9
+///                   and it was reused (rehiredOn), with a re-verified
+///                   document when their authorization had ended.
+/// Recording a document also moves I9Verification.workAuthExpiresAt to
+/// newExpiresAt in the same transaction, so that field always holds the
+/// CURRENT authorization's end (the scheduling block reads only it and
+/// citizenshipStatus). Rows are never edited: a correction is a new record.
+/// The document number is encrypted at rest like the I-9's A-number; the list
+/// shows its last four.
+model I9Reverification {
+  id                  String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId            String         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId         String         @db.Uuid
+  i9VerificationId    String         @db.Uuid
+  /// REVERIFICATION | REHIRE
+  kind                String         @default("REVERIFICATION") @db.VarChar(16)
+  /// REHIRE: the day the person was rehired.
+  rehiredOn           DateTime?      @db.Date
+  /// Null on a REHIRE with no document (their authorization had not ended).
+  documentTitle       String?        @db.VarChar(160)
+  documentNumberEnc   Bytes?
+  documentNumberLast4 String?        @db.VarChar(4)
+  issuingAuthority    String?        @db.VarChar(160)
+  /// The authorization's end before this record (what it replaced).
+  previousExpiresAt   DateTime?      @db.Date
+  /// The new document's expiry; null when it never expires.
+  newExpiresAt        DateTime?      @db.Date
+  reviewedById        String?        @db.Uuid
+  /// The day the documents were examined.
+  reviewedOn          DateTime       @db.Date
+  notes               String?        @db.VarChar(1000)
+  createdAt           DateTime       @default(now()) @db.Timestamptz(6)
+  associate           Associate      @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  i9Verification      I9Verification @relation(fields: [i9VerificationId], references: [id], onDelete: Cascade)
+  reviewedBy          User?          @relation("I9Reverifier", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([associateId, createdAt])
+  @@index([i9VerificationId])
   @@index([tenantId])
 }
 
@@ -12932,13 +13000,16 @@ model DocumentChase {
 /// Soft-deleted so the weekly coverage rows keep their meaning.
 model CredentialRequirement {
   id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// A site, or (clientId) every site of a client; neither = company-wide, everyone in the workforce (owner, 2026-11-03).
   locationId      String?          @db.Uuid
   clientId        String?          @db.Uuid
-  /// VACCINATION | TRAINING | QUALIFICATION
+  /// VACCINATION | TRAINING | QUALIFICATION | BACKGROUND_CHECK | DRUG_TEST
   kind            String           @db.VarChar(20)
   vaccinationKind VaccinationKind?
   complianceTag   ComplianceTag?
   qualificationId String?          @db.Uuid
+  /// BACKGROUND_CHECK / DRUG_TEST: how old the latest passed one may be, in days (365 = a yearly re-screen); null = any passed one counts (cleared to work, 2026-11-03).
+  maxAgeDays      Int?
   /// What the desk and the person read ("TB test", "Food handler card").
   label           String           @db.VarChar(120)
   createdById     String?          @db.Uuid

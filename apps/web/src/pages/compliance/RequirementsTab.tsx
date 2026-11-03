@@ -27,6 +27,11 @@ import { Select } from '@/components/ui/Select';
  * placed there to hold. The Compliance agent measures each one weekly,
  * puts the gaps on the desk and asks each person missing it. Nothing is
  * required until it is set here.
+ *
+ * Cleared to work (owner, 2026-11-03): a site — or every site of a client —
+ * may also require a passed background check or drug test, no older than a
+ * number of days (365 = a yearly re-screen). HR orders those, so nobody is
+ * asked; the Cleared to work tab shows who is missing one.
  */
 
 const VACCINATIONS = [
@@ -43,7 +48,24 @@ const TRAININGS = [
   ['EEO_HARASSMENT', 'Harassment prevention'],
   ['WALMART_CADE', 'Customer-required training'],
 ] as const;
-const KIND_LABEL: Record<RequirementKind, string> = { VACCINATION: 'Vaccination', TRAINING: 'Training', QUALIFICATION: 'Qualification' };
+const KIND_LABEL: Record<RequirementKind, string> = {
+  VACCINATION: 'Vaccination',
+  TRAINING: 'Training',
+  QUALIFICATION: 'Qualification',
+  BACKGROUND_CHECK: 'Background check',
+  DRUG_TEST: 'Drug test',
+};
+const isScreening = (k: RequirementKind) => k === 'BACKGROUND_CHECK' || k === 'DRUG_TEST';
+/** A client-wide choice in the place picker: every site of that client. */
+const CLIENT_PREFIX = 'client:';
+/** Company-wide: no site, no client — everyone in the workforce (owner, 2026-11-03). */
+const COMPANY_WIDE = 'company';
+/** "within 365 days" — how old the latest passed check may be. Exported for the tests. */
+export function maxAgeWords(days: number | null | undefined): string {
+  if (days == null) return 'any passed one counts';
+  if (days === 365) return 'repeated yearly';
+  return `no older than ${days} days`;
+}
 
 export function RequirementsTab({
   canManage,
@@ -72,21 +94,31 @@ export function RequirementsTab({
   const [kind, setKind] = useState<RequirementKind>('VACCINATION');
   const [target, setTarget] = useState('');
   const [label, setLabel] = useState('');
+  const [maxAge, setMaxAge] = useState('');
+  const screening = isScreening(kind);
+  const maxAgeDays = maxAge.trim() ? Number.parseInt(maxAge, 10) : null;
+  const maxAgeOk = maxAgeDays === null || (Number.isFinite(maxAgeDays) && maxAgeDays >= 1 && maxAgeDays <= 3650);
 
   const add = useMutation({
     mutationFn: () =>
       createCredentialRequirement({
-        locationId,
+        ...(locationId === COMPANY_WIDE
+          ? { companyWide: true }
+          : locationId.startsWith(CLIENT_PREFIX)
+            ? { clientId: locationId.slice(CLIENT_PREFIX.length) }
+            : { locationId }),
         kind,
         label: label.trim(),
         vaccinationKind: kind === 'VACCINATION' ? target : null,
         complianceTag: kind === 'TRAINING' ? target : null,
         qualificationId: kind === 'QUALIFICATION' ? target : null,
+        ...(screening ? { maxAgeDays } : {}),
       }),
     onSuccess: async () => {
       toast.success('Requirement added. The Compliance agent measures it this week.');
       setTarget('');
       setLabel('');
+      setMaxAge('');
       setAdding(false);
       await qc.invalidateQueries({ queryKey: ['credentialRequirements', 'list'] });
     },
@@ -112,6 +144,11 @@ export function RequirementsTab({
     if (found && !label.trim()) setLabel(found[1]);
   };
   const rows = list.data?.requirements ?? [];
+  const activeSites = (sites.data?.sites ?? []).filter((s) => s.isActive);
+  // Every client that has a site, for "every site of a client" — the place a
+  // background-check or drug-test rule usually comes from.
+  const clients = [...new Map(activeSites.filter((s) => s.clientId && s.clientName).map((s) => [s.clientId!, s.clientName!])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  const ready = !!locationId && (screening || !!target) && !!label.trim() && maxAgeOk;
 
   return (
     <div className="space-y-4">
@@ -121,7 +158,7 @@ export function RequirementsTab({
             <div className="min-w-0">
               <CardTitle>{site} requirements</CardTitle>
               <CardDescription>
-                What everyone placed at a {site.toLowerCase()} must hold. The Compliance agent measures each requirement weekly and asks each person missing it.
+                What everyone placed at a {site.toLowerCase()} must hold. The Compliance agent measures each requirement weekly and asks each person missing it; a background check or drug test is HR&apos;s to order, so it shows on Cleared to work instead.
               </CardDescription>
             </div>
             {canManage && (
@@ -142,7 +179,12 @@ export function RequirementsTab({
                 <li key={r.id} className="flex flex-wrap items-center gap-3 py-3">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-white">
-                      {r.label} <span className="text-silver">· {KIND_LABEL[r.kind]} · {r.place}</span>
+                      {r.label}{' '}
+                      <span className="text-silver">
+                        · {KIND_LABEL[r.kind] ?? r.kind} · {r.place}
+                        {!r.locationId && r.clientId ? ` (every ${site.toLowerCase()})` : ''}
+                        {isScreening(r.kind) ? ` · ${maxAgeWords(r.maxAgeDays)}` : ''}
+                      </span>
                     </p>
                     <p className="text-xs2 text-silver">
                       {r.latest
@@ -176,18 +218,28 @@ export function RequirementsTab({
               className="grid gap-3 sm:grid-cols-2"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (locationId && target && label.trim()) add.mutate();
+                if (ready) add.mutate();
               }}
             >
               <Field label={site} required>
                 {(p) => (
                   <Select {...p} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
                     <option value="">Choose a {site.toLowerCase()}</option>
-                    {(sites.data?.sites ?? []).filter((s) => s.isActive).map((s) => (
+                    <option value={COMPANY_WIDE}>{clients.length > 0 ? 'Every client (everyone)' : 'Everyone'}</option>
+                    {activeSites.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.clientName ? `${s.clientName} · ${s.name}` : s.name}
                       </option>
                     ))}
+                    {clients.length > 0 && (
+                      <optgroup label={`Every ${site.toLowerCase()} of a client`}>
+                        {clients.map(([id, name]) => (
+                          <option key={id} value={`${CLIENT_PREFIX}${id}`}>
+                            {name}: every {site.toLowerCase()}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </Select>
                 )}
               </Field>
@@ -197,32 +249,46 @@ export function RequirementsTab({
                     {...p}
                     value={kind}
                     onChange={(e) => {
-                      setKind(e.target.value as RequirementKind);
+                      const next = e.target.value as RequirementKind;
+                      setKind(next);
                       setTarget('');
+                      // A screening has no target to name it: start its label from the kind.
+                      if (isScreening(next) && !label.trim()) setLabel(KIND_LABEL[next]);
                     }}
                   >
                     <option value="VACCINATION">Vaccination</option>
                     <option value="TRAINING">Training</option>
                     {canReadQuals && <option value="QUALIFICATION">Qualification</option>}
+                    <option value="BACKGROUND_CHECK">Background check</option>
+                    <option value="DRUG_TEST">Drug test</option>
                   </Select>
                 )}
               </Field>
-              <Field
-                label="Required"
-                required
-                hint={kind === 'QUALIFICATION' && quals.isError ? 'The qualification list could not be loaded. Choose a vaccination or a training, or try again later.' : undefined}
-              >
-                {(p) => (
-                  <Select {...p} value={target} onChange={(e) => pick(e.target.value)}>
-                    <option value="">Choose</option>
-                    {options.map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
+              {screening ? (
+                <Field
+                  label="Repeat after (days)"
+                  hint={maxAgeOk ? 'Leave empty and any passed one counts. 365 = a yearly re-screen; 60 = a drug test every 60 days.' : 'A number of days from 1 to 3650.'}
+                >
+                  {(p) => <Input {...p} type="number" inputMode="numeric" min={1} max={3650} value={maxAge} onChange={(e) => setMaxAge(e.target.value)} />}
+                </Field>
+              ) : (
+                <Field
+                  label="Required"
+                  required
+                  hint={kind === 'QUALIFICATION' && quals.isError ? 'The qualification list could not be loaded. Choose a vaccination or a training, or try again later.' : undefined}
+                >
+                  {(p) => (
+                    <Select {...p} value={target} onChange={(e) => pick(e.target.value)}>
+                      <option value="">Choose</option>
+                      {options.map(([v, l]) => (
+                        <option key={v} value={v}>
+                          {l}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
+              )}
               <Field label="What people read" required hint="Shown to the person asked and on the desk.">
                 {(p) => <Input {...p} value={label} maxLength={120} onChange={(e) => setLabel(e.target.value)} />}
               </Field>
@@ -231,7 +297,7 @@ export function RequirementsTab({
               <Button variant="ghost" onClick={() => setAdding(false)} disabled={add.isPending}>
                 Cancel
               </Button>
-              <Button type="submit" form="add-requirement" loading={add.isPending} disabled={!locationId || !target || !label.trim() || add.isPending}>
+              <Button type="submit" form="add-requirement" loading={add.isPending} disabled={!ready || add.isPending}>
                 Add requirement
               </Button>
             </DialogFooter>

@@ -163,6 +163,12 @@ const bgLedger = (r: Pick<ScreeningReport, 'complete' | 'result' | 'rawStatus'>)
 
 export async function applyScreeningReport(checkId: string, r: ScreeningReport): Promise<void> {
   const status = bgLedger(r);
+  // A decision HR recorded (cleared to work, or the final adverse notice)
+  // stands (2026-11-03): a refresh or webhook still records the provider's
+  // own words, but no longer puts a decided check back to "needs review"
+  // and onto the adverse-action worklist.
+  const before = await prisma.backgroundCheck.findUnique({ where: { id: checkId }, select: { adjudication: true } });
+  const decided = before?.adjudication === 'ENGAGED' || before?.adjudication === 'ADVERSE';
   const row = await prisma.backgroundCheck.update({
     where: { id: checkId },
     data: {
@@ -171,9 +177,10 @@ export async function applyScreeningReport(checkId: string, r: ScreeningReport):
       result: r.result,
       lastSyncAt: new Date(),
       lastError: null,
-      ...(status === 'PASSED' ? { status: 'PASSED', completedAt: new Date(), adjudication: 'ENGAGED' } : { status }),
+      ...(decided ? {} : status === 'PASSED' ? { status: 'PASSED', completedAt: new Date(), adjudication: 'ENGAGED' } : { status }),
     },
   });
+  if (decided) return;
   // A clear report completes the onboarding task the consent left in progress
   // (lib/backgroundCheckConsent.ts; imported lazily — that module orders through this one).
   if (status === 'PASSED') await (await import('../backgroundCheckConsent.js')).markBackgroundTaskDone(prisma, row.associateId);
@@ -253,6 +260,11 @@ export async function cancelAdverse(conn: ProviderConnection, checkId: string): 
 
 export async function applyDrugStatus(testId: string, s: DrugStatus): Promise<void> {
   const status = drugLedgerStatus(s);
+  // A decision HR recorded stands (2026-11-03): the lab's words still land,
+  // the outcome someone decided is not put back for review — and a test in
+  // the FCRA steps keeps the status those steps gave it.
+  const before = await prisma.drugTest.findUnique({ where: { id: testId }, select: { adjudication: true } });
+  const decided = !!before?.adjudication;
   await prisma.drugTest.update({
     where: { id: testId },
     data: {
@@ -261,9 +273,8 @@ export async function applyDrugStatus(testId: string, s: DrugStatus): Promise<vo
       resultCode: s.resultCode,
       lastSyncAt: new Date(),
       lastError: null,
-      status,
       ...(s.mroVerified ? { mroVerifiedAt: new Date() } : {}),
-      ...(status === 'PASSED' || status === 'FAILED' ? { completedAt: new Date() } : {}),
+      ...(decided ? {} : { status, ...(status === 'PASSED' || status === 'FAILED' ? { completedAt: new Date() } : {}) }),
     },
   });
 }

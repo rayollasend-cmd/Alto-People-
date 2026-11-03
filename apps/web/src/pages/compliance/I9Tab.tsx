@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTenant, useTerm } from '@/lib/auth';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from '@/components/ui/icons';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import { DeadlineStrip, matchesDeadlineDay } from './DeadlineStrip';
-import type { I9DocumentList, I9ListResponse, I9NotStarted, I9Verification } from '@alto-people/shared';
-import { listI9s, upsertI9 } from '@/lib/complianceApi';
+import { WORKFORCE_PARAM, WorkforceFilter, useComplianceWorkforce } from './WorkforceFilter';
+import { I9_DESTROY_WORD, type ComplianceWorkforce, type I9DestroyResponse, type I9DocumentList, type I9NotStarted, type I9Verification, type WorkStatus } from '@alto-people/shared';
+import { destroyI9, destroyI9s, listI9Reverifications, listI9s, recordI9Reverification, upsertI9 } from '@/lib/complianceApi';
+import { PeopleStatusBadge, isWorkStatus, workStatusEnglish } from '@/components/ui/PeopleStatusBadge';
 import {
   listI9Documents,
   submitI9Section2,
@@ -17,7 +19,7 @@ import {
   minDocsForSection2List,
   sanitizeReturnPath,
 } from './section2Verification';
-import { ApiError, apiFetch } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { DocumentViewer } from '@/components/DocumentViewer';
 import {
   downloadAllDocumentsUrl,
@@ -34,6 +36,12 @@ import {
   Avatar,
   Badge,
   Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Drawer,
   DrawerBody,
   DrawerDescription,
@@ -71,10 +79,34 @@ function addBusinessDays(start: Date, days: number): Date {
   return d;
 }
 
-/** Section 2 must be completed within 3 business days of the start date. */
+/** Section 2 must be completed within 3 business days of the start date
+ *  (an older server's rows; the server sends section2DueBy, holidays skipped). */
 function section2DueDate(startDate: string | null | undefined): Date | null {
   if (!startDate) return null;
   return addBusinessDays(parseLocalDate(startDate), 3);
+}
+
+/**
+ * A row's Section 2 due day, from the one hire-date anchor (owner,
+ * 2026-11-03): the employment's first day — the date E-Verify counts from —
+ * not the application's planned start.
+ */
+function rowSection2Due(r: I9Verification): Date | null {
+  if (r.section2DueBy) return parseLocalDate(r.section2DueBy);
+  return section2DueDate(r.hireDate ?? r.startDate);
+}
+
+/** Where the person stands; an older server sent only `placed`, which can't tell onboarding from gone. */
+function rowWorkStatus(r: I9Verification): WorkStatus | null {
+  if (isWorkStatus(r.workStatus)) return r.workStatus;
+  if (r.separatedAt) return 'SEPARATED';
+  if (r.placed === false) return 'ONBOARDING';
+  return null;
+}
+
+/** Past retention: the person left and the retain-until day is behind us (the server's rule, lib/hiringCompliance). */
+function pastRetention(r: I9Verification): boolean {
+  return !!r.leftOn && !!r.retainUntil && r.retainUntil.slice(0, 10) < ymdLocal();
 }
 
 /** The open federal clocks on one I-9: Section 2 while it is pending, and
@@ -82,10 +114,10 @@ function section2DueDate(startDate: string | null | undefined): Date | null {
 function i9DueDates(r: I9Verification): string[] {
   const out: string[] = [];
   if (!r.section2CompletedAt) {
-    const due = section2DueDate(r.startDate);
+    const due = rowSection2Due(r);
     if (due) out.push(ymdLocal(due));
   }
-  if (r.reverifyDueAt) out.push(r.reverifyDueAt.slice(0, 10));
+  if (r.reverifyDue && r.reverifyDueAt) out.push(r.reverifyDueAt.slice(0, 10));
   return out;
 }
 
@@ -107,6 +139,9 @@ const WORK_AUTH_WINDOW_DAYS = 90;
 
 const I9_FILTERS = [
   { value: 'pending', label: 'Pending' },
+  // Section 1 signed and the documents sent: HR's turn (the Inbox's
+  // "I-9 Section 2 to complete" opens here).
+  { value: 'ready', label: 'Ready for Section 2' },
   // Placed people with no I-9 record at all — the scorecard counts them
   // missing, so the list carries them too.
   { value: 'not_started', label: 'No I-9 on file' },
@@ -114,10 +149,15 @@ const I9_FILTERS = [
   // number a reachable view instead of just an alarm.
   { value: 'overdue', label: 'Overdue' },
   { value: 'complete', label: 'Complete' },
-  { value: 'all', label: 'All' },
-  { value: 'work_auth', label: 'Work auth expiring' },
-  // Separated people whose I-9 is past its retention date (the later of
-  // three years from hire or one year from separation): safe to purge.
+  // "All statuses", not "All": the group chips above have their own "All".
+  { value: 'all', label: 'All statuses' },
+  // Re-verification due by the one rule (owner, 2026-11-03): an alien
+  // authorized to work, still employed, authorization ending within 90 days.
+  { value: 'work_auth', label: 'Re-verification due' },
+  // An end date with no Section 1 citizenship status (owner, 2026-11-03).
+  { value: 'needs_review', label: 'Needs review' },
+  // People who left whose I-9 is past its retention date (the later of
+  // three years from hire or one year from the last day worked): may be destroyed.
   { value: 'retention', label: 'Past retention' },
 ] as const;
 
@@ -165,10 +205,13 @@ export function notStartedRow(n: I9NotStarted): I9Verification {
     documentList: null,
     supportingDocIds: [],
     startDate: n.hireDate,
+    hireDate: n.hireDate,
+    section2DueBy: n.section2DueBy,
     clientId: n.clientId,
     clientName: n.clientName,
     placed: true,
     photoUrl: n.photoUrl,
+    workStatus: n.workStatus,
   };
 }
 
@@ -197,13 +240,23 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     const v = deepLinkParams.get('status');
     return I9_FILTERS.some((f) => f.value === v) ? (v as I9Filter) : null;
   });
+  // Who the list is about (owner, 2026-11-03): the current workforce unless
+  // a link names a group (?workforce=, this visit) or one person (All). A
+  // link to "past retention" alone is about people who left: Former.
+  const linkedWorkforce = useComplianceWorkforce({ wide: !!deepLinkAssociateId });
+  const [workforceOverride, setWorkforceOverride] = useState<ComplianceWorkforce | null>(() =>
+    deepLinkParams.get('status') === 'retention' && !deepLinkParams.has(WORKFORCE_PARAM) && !deepLinkAssociateId ? 'former' : null,
+  );
+  const workforce = workforceOverride ?? linkedWorkforce.workforce;
+  const showLeavers = workforce === 'former' || workforce === 'all';
   const returnConsumed = useRef(false);
   useEffect(() => {
-    if (returnConsumed.current || (!deepLinkParams.has('return') && !deepLinkParams.has('status'))) return;
+    if (returnConsumed.current || !['return', 'status', WORKFORCE_PARAM].some((k) => deepLinkParams.has(k))) return;
     returnConsumed.current = true;
     const params = new URLSearchParams(deepLinkParams);
     params.delete('return');
     params.delete('status');
+    params.delete(WORKFORCE_PARAM);
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
   const [storedFilter, setStoredFilter] = usePersistentState<I9Filter>(
@@ -216,7 +269,10 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   const [filterOverride, setFilterOverride] = useState<I9Filter | null>(
     deepLinkStatus ?? (deepLinkAssociateId ? 'all' : null),
   );
-  const filter = filterOverride ?? storedFilter;
+  const pickedFilter = filterOverride ?? storedFilter;
+  // Past retention is a Former / All view: a saved pick of it never empties
+  // the current workforce's list.
+  const filter: I9Filter = pickedFilter === 'retention' && !showLeavers ? 'pending' : pickedFilter;
   const setFilter = (f: I9Filter) => {
     setFilterOverride(null);
     setStoredFilter(f);
@@ -250,13 +306,22 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     // 'none' is a page-local synthetic bucket, not a store the scope knows.
     if (id !== 'none') storeScope.setClientId(id);
   };
+  const setWorkforce = (w: ComplianceWorkforce) => {
+    setWorkforceOverride(null);
+    linkedWorkforce.setWorkforce(w);
+    // Past retention is a Former / All view.
+    if (filter === 'retention' && w !== 'former' && w !== 'all') setFilter('pending');
+  };
   const [search, setSearch] = useState('');
   const [drawerTarget, setDrawerTarget] = useState<I9Verification | null>(null);
+  // Bulk destroy on the Past retention view: the picked I-9 rows' ids.
+  const [destroyPicks, setDestroyPicks] = useState<Set<string>>(() => new Set());
+  const [bulkDestroyOpen, setBulkDestroyOpen] = useState(false);
   const rowsQuery = useQuery({
-    queryKey: ['I9Tab', 'rows'],
-    // Always fetch the full list: the filters are client-side views and
-    // the KPI strip must count the whole population, not one slice.
-    queryFn: () => listI9s('all'),
+    queryKey: ['I9Tab', 'rows', workforce],
+    // The whole group: the status filters are client-side views and the
+    // KPI strip counts the group on view, not one slice of it.
+    queryFn: () => listI9s('all', { workforce }),
   });
   // The I-9 records plus the placed people who have none: one population
   // with the scorecard (everyone hired and placed), so "I-9 complete" reads
@@ -271,16 +336,6 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
         ? [...rowsQuery.data.i9s, ...(rowsQuery.data.notStarted ?? []).map(notStartedRow)]
         : null,
     [rowsQuery.data],
-  );
-  // Past retention lives outside the working list: those people have left,
-  // so the server answers them on their own (?status=retention).
-  const retentionQuery = useQuery({
-    queryKey: ['I9Tab', 'retention'],
-    queryFn: () => apiFetch<I9ListResponse>('/compliance/i9?status=retention'),
-    retry: false,
-  });
-  const retentionRows: I9Verification[] = (retentionQuery.data?.i9s ?? []).filter(
-    (r) => !!r.retainUntil && r.retainUntil < ymdLocal(),
   );
   const error = rowsQuery.error
     ? rowsQuery.error instanceof ApiError
@@ -351,9 +406,11 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   // rows last).
   const displayRows = useMemo(() => {
     if (!rows) return null;
-    let list = filter === 'retention' ? retentionRows : rows;
+    let list = rows;
+    if (filter === 'retention') list = list.filter(pastRetention);
     if (dueDay) list = list.filter((r) => i9DueDates(r).some((d) => matchesDeadlineDay(d, dueDay)));
     if (filter === 'pending') list = list.filter((r) => !r.section2CompletedAt);
+    if (filter === 'ready') list = list.filter((r) => !!r.documentsSubmittedAt && !r.section2CompletedAt);
     if (filter === 'not_started') list = list.filter((r) => notStartedIds.has(r.id));
     if (filter === 'complete') list = list.filter((r) => !!r.section2CompletedAt);
     if (filter === 'overdue') {
@@ -361,18 +418,14 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       // deadline already passed.
       list = list.filter((r) => {
         if (r.section2CompletedAt) return false;
-        const due = section2DueDate(r.startDate);
-        return due !== null && due.getTime() < Date.now();
+        const due = rowSection2Due(r);
+        return due !== null && daysFromToday(due) < 0;
       });
     }
-    if (filter === 'work_auth') {
-      list = list.filter(
-        (r) =>
-          r.workAuthExpiresAt &&
-          daysFromToday(parseLocalDate(r.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS,
-      );
-    }
-    list = list.filter((r) => matchesStarted(r.startDate, started));
+    // The server's rule (an alien authorized to work, still employed).
+    if (filter === 'work_auth') list = list.filter((r) => !!r.reverifyDue);
+    if (filter === 'needs_review') list = list.filter((r) => !!r.needsReview);
+    list = list.filter((r) => matchesStarted(r.hireDate ?? r.startDate, started));
     if (clientFilter) {
       list = list.filter((r) =>
         clientFilter === 'none' ? !r.clientId : r.clientId === clientFilter,
@@ -388,7 +441,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     }
     const rank = (r: I9Verification): [number, number] => {
       if (r.section2CompletedAt) return [2, 0];
-      const due = section2DueDate(r.startDate);
+      const due = rowSection2Due(r);
       return due ? [0, due.getTime()] : [1, 0];
     };
     return [...list].sort((a, b) => {
@@ -396,9 +449,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       const [gb, kb] = rank(b);
       return ga - gb || ka - kb;
     });
-    // retentionRows is derived from the retention query each render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, filter, started, clientFilter, search, dueDay, retentionQuery.data, notStartedIds]);
+  }, [rows, filter, started, clientFilter, search, dueDay, notStartedIds]);
 
   // Distinct clients present in the list, for the dropdown — derived from
   // the rows themselves so no extra fetch (and no /clients dependency).
@@ -419,6 +470,8 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   // date. Every pending count now includes them, as the list does.
   const inScope = (r: I9Verification) =>
     !clientFilter || (clientFilter === 'none' ? !r.clientId : r.clientId === clientFilter);
+  // The tiles count the group on view (owner, 2026-11-03), so they never
+  // count people the list won't show.
   const kpi = useMemo(() => {
     const all = (rows ?? []).filter(inScope);
     const placed = all.filter((r) => r.placed);
@@ -431,23 +484,21 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       pendingS1: all.filter((r) => !r.section1CompletedAt).length,
       // Exactly the Pending view's rows.
       pendingS2: pending2.length,
+      ready: pending2.filter((r) => !!r.documentsSubmittedAt).length,
       overdue: pending2.filter((r) => {
-        const due = section2DueDate(r.startDate);
-        return due !== null && due.getTime() < Date.now();
+        const due = rowSection2Due(r);
+        return due !== null && daysFromToday(due) < 0;
       }).length,
       complete: all.filter((r) => !!r.section2CompletedAt).length,
-      workAuth: all.filter(
-        (r) =>
-          r.workAuthExpiresAt &&
-          daysFromToday(parseLocalDate(r.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS,
-      ).length,
+      workAuth: all.filter((r) => !!r.reverifyDue).length,
+      needsReview: all.filter((r) => !!r.needsReview).length,
+      retention: all.filter(pastRetention).length,
     };
     // inScope reads clientFilter, listed here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, notStartedIds, clientFilter]);
-  const retentionInScope = retentionRows.filter(inScope);
-  // Reverification dates are a column only when someone has one.
-  const showReverify = (rows ?? []).some((r) => !!(r.reverifyDueAt ?? r.workAuthExpiresAt));
+  // Reverification dates are a column only when someone re-verifies.
+  const showReverify = (rows ?? []).some((r) => !!r.reverifyDueAt);
   const activeFilterCount =
     (filter !== 'pending' ? 1 : 0) + (clientFilter ? 1 : 0) + (started !== 'any' ? 1 : 0) + (dueDay ? 1 : 0);
   const clearFilters = () => {
@@ -464,8 +515,14 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       <DirectorateHeader
         icon={Fingerprint}
         title="I-9 verification"
-        blurb={`Federal employment-eligibility verification — Section 1 by the ${term('worker').toLowerCase()}, Section 2 by HR within 3 business days of the start date`}
+        blurb={`Federal employment-eligibility verification — Section 1 by the ${term('worker').toLowerCase()}, Section 2 by HR within 3 business days of the first day of work`}
       />
+
+      {rowsQuery.data?.truncated && (
+        <ErrorBanner className="mb-3">
+          This group is larger than the {rowsQuery.data.i9s.length.toLocaleString('en-US')} I-9s the list can show at once, so some are missing. Pick a smaller group.
+        </ErrorBanner>
+      )}
 
       {rows && rows.length > 0 && (
         <KpiStrip>
@@ -495,6 +552,15 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             onClick={() => setFilter('pending')}
             active={filter === 'pending'}
           />
+          {/* Documents in, HR's turn — the Inbox's "Section 2 to complete". */}
+          <Kpi
+            label="Ready for Section 2"
+            value={kpi.ready}
+            tone={kpi.ready > 0 ? 'text-warning' : undefined}
+            onClick={() => setFilter('ready')}
+            active={filter === 'ready'}
+            hint="Section 1 is signed and the documents are in: HR examines them and completes Section 2."
+          />
           <Kpi
             label="Overdue"
             value={kpi.overdue}
@@ -508,14 +574,28 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             tone={kpi.workAuth > 0 ? 'text-alert' : undefined}
             onClick={() => setFilter('work_auth')}
             active={filter === 'work_auth'}
+            hint="Only people whose I-9 says “an alien authorized to work”, still employed, whose authorization ended or ends within 90 days. Citizens, nationals and permanent residents never re-verify."
           />
-          <Kpi
-            label="Past retention"
-            value={retentionInScope.length}
-            tone={retentionInScope.length > 0 ? 'text-warning' : undefined}
-            onClick={() => setFilter('retention')}
-            active={filter === 'retention'}
-          />
+          {(kpi.needsReview > 0 || filter === 'needs_review') && (
+            <Kpi
+              label="Needs review"
+              value={kpi.needsReview}
+              tone={kpi.needsReview > 0 ? 'text-warning' : undefined}
+              onClick={() => setFilter('needs_review')}
+              active={filter === 'needs_review'}
+              hint="Citizenship status missing — check Section 1 and the expiry date. These I-9s have a work-authorization end date but no citizenship status, so nobody can tell whether it must be re-verified."
+            />
+          )}
+          {showLeavers && (
+            <Kpi
+              label="Past retention"
+              value={kpi.retention}
+              tone={kpi.retention > 0 ? 'text-warning' : undefined}
+              onClick={() => setFilter('retention')}
+              active={filter === 'retention'}
+              hint="People who left: three years since they were hired and a year since their last day have both passed. Their I-9s may now be destroyed."
+            />
+          )}
         </KpiStrip>
       )}
 
@@ -528,6 +608,8 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           onSelectDay={setDueDay}
         />
       )}
+
+      <WorkforceFilter className="mb-2 flex flex-wrap gap-2" value={workforce} onChange={setWorkforce} counts={rowsQuery.data?.workforceCounts} />
 
       <FilterBar
         className="mb-3"
@@ -544,7 +626,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
         onClearFilters={clearFilters}
         sheetDescription="Narrow the I-9 list by status, client and start date."
       >
-        {I9_FILTERS.filter((f) => f.value !== 'not_started' || kpi.notStarted > 0).map((f) => (
+        {I9_FILTERS.filter((f) => (f.value !== 'not_started' || kpi.notStarted > 0) && (f.value !== 'retention' || showLeavers)).map((f) => (
           <FilterChip
             key={f.value}
             active={filter === f.value}
@@ -600,13 +682,29 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
         search={false}
         urlState={false}
         toolbar="inline"
-        exportCsv={{ filename: 'i9-records' }}
+        // The group is in the file's name (owner, 2026-11-03).
+        exportCsv={{ filename: `i9-${workforce}-${ymdLocal()}` }}
         onRowClick={(r) => setDrawerTarget(r)}
         rowActionLabel={(r) => `Open ${r.associateName}’s I-9`}
+        // Past retention: pick several and destroy them in one step (owner,
+        // 2026-11-03). Each is checked again on the server.
+        {...(canManage && filter === 'retention'
+          ? {
+              selectable: {
+                selection: { selected: destroyPicks, onChange: setDestroyPicks },
+                selectAllLabel: 'Select every I-9 past retention',
+                actions: (selected: string[]) => (
+                  <Button size="sm" variant="destructive" onClick={() => setBulkDestroyOpen(true)} disabled={selected.length === 0}>
+                    Destroy {selected.length === 1 ? '1 I-9' : `${selected.length} I-9s`}
+                  </Button>
+                ),
+              },
+            }
+          : {})}
         empty={{
           icon: FileCheck,
           title: 'No I-9 records match this filter',
-          description: `Switch to a different filter, clear the search, or wait for ${term('workers').toLowerCase()} to complete Section 1.`,
+          description: `Switch to a different filter or group, clear the search, or wait for ${term('workers').toLowerCase()} to complete Section 1.`,
         }}
         columns={[
           {
@@ -646,20 +744,41 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                     <SectionBadge label="Section 2" done={!!r.section2CompletedAt} />
                   </>
                 )}
-                {r.placed === false && <Badge variant="outline">Onboarding</Badge>}
                 {r.documentList && <Badge variant="outline">{DOC_LIST_LABELS[r.documentList]}</Badge>}
+                {r.needsReview && (
+                  <Badge variant="pending" title="Citizenship status missing — check Section 1 and the expiry date.">
+                    Needs review
+                  </Badge>
+                )}
               </span>
             ),
+          },
+          {
+            // Where the person stands (owner, 2026-11-03): someone who left
+            // read "Onboarding" here, from a placed flag that only knew
+            // "not placed".
+            key: 'employment',
+            header: 'Employment',
+            accessor: (r) => {
+              const s = rowWorkStatus(r);
+              return s ? workStatusEnglish(s) : null;
+            },
+            sortable: true,
+            cardMeta: true,
+            cell: (r) => {
+              const s = rowWorkStatus(r);
+              return s ? <PeopleStatusBadge status={s} /> : <span className="text-ink-subtle">—</span>;
+            },
           },
           {
             key: 'sec2',
             header: 'Section 2 due',
             accessor: (r) => {
               if (r.section2CompletedAt) return null;
-              return section2DueDate(r.startDate)?.getTime() ?? null;
+              return rowSection2Due(r)?.getTime() ?? null;
             },
             csv: (r) => {
-              const due = r.section2CompletedAt ? null : section2DueDate(r.startDate);
+              const due = r.section2CompletedAt ? null : rowSection2Due(r);
               return due ? ymdLocal(due) : '';
             },
             sortable: true,
@@ -691,8 +810,23 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                 },
               ]
             : []),
-          ...(filter === 'retention'
+          ...(showLeavers
             ? [
+                {
+                  key: 'left',
+                  header: 'Left',
+                  accessor: (r: I9Verification) => r.leftOn ?? null,
+                  sortable: true,
+                  searchable: false,
+                  align: 'right' as const,
+                  className: 'tabular-nums whitespace-nowrap',
+                  cell: (r: I9Verification) =>
+                    r.leftOn ? (
+                      <span className="text-xs text-ink-muted">{fmtDateOnly(r.leftOn, { year: 'auto' })}</span>
+                    ) : (
+                      <span className="text-ink-subtle">—</span>
+                    ),
+                },
                 {
                   key: 'retain',
                   header: 'Retain until',
@@ -714,6 +848,21 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             : []),
         ]}
       />
+
+      {bulkDestroyOpen && (
+        <DestroyI9Dialog
+          count={destroyPicks.size}
+          onClose={() => setBulkDestroyOpen(false)}
+          onConfirm={async (typed) => {
+            const ids = (displayRows ?? []).filter((r) => destroyPicks.has(r.id)).map((r) => r.associateId);
+            const res = await destroyI9s(ids, typed);
+            setBulkDestroyOpen(false);
+            setDestroyPicks(new Set());
+            reportDestroyed(res);
+            void refresh();
+          }}
+        />
+      )}
 
       <Drawer
         open={!!drawerTarget}
@@ -746,8 +895,8 @@ function Section2DueCell({ row }: { row: I9Verification }) {
   if (row.section2CompletedAt) {
     return <span className="text-xs text-ink-muted">Done</span>;
   }
-  const due = section2DueDate(row.startDate);
-  if (!due) return <span className="text-xs text-ink-subtle" title="No start date on file">—</span>;
+  const due = rowSection2Due(row);
+  if (!due) return <span className="text-xs text-ink-subtle" title="No first day of work on file">—</span>;
   const days = daysFromToday(due);
   if (days < 0) {
     return (
@@ -800,10 +949,21 @@ function I9DetailPanel({
   const sec1Done = !!current.section1CompletedAt;
   const sec2Done = !!current.section2CompletedAt;
   const showVerifier = canManage && sec1Done && !sec2Done && !!current.applicationId;
-  const workAuthExpiring =
-    canManage &&
-    !!current.workAuthExpiresAt &&
-    daysFromToday(parseLocalDate(current.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS;
+  // Re-verification by the server's rule (owner, 2026-11-03): an alien
+  // authorized to work, still employed, authorization ending within 90 days.
+  const reverifyDue = canManage && !!current.reverifyDue;
+  const reverifies = current.citizenshipStatus === 'ALIEN_AUTHORIZED_TO_WORK';
+  const status = rowWorkStatus(current);
+  const firstDay = current.hireDate ?? current.startDate ?? null;
+  const isRecord = current.id !== current.associateId;
+  // A rehire may reuse the original I-9 (Supplement B) when this employment
+  // began after it was completed — within 3 years of it (owner, 2026-11-03).
+  const rehire = rehireStanding(current);
+  const supplementKinds: SupplementKind[] = [
+    ...(reverifyDue ? (['REVERIFICATION'] as const) : []),
+    ...(canManage && rehire === 'eligible' ? (['REHIRE'] as const) : []),
+  ];
+  const [destroyOpen, setDestroyOpen] = useState(false);
   return (
     <>
       <DrawerHeader>
@@ -847,6 +1007,7 @@ function I9DetailPanel({
           {current.documentList && (
             <Badge variant="outline">{DOC_LIST_LABELS[current.documentList]}</Badge>
           )}
+          {status && <PeopleStatusBadge status={status} />}
         </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs mb-5">
           <DetailRow label="Section 1 completed">
@@ -863,11 +1024,31 @@ function I9DetailPanel({
               ? `${current.supportingDocIds.length} on file`
               : '—'}
           </DetailRow>
-          <DetailRow label="Start date">
-            {current.startDate
-              ? fmtDate(parseLocalDate(current.startDate))
-              : '—'}
+          {/* The one hire date (owner, 2026-11-03): Section 2 runs from it. */}
+          <DetailRow label="First day of work">
+            {firstDay ? fmtDate(parseLocalDate(firstDay)) : '—'}
           </DetailRow>
+          <DetailRow label="Documents examined">
+            {current.section2ExaminedOn
+              ? fmtDate(parseLocalDate(current.section2ExaminedOn))
+              : current.section2CompletedAt
+                ? fmtDate(current.section2CompletedAt)
+                : '—'}
+          </DetailRow>
+          {current.leftOn && (
+            <>
+              <DetailRow label="Last day worked">{fmtDate(parseLocalDate(current.leftOn))}</DetailRow>
+              <DetailRow label="Keep the I-9 until">
+                {current.retainUntil ? (
+                  <span className={pastRetention(current) ? 'text-warning' : undefined}>
+                    {fmtDate(parseLocalDate(current.retainUntil.slice(0, 10)))}
+                  </span>
+                ) : (
+                  '—'
+                )}
+              </DetailRow>
+            </>
+          )}
           <DetailRow label="Work auth expires">
             {current.workAuthExpiresAt ? (
               <span
@@ -883,8 +1064,49 @@ function I9DetailPanel({
           </DetailRow>
         </dl>
 
-        {workAuthExpiring && (
-          <WorkAuthUpdateForm current={current} onSaved={onRefresh} />
+        {current.needsReview && (
+          <div className="mb-5 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-xs">
+            <div className="font-medium text-ink">Citizenship status missing — check Section 1 and the expiry date</div>
+            <p className="mt-0.5 text-silver">
+              This I-9 has a work-authorization end date
+              {current.workAuthExpiresAt ? ` (${fmtDate(parseLocalDate(current.workAuthExpiresAt))})` : ''} but no
+              citizenship status, so nobody can tell whether it must be re-verified. Find the paper Section 1 and record the
+              status the employee checked.
+            </p>
+            {canManage && isRecord && <CitizenshipRecorder current={current} onSaved={onRefresh} />}
+          </div>
+        )}
+        {supplementKinds.length > 0 && isRecord && <ReverificationForm current={current} kinds={supplementKinds} onSaved={onRefresh} />}
+        {canManage && rehire === 'too_late' && (
+          <p className="mb-5 rounded-md border border-navy-secondary p-3 text-xs text-silver">
+            Rehired more than 3 years after the original I-9: complete a new I-9.
+          </p>
+        )}
+        {(reverifies || !!current.rehireOn) && isRecord && <ReverificationHistory associateId={current.associateId} />}
+        {canManage && isRecord && pastRetention(current) && (
+          <div className="mb-5 rounded-md border border-alert/40 bg-alert/[0.06] p-3 text-xs">
+            <div className="font-medium text-ink">Past retention</div>
+            <p className="mt-0.5 text-silver">
+              Kept until {current.retainUntil ? fmtDate(parseLocalDate(current.retainUntil.slice(0, 10))) : '—'}, the later of three
+              years from hire and one year from the last day worked. It may now be destroyed.
+            </p>
+            <Button size="sm" variant="destructive" className="mt-2" onClick={() => setDestroyOpen(true)}>
+              Destroy I-9
+            </Button>
+          </div>
+        )}
+        {destroyOpen && (
+          <DestroyI9Dialog
+            count={1}
+            name={current.associateName}
+            onClose={() => setDestroyOpen(false)}
+            onConfirm={async (typed) => {
+              const res = await destroyI9(current.associateId, typed);
+              setDestroyOpen(false);
+              reportDestroyed(res);
+              onDone();
+            }}
+          />
         )}
 
         {showVerifier && current.applicationId && (
@@ -917,70 +1139,370 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
+type SupplementKind = 'REVERIFICATION' | 'REHIRE';
+
+/** The last day a rehire may reuse an I-9 completed on `original` (3 years). */
+function rehireReuseEnds(original: string): string {
+  const d = parseLocalDate(original);
+  return ymdLocal(new Date(d.getFullYear() + 3, d.getMonth(), d.getDate()));
+}
+
 /**
- * Inline reverification for the "Work auth ≤ 90d" population — records the
- * renewed expiry right here so HR doesn't round-trip through /people and
- * lose the tab's filters. The expiry lives on I9Verification itself, so the
- * existing upsert endpoint carries it.
+ * Where a rehire stands on Supplement B (owner, 2026-11-03): a person
+ * rehired after the original I-9 was completed may reuse it within 3
+ * years ('eligible'); later, a new I-9 ('too_late'). Null for anyone not
+ * rehired, and once a rehire is recorded for this employment.
  */
-function WorkAuthUpdateForm({
+function rehireStanding(r: I9Verification): 'eligible' | 'too_late' | null {
+  const hire = r.hireDate;
+  const original = r.originalSection2On;
+  if (!r.rehired || !hire || !original || hire <= original) return null;
+  if (r.rehireOn && r.rehireOn >= hire) return null;
+  return hire <= rehireReuseEnds(original) ? 'eligible' : 'too_late';
+}
+
+/** Documents Supplement B commonly records: any List A or List C document (never List B). */
+const REVERIFY_DOC_SUGGESTIONS = [
+  'Employment Authorization Document (Form I-766)',
+  'Foreign passport with Form I-94 or I-94A',
+  'Form I-94 or I-94A with a refugee or asylee admission stamp',
+  'Unrestricted Social Security card',
+  'Form I-797C extension notice with the expired EAD',
+];
+
+const SUPPLEMENT_KIND_LABEL: Record<SupplementKind, string> = {
+  REVERIFICATION: 'Re-verification',
+  REHIRE: 'Rehire (reuse this I-9)',
+};
+
+/**
+ * Supplement B (owner, 2026-11-03).
+ *
+ * Re-verification: the document HR examined and the new end of the
+ * authorization — saving moves the I-9's end date in one step, so the row
+ * leaves "re-verification due" and scheduling reads the new date. Offered
+ * for an alien authorized to work whose authorization ends within 90 days.
+ *
+ * Rehire: the person came back within 3 years of the original I-9, which is
+ * reused — the rehire date, and the re-verified document when their
+ * authorization had ended by then. With an earlier E-Verify case that ended
+ * Employment Authorized, no new case is needed. The server checks again.
+ */
+function ReverificationForm({
   current,
+  kinds,
   onSaved,
 }: {
   current: I9Verification;
+  kinds: SupplementKind[];
   onSaved: () => void;
 }) {
-  const [expiry, setExpiry] = useState(current.workAuthExpiresAt ?? '');
+  const qc = useQueryClient();
+  const [kind, setKind] = useState<SupplementKind>(kinds[0]!);
+  const [rehiredOn, setRehiredOn] = useState(current.hireDate ?? ymdLocal());
+  const [title, setTitle] = useState('');
+  const [number, setNumber] = useState('');
+  const [authority, setAuthority] = useState('');
+  const [expiry, setExpiry] = useState('');
+  const [noExpiry, setNoExpiry] = useState(false);
+  const [reviewedOn, setReviewedOn] = useState(ymdLocal());
+  const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const today = ymdLocal();
+  // A rehire re-verifies only when the authorization had ended by the rehire day.
+  const rehireNeedsDocument =
+    kind === 'REHIRE' &&
+    current.citizenshipStatus === 'ALIEN_AUTHORIZED_TO_WORK' &&
+    !!current.workAuthExpiresAt &&
+    current.workAuthExpiresAt < rehiredOn;
+  const withDocument = kind === 'REVERIFICATION' || rehireNeedsDocument;
+  const documentReady = title.trim().length >= 2 && number.trim().length >= 2 && (noExpiry || !!expiry);
+  const ready =
+    !!reviewedOn &&
+    reviewedOn <= today &&
+    (kind !== 'REHIRE' || !!rehiredOn) &&
+    (!withDocument || documentReady);
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (saving || !expiry || expiry === current.workAuthExpiresAt) return;
+    if (saving || !ready) return;
     setSaving(true);
+    setError(null);
     try {
-      await upsertI9(current.associateId, { workAuthExpiresAt: expiry });
-      toast.success('Work authorization updated.');
+      await recordI9Reverification(current.associateId, {
+        kind,
+        ...(kind === 'REHIRE' ? { rehiredOn } : {}),
+        ...(withDocument
+          ? {
+              documentTitle: title.trim(),
+              documentNumber: number.trim(),
+              issuingAuthority: authority.trim() || null,
+              newExpiresAt: noExpiry ? null : expiry,
+            }
+          : {}),
+        reviewedOn,
+        notes: notes.trim() || null,
+      });
+      toast.success(kind === 'REHIRE' ? 'Rehire recorded on Supplement B.' : 'Re-verification recorded.');
+      await qc.invalidateQueries({ queryKey: ['I9Tab', 'reverifications', current.associateId] });
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Update failed.');
+      setError(err instanceof ApiError ? err.message : 'Could not record it.');
     } finally {
       setSaving(false);
     }
   };
 
+  const id = (k: string) => `reverify-${k}-${current.id}`;
   return (
-    <form
-      onSubmit={save}
-      className="mb-5 rounded-md border border-warning/40 bg-warning/[0.07] p-3"
-    >
-      <div className="text-2xs uppercase tracking-widest text-silver/80">
-        Update work authorization
+    <form onSubmit={save} className="mb-5 space-y-3 rounded-md border border-warning/40 bg-warning/[0.07] p-3">
+      <div>
+        <div className="text-2xs uppercase tracking-widest text-silver/80">Record on Supplement B</div>
+        <p className="mt-0.5 text-2xs text-silver/60">
+          {kind === 'REHIRE'
+            ? `Rehired within 3 years of the original I-9 (completed ${current.originalSection2On ? fmtDate(parseLocalDate(current.originalSection2On)) : '—'}): record the rehire to reuse it.`
+            : `${current.workAuthExpiresAt ? `The work authorization ${daysFromToday(parseLocalDate(current.workAuthExpiresAt)) < 0 ? 'ended' : 'ends'} ${fmtDate(parseLocalDate(current.workAuthExpiresAt))}. ` : ''}Examine a List A or List C document they choose, then record it here. The new end date replaces the old one.`}
+        </p>
       </div>
-      <p className="mt-0.5 text-2xs text-silver/60">
-        Reverification — record the renewed document&apos;s new expiry date;
-        the row leaves the expiring queue immediately.
-      </p>
-      <div className="mt-2 flex flex-wrap items-end gap-3">
+      {kinds.length > 1 && (
         <div>
-          <Label htmlFor={`workauth-expiry-${current.id}`}>New expiry date</Label>
-          <Input
-            id={`workauth-expiry-${current.id}`}
-            type="date"
-            value={expiry}
-            onChange={(e) => setExpiry(e.target.value)}
-            className="mt-1 h-9 w-44 text-sm"
-          />
+          <Label htmlFor={id('kind')}>What are you recording?</Label>
+          <Select id={id('kind')} value={kind} onChange={(e) => setKind(e.target.value as SupplementKind)} className="mt-1">
+            {kinds.map((k) => (
+              <option key={k} value={k}>
+                {SUPPLEMENT_KIND_LABEL[k]}
+              </option>
+            ))}
+          </Select>
         </div>
-        <Button
-          type="submit"
-          size="sm"
-          loading={saving}
-          disabled={saving || !expiry || expiry === current.workAuthExpiresAt}
-        >
-          Save
-        </Button>
+      )}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {kind === 'REHIRE' && (
+          <div>
+            <Label htmlFor={id('rehired')}>Rehire date</Label>
+            <Input id={id('rehired')} type="date" value={rehiredOn} min={current.originalSection2On ?? undefined} onChange={(e) => setRehiredOn(e.target.value)} className="mt-1 h-9 text-sm" />
+          </div>
+        )}
+        {kind === 'REHIRE' && (
+          <p className="text-2xs text-silver/70 sm:col-span-2">
+            {rehireNeedsDocument
+              ? 'Their work authorization ended before the rehire date: examine a List A or List C document and record it below.'
+              : 'Their work authorization hasn’t ended: no new document is needed.'}
+          </p>
+        )}
+        {withDocument && (
+          <>
+            <div className="sm:col-span-2">
+              <Label htmlFor={id('title')}>Document</Label>
+              <Input id={id('title')} list={id('titles')} value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-9 text-sm" placeholder="Employment Authorization Document (Form I-766)" />
+              <datalist id={id('titles')}>
+                {REVERIFY_DOC_SUGGESTIONS.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+            </div>
+            <div>
+              <Label htmlFor={id('number')}>Document number</Label>
+              <Input id={id('number')} value={number} onChange={(e) => setNumber(e.target.value)} className="mt-1 h-9 text-sm" autoComplete="off" />
+            </div>
+            <div>
+              <Label htmlFor={id('authority')}>Issued by (optional)</Label>
+              <Input id={id('authority')} value={authority} onChange={(e) => setAuthority(e.target.value)} className="mt-1 h-9 text-sm" placeholder="USCIS" />
+            </div>
+            <div>
+              <Label htmlFor={id('expiry')}>New expiry date</Label>
+              <Input id={id('expiry')} type="date" value={noExpiry ? '' : expiry} disabled={noExpiry} min={today} onChange={(e) => setExpiry(e.target.value)} className="mt-1 h-9 text-sm" />
+              <label className="mt-1.5 flex items-center gap-2 text-xs text-silver">
+                <input type="checkbox" checked={noExpiry} onChange={(e) => setNoExpiry(e.target.checked)} />
+                This document doesn&apos;t expire
+              </label>
+            </div>
+          </>
+        )}
+        <div>
+          <Label htmlFor={id('reviewed')}>{withDocument ? 'Date examined' : 'Date recorded'}</Label>
+          <Input id={id('reviewed')} type="date" value={reviewedOn} max={today} onChange={(e) => setReviewedOn(e.target.value)} className="mt-1 h-9 text-sm" />
+        </div>
+        <div className="sm:col-span-2">
+          <Label htmlFor={id('notes')}>Notes (optional)</Label>
+          <Input id={id('notes')} value={notes} onChange={(e) => setNotes(e.target.value)} className="mt-1 h-9 text-sm" />
+        </div>
       </div>
+      {error && (
+        <p role="alert" className="text-sm text-alert">
+          {error}
+        </p>
+      )}
+      <Button type="submit" size="sm" loading={saving} disabled={saving || !ready}>
+        {kind === 'REHIRE' ? 'Record rehire' : 'Record re-verification'}
+      </Button>
     </form>
+  );
+}
+
+/** The person's Supplement B entries, newest first. The document number shows its last four only. */
+function ReverificationHistory({ associateId }: { associateId: string }) {
+  const q = useQuery({
+    queryKey: ['I9Tab', 'reverifications', associateId],
+    queryFn: () => listI9Reverifications(associateId),
+  });
+  const list = q.data?.reverifications ?? [];
+  if (q.isLoading) return <SkeletonRows count={1} />;
+  return (
+    <div className="mb-5">
+      <div className="text-2xs uppercase tracking-widest text-silver/80">Supplement B</div>
+      {q.isError ? (
+        <p className="mt-1 text-xs text-alert">Couldn&apos;t load the Supplement B entries.</p>
+      ) : list.length === 0 ? (
+        <p className="mt-1 text-xs text-silver/70">None recorded yet.</p>
+      ) : (
+        <ul className="mt-1 divide-y divide-navy-secondary rounded-md border border-navy-secondary">
+          {list.map((r) => (
+            <li key={r.id} className="px-3 py-2 text-xs">
+              <div className="text-ink">
+                {r.kind === 'REHIRE' ? `Rehired ${r.rehiredOn ? fmtDate(parseLocalDate(r.rehiredOn)) : ''} — I-9 reused` : 'Re-verified'}
+                {r.documentTitle ? ` · ${r.documentTitle}` : ''}
+                {r.documentNumberLast4 ? ` ••••${r.documentNumberLast4}` : ''}
+                {r.issuingAuthority ? ` · ${r.issuingAuthority}` : ''}
+              </div>
+              <div className="text-silver/70">
+                {r.documentTitle ? 'Examined' : 'Recorded'} {fmtDate(parseLocalDate(r.reviewedOn))}
+                {r.reviewedByEmail ? ` by ${r.reviewedByEmail}` : ''}
+                {r.documentTitle
+                  ? ` · ${r.newExpiresAt ? `authorized until ${fmtDate(parseLocalDate(r.newExpiresAt))}` : 'no expiry'}${r.previousExpiresAt ? ` (was ${fmtDate(parseLocalDate(r.previousExpiresAt))})` : ''}`
+                  : ''}
+              </div>
+              {r.notes && <div className="text-silver/70">{r.notes}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+const CITIZENSHIP_OPTIONS = [
+  { value: 'US_CITIZEN', label: 'A citizen of the United States' },
+  { value: 'NON_CITIZEN_NATIONAL', label: 'A noncitizen national of the United States' },
+  { value: 'LAWFUL_PERMANENT_RESIDENT', label: 'A lawful permanent resident' },
+  { value: 'ALIEN_AUTHORIZED_TO_WORK', label: 'An alien authorized to work' },
+] as const;
+type CitizenshipValue = (typeof CITIZENSHIP_OPTIONS)[number]['value'];
+
+/**
+ * Needs review → resolved: HR types the box the employee checked on the
+ * paper Section 1. Only offered while none is on file; an alien authorized
+ * to work then re-verifies by the expiry date, anyone else never does.
+ */
+function CitizenshipRecorder({ current, onSaved }: { current: I9Verification; onSaved: () => void }) {
+  const [value, setValue] = useState<CitizenshipValue | ''>('');
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (!value || saving) return;
+    setSaving(true);
+    try {
+      await upsertI9(current.associateId, { citizenshipStatus: value });
+      toast.success('Citizenship status recorded from Section 1.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="mt-2 flex flex-wrap items-end gap-2">
+      <div className="min-w-0 flex-1">
+        <Label htmlFor={`citizenship-${current.id}`}>Section 1 says the employee is</Label>
+        <Select id={`citizenship-${current.id}`} value={value} onChange={(e) => setValue(e.target.value as CitizenshipValue | '')} className="mt-1">
+          <option value="">Choose…</option>
+          {CITIZENSHIP_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <Button size="sm" onClick={() => void save()} loading={saving} disabled={!value || saving}>
+        Record status
+      </Button>
+    </div>
+  );
+}
+
+/** "2 I-9s destroyed", and why any were kept. */
+function reportDestroyed(res: I9DestroyResponse) {
+  const n = res.destroyed.length;
+  if (n > 0) toast.success(n === 1 ? '1 I-9 destroyed.' : `${n} I-9s destroyed.`);
+  if (res.refused.length > 0) {
+    const first = res.refused[0]!.message;
+    toast.warning(res.refused.length === 1 ? `1 I-9 was kept: ${first}` : `${res.refused.length} I-9s were kept. ${first}`);
+  }
+}
+
+/**
+ * Destroying an I-9 past retention (owner, 2026-11-03) is permanent: the
+ * dialog says exactly what goes, and the confirm button waits for the typed
+ * word DESTROY (one I-9) or the number of I-9s (several).
+ */
+function DestroyI9Dialog({
+  count,
+  name,
+  onClose,
+  onConfirm,
+}: {
+  count: number;
+  name?: string;
+  onClose: () => void;
+  onConfirm: (typed: string) => Promise<void>;
+}) {
+  const word = count === 1 && name ? I9_DESTROY_WORD : String(count);
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const go = async () => {
+    if (typed.trim() !== word || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onConfirm(typed.trim());
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not destroy.');
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{name ? `Destroy ${name}’s I-9?` : `Destroy ${count === 1 ? '1 I-9' : `${count} I-9s`}?`}</DialogTitle>
+          <DialogDescription>
+            This permanently deletes the I-9 form, its Supplement B entries, and the I-9 document copies (the documents
+            Section 2 lists, the I-9 supporting papers and the E-Verify results). The person, their separation, pay and
+            everything else stay. It can&apos;t be undone. Each I-9 is checked again: one that must still be kept is not
+            destroyed.
+          </DialogDescription>
+        </DialogHeader>
+        <div>
+          <Label htmlFor="destroy-i9-confirm">Type {word} to confirm</Label>
+          <Input id="destroy-i9-confirm" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" className="mt-1 h-9 text-sm" />
+        </div>
+        {error && (
+          <p role="alert" className="text-sm text-alert">
+            {error}
+          </p>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={() => void go()} loading={busy} disabled={typed.trim() !== word || busy}>
+            {count === 1 ? 'Destroy I-9' : `Destroy ${count} I-9s`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1240,12 +1762,37 @@ function I9EditForm({
   const [documentList, setDocumentList] = useState<I9DocumentList | ''>(
     current.documentList ?? '',
   );
+  // The day the documents were examined (owner, 2026-11-03): a paper or
+  // late-entered Section 2 happened before it was typed in. Today by
+  // default; never after today, never before the first day of work.
+  const today = ymdLocal();
+  const firstDay = current.hireDate ?? null;
+  const [examinedOn, setExaminedOn] = useState(
+    current.section2ExaminedOn ?? (current.section2CompletedAt ? ymdLocal(new Date(current.section2CompletedAt)) : today),
+  );
+  const [examinedTouched, setExaminedTouched] = useState(false);
+  // Unticking a completed Section 2 erases a record of an examination
+  // that happened: it needs a reason, kept in the audit trail.
+  const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const clearing = !!current.section2CompletedAt && !section2Done;
+  // Sent when Section 2 is newly ticked, or the date was changed by hand —
+  // never invented for a Section 2 recorded before the date existed.
+  const sendExamined = section2Done && (!current.section2CompletedAt || examinedTouched);
+  const examinedBad = sendExamined && (!examinedOn || examinedOn > today || (!!firstDay && examinedOn < firstDay));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+    if (clearing && reason.trim().length < 3) {
+      setError('Say why Section 2 is being unticked.');
+      return;
+    }
+    if (examinedBad) {
+      setError(firstDay ? `The date examined must be between ${fmtDate(parseLocalDate(firstDay))} and today.` : 'The date examined can’t be after today.');
+      return;
+    }
     setError(null);
     setSubmitting(true);
     const now = new Date().toISOString();
@@ -1258,6 +1805,8 @@ function I9EditForm({
           ? current.section2CompletedAt ?? now
           : null,
         documentList: documentList === '' ? null : documentList,
+        ...(sendExamined ? { section2ExaminedOn: examinedOn } : {}),
+        ...(clearing ? { reason: reason.trim() } : {}),
       });
       onSaved();
     } catch (err) {
@@ -1306,7 +1855,39 @@ function I9EditForm({
             </Select>
           </div>
         </label>
+        {section2Done && (
+          <div>
+            <Label htmlFor={`examined-${current.id}`}>Date the documents were examined</Label>
+            <Input
+              id={`examined-${current.id}`}
+              type="date"
+              value={examinedOn}
+              max={today}
+              min={firstDay ?? undefined}
+              onChange={(e) => {
+                setExaminedOn(e.target.value);
+                setExaminedTouched(true);
+              }}
+              className="mt-1 h-9 w-44 text-sm"
+            />
+          </div>
+        )}
       </div>
+      {clearing && (
+        <div>
+          <Label htmlFor={`untick-reason-${current.id}`}>Why is Section 2 being unticked?</Label>
+          <Input
+            id={`untick-reason-${current.id}`}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="For example: ticked on the wrong person"
+            className="mt-1 h-9 text-sm"
+          />
+          <p className="mt-1 text-2xs text-silver/60">
+            The completed Section 2 stays in the audit trail with your reason.
+          </p>
+        </div>
+      )}
       {error && (
         <p role="alert" className="text-sm text-alert">
           {error}

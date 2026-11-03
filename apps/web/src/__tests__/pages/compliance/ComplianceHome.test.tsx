@@ -23,6 +23,7 @@ vi.mock('@/pages/compliance/EVerifyTab', () => ({ EVerifyTab: () => <div>everify
 vi.mock('@/pages/compliance/BackgroundTab', () => ({ BackgroundTab: () => <div>background</div> }));
 vi.mock('@/pages/compliance/DrugTestTab', () => ({ DrugTestTab: () => <div>drugtests</div> }));
 vi.mock('@/pages/compliance/J1Tab', () => ({ J1Tab: () => <div>j1</div> }));
+vi.mock('@/pages/compliance/ClearedTab', () => ({ ClearedTab: () => <div>cleared body</div> }));
 vi.mock('@/pages/compliance/ComplianceScorecard', () => ({
   ComplianceScorecard: () => <div>scorecard body</div>,
 }));
@@ -92,6 +93,14 @@ describe('the audit-packet tab follows the capability the server enforces', () =
   it('still opens it for someone who is allowed', () => {
     renderAs('HR_ADMINISTRATOR', '/compliance?tab=audit');
     expect(screen.getByText('audit packet body')).toBeInTheDocument();
+  });
+});
+
+describe('Cleared to work (owner, 2026-11-03)', () => {
+  it('is a tab, and ?tab=cleared opens it', () => {
+    renderAs('HR_ADMINISTRATOR', '/compliance?tab=cleared');
+    expect(screen.getByRole('tab', { name: 'Cleared to work' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('cleared body')).toBeInTheDocument();
   });
 });
 

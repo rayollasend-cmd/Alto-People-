@@ -4,6 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { benchFor } from './scope.js';
 import { clientRestrictionFor } from './programRules.js';
+import { notClearedFor } from './workAuthorization.js';
 import { assignWithinRules, autoFillScore, blockedForWindow, findRestGapViolation } from './shiftAssign.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC, companyWorkweek } from './timeAnomalies.js';
 import { loadLiveRules } from './laborRules/live.js';
@@ -208,6 +209,10 @@ export async function rankBench(db: Db, shift: FillShift, now: Date, opts: RankO
   const overlapBy = new Map(overlapping.map((o) => [o.assignedAssociateId!, o.position]));
   // Approved time off and declared days off are a wall, as on assign.
   const blocked = await blockedForWindow(ids, shift.startsAt, shift.endsAt, tz, db);
+  // Cleared to work (owner, 2026-11-03): the agent never proposes someone
+  // whose work authorization or J-1 program has ended by the shift's day (or
+  // with an E-Verify final nonconfirmation). It skips them; it never overrides.
+  const notCleared = await notClearedFor(db, ids, { startsAt: shift.startsAt, endsAt: shift.endsAt, timezone: tz }, now);
   const excluded = new Set(opts.exclude ?? []);
   const dow = zonedDayOfWeek(shift.startsAt, tz);
   const startMin = zonedMinutes(shift.startsAt, tz);
@@ -226,6 +231,10 @@ export async function rankBench(db: Db, shift: FillShift, now: Date, opts: RankO
     }
     if (blocked.has(p.id)) {
       considered.push({ associateId: p.id, name: name(p), whyNot: 'on approved time off or a declared day off' });
+      continue;
+    }
+    if (notCleared.has(p.id)) {
+      considered.push({ associateId: p.id, name: name(p), whyNot: 'not cleared to work that day (work authorization, J-1 program or E-Verify)' });
       continue;
     }
     const weeklyScheduled = p.assignedShifts.reduce((sum, sh) => sum + paidMinutesForRange(sh.startsAt, sh.endsAt), 0);

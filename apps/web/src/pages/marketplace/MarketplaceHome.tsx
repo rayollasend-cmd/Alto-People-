@@ -66,6 +66,7 @@ import { ManagerOpenShifts } from './ManagerOpenShifts';
 import '@/lib/i18n/en/mk';
 import '@/lib/i18n/en/sched';
 import '@/lib/i18n/en/shift';
+import { WorkAuthDeclined, useWorkAuthAsk, withWorkAuthOverride } from '@/pages/scheduling/workAuthorizationBlock';
 
 type Tab = 'open' | 'mgr' | 'claims' | 'catalog';
 
@@ -519,6 +520,7 @@ function AvailableTab() {
 // ============ Claims (manager) ============
 
 function ClaimsTab() {
+  const workAuthAsk = useWorkAuthAsk();
   const { t } = useI18n();
   const [rows, setRows] = useState<PendingClaim[] | null>(null);
   const [rejectTarget, setRejectTarget] = useState<PendingClaim | null>(null);
@@ -576,11 +578,13 @@ function ClaimsTab() {
   const approve = async (c: PendingClaim) => {
     setBusyId(c.id);
     try {
-      await updateClaim(c.shiftId, c.id, 'APPROVED', null);
+      // Cleared to work (owner, 2026-11-03): HR may approve anyway, with a reason.
+      await withWorkAuthOverride((o) => (o ? updateClaim(c.shiftId, c.id, 'APPROVED', null, o) : updateClaim(c.shiftId, c.id, 'APPROVED', null)), workAuthAsk, c.associateName);
       toast.success(t('mk.claims.approved'));
       dropRows([c.id]);
       refetch();
     } catch (err) {
+      if (err instanceof WorkAuthDeclined) return;
       toast.error(err instanceof ApiError ? err.message : t('mk.failed'));
     } finally {
       setBusyId(null);

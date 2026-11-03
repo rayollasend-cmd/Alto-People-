@@ -13,7 +13,12 @@ vi.mock('@/lib/credentialRequirementsApi', () => ({
   removeCredentialRequirement: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('@/lib/orgApi', () => ({
-  listSites: vi.fn().mockResolvedValue({ sites: [{ id: 's1', name: 'The Grand Hotel', type: 'PROPERTY', timezone: 'America/Chicago', state: 'FL', isActive: true, clientId: null, clientName: null }] }),
+  listSites: vi.fn().mockResolvedValue({
+    sites: [
+      { id: 's1', name: 'The Grand Hotel', type: 'PROPERTY', timezone: 'America/Chicago', state: 'FL', isActive: true, clientId: null, clientName: null },
+      { id: 's2', name: 'Bay Store', type: 'STORE', timezone: 'America/New_York', state: 'FL', isActive: true, clientId: 'c1', clientName: 'Bay Retail' },
+    ],
+  }),
 }));
 vi.mock('@/lib/qualApi', () => ({ listQualifications: vi.fn().mockResolvedValue({ qualifications: [] }) }));
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true) }));
@@ -57,7 +62,37 @@ describe('<RequirementsTab>', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Add requirement' }));
     const dialog = await screen.findByRole('dialog');
     const kinds = within(within(dialog).getByRole('combobox', { name: /Kind/ })).getAllByRole('option').map((o) => o.textContent);
-    expect(kinds).toEqual(['Vaccination', 'Training']);
+    expect(kinds).toEqual(['Vaccination', 'Training', 'Background check', 'Drug test']);
+  });
+
+  it('cleared to work: a client requires a yearly background check — no target, a maximum age, every site of the client', async () => {
+    renderTab(true);
+    await userEvent.click(await screen.findByRole('button', { name: 'Add requirement' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('option', { name: /^Bay Retail: every (site|store)$/ });
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: /Site|Store/ }), 'client:c1');
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: /Kind/ }), 'BACKGROUND_CHECK');
+    // No target to pick; the label starts from the kind.
+    expect(within(dialog).queryByRole('combobox', { name: /^Required/ })).toBeNull();
+    expect(within(dialog).getByRole('textbox', { name: /What people read/ })).toHaveValue('Background check');
+    await userEvent.type(within(dialog).getByRole('spinbutton', { name: /Repeat after/ }), '365');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add requirement' }));
+    await waitFor(() =>
+      expect(createCredentialRequirement).toHaveBeenLastCalledWith({ clientId: 'c1', kind: 'BACKGROUND_CHECK', label: 'Background check', vaccinationKind: null, complianceTag: null, qualificationId: null, maxAgeDays: 365 }),
+    );
+  });
+
+  it('a company-wide drug test: "Every client" names no site and no client', async () => {
+    renderTab(true);
+    await userEvent.click(await screen.findByRole('button', { name: 'Add requirement' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('option', { name: 'Every client (everyone)' });
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: /Site|Store/ }), 'company');
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: /Kind/ }), 'DRUG_TEST');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add requirement' }));
+    await waitFor(() =>
+      expect(createCredentialRequirement).toHaveBeenLastCalledWith({ companyWide: true, kind: 'DRUG_TEST', label: 'Drug test', vaccinationKind: null, complianceTag: null, qualificationId: null, maxAgeDays: null }),
+    );
   });
 
   it('a read-only desk sees the list and no form', async () => {

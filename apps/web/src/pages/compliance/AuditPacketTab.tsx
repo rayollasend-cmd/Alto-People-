@@ -1,19 +1,33 @@
 import { useState } from 'react';
-import { Download, FileArchive, FileCheck2, ShieldAlert } from '@/components/ui/icons';
+import { useQuery } from '@tanstack/react-query';
+import type { WorkStatus } from '@alto-people/shared';
+import { CalendarDays, Download, FileArchive, FileCheck2, ShieldAlert } from '@/components/ui/icons';
 import { useClients } from '@/lib/useClients';
-import { fmtSize, fmtTime, ymdLocal } from '@/lib/format';
+import { apiFetch, ApiError } from '@/lib/api';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDateOnly, fmtSize, fmtTime, ymdLocal } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';
 import {
   AssociatePicker,
   Button,
   Card,
   CardContent,
+  DateField,
+  EmptyState,
   ErrorBanner,
   Label,
   Select,
+  SkeletonRows,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
   Textarea,
   type PickedAssociate,
 } from '@/components/ui';
+import { PeopleStatusBadge } from '@/components/ui/PeopleStatusBadge';
 
 type PacketScope =
   | 'CLIENT_PERIOD'
@@ -453,6 +467,218 @@ export function AuditPacketTab() {
           through the channel the requesting party specified.
         </div>
       </div>
+
+      <AsOfRosterCard />
     </div>
+  );
+}
+
+/* ----- Who was on the books on a day ------------------------------------- */
+
+/** One person on GET /audit-packets/roster-as-of (apps/api/src/routes/auditPacket.ts). */
+interface AsOfRosterRow {
+  associateId: string;
+  firstName: string;
+  lastName: string;
+  /** Where they stand today, and its English word (the CSV's Employment column). */
+  workStatus: WorkStatus;
+  employment: string;
+  hiredOn: string | null;
+  separatedOn: string | null;
+  section1On: string | null;
+  section2On: string | null;
+  eVerifyCaseNumber: string | null;
+  eVerifyStatus: string | null;
+  eVerifyStatusWords: string | null;
+  workAuthEndsOn: string | null;
+  /** Null while they still work here: the I-9 is kept for as long as they do. */
+  retainUntil: string | null;
+}
+
+interface AsOfRosterResponse {
+  date: string;
+  generatedAt: string;
+  total: number;
+  stillEmployed: number;
+  leftSince: number;
+  noSection2: number;
+  rows: AsOfRosterRow[];
+}
+
+const WHILE_EMPLOYED = 'While employed';
+
+/**
+ * "Who was on the books on this day" (owner, 2026-11-03), for an I-9
+ * inspection notice: pick the day the notice names and get everyone
+ * employed then — people who have left since included, with the day they
+ * left — beside their I-9 Section 1 and 2 dates, E-Verify case, work
+ * authorization end and how long their I-9 must be kept. The compliance
+ * lists answer "who is here now"; this answers "who was here then". The
+ * CSV is the list to hand over with the I-9s.
+ */
+function AsOfRosterCard() {
+  const today = ymdLocal();
+  const [day, setDay] = useState(today);
+  // The roster loads when asked for, for the day asked; changing the day
+  // afterwards doesn't refetch until Show is pressed again.
+  const [asOf, setAsOf] = useState<string | null>(null);
+  const roster = useQuery({
+    queryKey: ['audit-roster-as-of', asOf],
+    queryFn: () => apiFetch<AsOfRosterResponse>(`/audit-packets/roster-as-of?date=${asOf}`),
+    enabled: asOf !== null,
+    staleTime: 60_000,
+  });
+  const data = roster.data;
+
+  const exportCsv = () => {
+    if (!data) return;
+    downloadCsv(`i9-roster-as-of-${data.date}.csv`, [
+      [
+        'Last name',
+        'First name',
+        'Employment (today)',
+        'Hire date',
+        'Separation date',
+        'I-9 Section 1',
+        'I-9 Section 2',
+        'E-Verify case number',
+        'E-Verify status',
+        'Work authorization ends',
+        'Keep I-9 until',
+      ],
+      ...data.rows.map((r) => [
+        r.lastName,
+        r.firstName,
+        r.employment,
+        r.hiredOn,
+        r.separatedOn,
+        r.section1On,
+        r.section2On,
+        r.eVerifyCaseNumber,
+        r.eVerifyStatusWords,
+        r.workAuthEndsOn,
+        r.retainUntil ?? WHILE_EMPLOYED,
+      ]),
+    ]);
+  };
+
+  return (
+    <Card>
+      <CardContent className="space-y-4">
+        <div>
+          <div className="text-sm font-medium text-ink">Who was on the books on a day</div>
+          <p className="mt-1 text-xs text-silver">
+            For an I-9 inspection notice: everyone employed on the day you pick, including people
+            who have left since, with their I-9 dates, E-Verify case and how long their I-9 must be
+            kept. Download it as a CSV to hand over with the forms.
+          </p>
+        </div>
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (day) setAsOf(day);
+          }}
+        >
+          <div>
+            <Label htmlFor="audit-roster-day">On the books on</Label>
+            <div className="mt-1">
+              <DateField id="audit-roster-day" value={day} max={today} clearable={false} onChange={setDay} />
+            </div>
+          </div>
+          <Button type="submit" variant="outline" disabled={!day || day > today}>
+            <CalendarDays className="mr-2 h-4 w-4" />
+            Show who was on the books
+          </Button>
+          {data && (
+            <Button type="button" variant="outline" onClick={exportCsv} disabled={data.rows.length === 0}>
+              <Download className="mr-2 h-4 w-4" />
+              Download CSV
+            </Button>
+          )}
+        </form>
+
+        {roster.isError && (
+          <ErrorBanner>
+            {roster.error instanceof ApiError ? roster.error.message : 'Could not load the roster. Try again.'}
+          </ErrorBanner>
+        )}
+        {roster.isFetching && !data && <SkeletonRows count={4} rowHeight="h-9" />}
+        {data && (
+          <div className="space-y-3">
+            <p className="text-xs text-silver" data-testid="audit-roster-summary">
+              <strong className="text-ink">
+                {data.total} {data.total === 1 ? 'person was' : 'people were'} on the books on{' '}
+                {fmtDateOnly(data.date)}
+              </strong>
+              {data.total > 0 && (
+                <>
+                  {' '}— {data.stillEmployed} still employed, {data.leftSince} left since.
+                  {data.noSection2 > 0 &&
+                    ` ${data.noSection2} ${data.noSection2 === 1 ? 'has' : 'have'} no I-9 Section 2 on file.`}
+                </>
+              )}
+            </p>
+            {data.rows.length === 0 ? (
+              <EmptyState
+                size="sm"
+                title="Nobody was on the books that day"
+                description="Pick a later day, or check the hire dates on People."
+              />
+            ) : (
+              <div className="max-h-[28rem] overflow-y-auto rounded-lg border border-navy-secondary">
+                <Table caption={`Who was on the books on ${fmtDateOnly(data.date)}`}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Employment today</TableHead>
+                      <TableHead>Hired</TableHead>
+                      <TableHead>Left</TableHead>
+                      <TableHead>I-9 Section 1</TableHead>
+                      <TableHead>I-9 Section 2</TableHead>
+                      <TableHead>E-Verify</TableHead>
+                      <TableHead>Work authorization ends</TableHead>
+                      <TableHead>Keep I-9 until</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.rows.map((r) => (
+                      <TableRow key={r.associateId}>
+                        <TableCell className="whitespace-nowrap text-ink">
+                          {r.lastName}, {r.firstName}
+                        </TableCell>
+                        <TableCell>
+                          <PeopleStatusBadge status={r.workStatus} />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap tabular-nums">{fmtDateOnly(r.hiredOn)}</TableCell>
+                        <TableCell className="whitespace-nowrap tabular-nums">{r.separatedOn ? fmtDateOnly(r.separatedOn) : '—'}</TableCell>
+                        <TableCell className="whitespace-nowrap tabular-nums">{fmtDateOnly(r.section1On)}</TableCell>
+                        <TableCell className="whitespace-nowrap tabular-nums">
+                          {r.section2On ? fmtDateOnly(r.section2On) : <span className="text-warning">Not on file</span>}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {r.eVerifyCaseNumber ? (
+                            <>
+                              <span className="tabular-nums">{r.eVerifyCaseNumber}</span>
+                              {r.eVerifyStatusWords && <span className="block text-2xs text-silver">{r.eVerifyStatusWords}</span>}
+                            </>
+                          ) : (
+                            '—'
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap tabular-nums">{fmtDateOnly(r.workAuthEndsOn)}</TableCell>
+                        <TableCell className="whitespace-nowrap tabular-nums">
+                          {r.retainUntil ? fmtDateOnly(r.retainUntil) : WHILE_EMPLOYED}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

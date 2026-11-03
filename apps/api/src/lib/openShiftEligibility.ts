@@ -4,6 +4,7 @@ import { HttpError } from '../middleware/error.js';
 import { dateColumnKey } from './timezone.js';
 import { companyWorkweek } from './timeAnomalies.js';
 import { assertClientAllowed, clientRestrictionFor } from './programRules.js';
+import { assertAuthorizedToWork, authorizationFactsFor, blockedFrom, shiftDays } from './workAuthorization.js';
 
 /**
  * Which open shifts an associate may pick up — ONE rule for every surface:
@@ -22,6 +23,8 @@ import { assertClientAllowed, clientRestrictionFor } from './programRules.js';
  *   - not overlapping a shift of their own, not on a day they're off
  *     (approved time off, an availability exception) — in the shift's
  *     store timezone
+ *   - cleared to work that day: not after their work authorization or J-1
+ *     program ended, no E-Verify final nonconfirmation (lib/workAuthorization)
  */
 
 type Db = Prisma.TransactionClient | typeof prisma;
@@ -118,7 +121,17 @@ export async function eligibleOpenShifts(
     }),
     liveQualIds(associateId, db),
   ]);
-  const qualified = rows.filter((s) => s.qualReqs.every((r) => quals.has(r.qualificationId)));
+  // Cleared to work (owner, 2026-11-03): a shift on or after the day their
+  // right to work ends never reaches the list they claim from. An open
+  // E-Verify mismatch (TNC) does NOT hide shifts: they may work while they
+  // contest it (owner, 2026-11-03).
+  const facts = (await authorizationFactsFor(db, [associateId])).get(associateId);
+  const notFrom = facts ? blockedFrom(facts) : null;
+  const qualified = rows.filter(
+    (s) =>
+      s.qualReqs.every((r) => quals.has(r.qualificationId)) &&
+      (!notFrom || shiftDays({ startsAt: s.startsAt, endsAt: s.endsAt, timezone: s.locationRel?.timezone }).last < notFrom),
+  );
   if (qualified.length === 0) return [];
 
   // Their own schedule and days off across the whole window — one batch,
@@ -194,6 +207,8 @@ export async function assertCanClaimOpenShift(associateId: string, shiftId: stri
       throw new HttpError(403, 'not_placed_at_site', 'You are not placed at this site');
     }
   }
+  // Cleared to work: say why rather than "no longer open" (audited like the H-2B rule).
+  await assertAuthorizedToWork(db, { id: associateId }, { startsAt: shift.startsAt, endsAt: shift.endsAt, timezone: shift.locationRel?.timezone }, { actorUserId: null, via: 'claim', shiftId: shift.id, clientId: shift.clientId });
   const quals = await liveQualIds(associateId, db);
   const missing = shift.qualReqs.filter((r) => !quals.has(r.qualificationId));
   if (missing.length > 0) {

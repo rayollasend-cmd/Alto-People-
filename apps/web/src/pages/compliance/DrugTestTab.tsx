@@ -6,20 +6,33 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Download, ExternalLink, FileCheck2, Plus, FlaskConical } from '@/components/ui/icons';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
 import { sanitizeReturnPath } from './section2Verification';
+import { WORKFORCE_PARAM, WorkforceFilter, useComplianceWorkforce } from './WorkforceFilter';
 import { toast } from 'sonner';
-import type {
-  DrugTest,
-  DrugTestDetail,
-  DrugTestPendingResponse,
-  DrugTestStatus,
+import {
+  COMPLIANCE_WORKFORCE_LABELS,
+  DRUG_TEST_REASONS,
+  DRUG_TEST_REASON_LABELS,
+  type DrugTest,
+  type DrugTestDetail,
+  type DrugTestPendingResponse,
+  type DrugTestPendingRow,
+  type DrugTestPerson,
+  type DrugTestReason,
+  type DrugTestStatus,
+  type ScreeningRosterGroup,
+  type WorkStatus,
 } from '@alto-people/shared';
 import {
   bulkInitiateDrugTests,
   getDrugTestDetail,
   listDrugTests,
   listPendingDrugTests,
+  sendDrugFinalAdverse,
+  sendDrugPreAdverse,
   updateDrugTest,
+  withdrawDrugAdverse,
 } from '@/lib/complianceApi';
+import { useConfirm } from '@/lib/confirm';
 import { uploadAdminDocument } from '@/lib/documentsApi';
 import { DocumentThumbnails } from '@/components/DocumentViewer';
 import { ApiError } from '@/lib/api';
@@ -55,13 +68,21 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
-import { SearchInput } from '@/components/ui/FilterBar';
+import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { PeopleStatusBadge, workStatusEnglish } from '@/components/ui/PeopleStatusBadge';
 
 /**
  * Drug-test directorate — mirrors the Background checks tab. The structural
  * difference is recurrence: the Walmart SOW requires a result within 60
  * days, so the bulk-order roster is "no fresh result", not "never had a
  * row", and the dialog distinguishes never-tested from expired.
+ *
+ * About one group of people at a time (owner, 2026-11-03): it opens on the
+ * CURRENT workforce. Each person shows once, on their newest test ("Earlier
+ * tests" brings the history back), so the tiles count PEOPLE and each tile
+ * is the rows it filters to. "No passed test" and "Due again" list the
+ * group's people — including the never-tested — and "Last passed" says
+ * when. Every order records why it was ordered.
  */
 
 const TRANSITION_OPTIONS: DrugTestStatus[] = [
@@ -70,6 +91,9 @@ const TRANSITION_OPTIONS: DrugTestStatus[] = [
   'PASSED',
   'FAILED',
 ];
+
+/** The 60-day window (Walmart SOW, Exhibit E). */
+const RESULT_WINDOW_DAYS = 60;
 
 function statusVariant(s: DrugTestStatus): 'default' | 'pending' | 'success' | 'destructive' | 'accent' {
   switch (s) {
@@ -114,6 +138,14 @@ function ageInDays(initiatedAt: string): number {
   );
 }
 
+/** How long ago, in the unit that reads at a glance: "12d", "7 mo", "2 yr". */
+function ageWords(iso: string): string {
+  const d = ageInDays(iso);
+  if (d < 60) return `${d}d ago`;
+  if (d < 730) return `${Math.floor(d / 30)} mo ago`;
+  return `${Math.floor(d / 365)} yr ago`;
+}
+
 // Stuck-order tone: an open drug screen 7+ days is worth a look,
 // 14+ days is a problem.
 function ageTone(days: number): string {
@@ -122,21 +154,48 @@ function ageTone(days: number): string {
   return 'text-silver';
 }
 
+/**
+ * One row of the list: a test, or — in "No passed test" / "Due again" — a
+ * person of the group with no test at all. Person fields are filled either
+ * way so the name, badge, client and "Last passed" read the same.
+ */
+interface Row {
+  key: string;
+  test: DrugTest | null;
+  associateId: string;
+  associateName: string;
+  associatePhotoUrl?: string | null;
+  clientId: string | null;
+  clientName: string | null;
+  workStatus: WorkStatus | null;
+  lastPassedAt: string | null;
+  /** Where the person's 60-day clock runs from (null = never tested). */
+  clockFrom: string | null;
+  /** The person's newest test (always true for a no-test row). */
+  latest: boolean;
+}
+
+const isDue = (r: Row) => !r.clockFrom || ageInDays(r.clockFrom) > RESULT_WINDOW_DAYS;
+
 // Status buckets mirror the KPI strip so a number that alarms someone is
 // also a filter they can click through the dropdown — same idiom as the
 // Background checks tab.
-type StatusFilter = 'all' | 'in_flight' | 'stuck' | 'missing_result' | DrugTestStatus;
+type StatusFilter = 'all' | 'in_flight' | 'stuck' | 'missing_result' | 'no_pass' | 'due' | DrugTestStatus;
 const STATUS_FILTER_VALUES: readonly StatusFilter[] = [
   'all',
   'in_flight',
   'stuck',
   'missing_result',
+  'no_pass',
+  'due',
   'INITIATED',
   'IN_PROGRESS',
   'NEEDS_REVIEW',
   'PASSED',
   'FAILED',
 ];
+/** The filters that are about people, not the ledger: never-tested people are rows. */
+const PEOPLE_FILTERS: readonly StatusFilter[] = ['no_pass', 'due'];
 type OrderedFilter = 'any' | 'week' | 'month' | 'quarter';
 
 function matchesOrdered(initiatedAt: string, f: OrderedFilter): boolean {
@@ -145,7 +204,11 @@ function matchesOrdered(initiatedAt: string, f: OrderedFilter): boolean {
   return Date.now() - new Date(initiatedAt).getTime() <= days * 86_400_000;
 }
 
-function matchesStatus(t: DrugTest, f: StatusFilter): boolean {
+function matchesStatus(r: Row, f: StatusFilter): boolean {
+  const t = r.test;
+  if (f === 'no_pass') return !t || t.status !== 'PASSED';
+  if (f === 'due') return isDue(r);
+  if (!t) return false;
   switch (f) {
     case 'all':
       return true;
@@ -160,13 +223,70 @@ function matchesStatus(t: DrugTest, f: StatusFilter): boolean {
   }
 }
 
+/** '' = every client; 'none' = rows with no client on record. */
+function matchesClient(r: Row, clientFilter: string): boolean {
+  return !clientFilter || (clientFilter === 'none' ? !r.clientId : r.clientId === clientFilter);
+}
+
+/** The ledger as rows: each test, flagged when it is the person's newest, plus the group's never-tested people. */
+function buildRows(tests: DrugTest[], people: DrugTestPerson[]): { testRows: Row[]; untested: Row[] } {
+  const byPerson = new Map(people.map((p) => [p.associateId, p]));
+  const sorted = [...tests].sort((a, b) => b.initiatedAt.localeCompare(a.initiatedAt) || (a.id < b.id ? 1 : -1));
+  const seen = new Set<string>();
+  // Someone no longer on file (only under All) has no person row: read their last pass off their tests.
+  const passedOn = new Map<string, string>();
+  for (const t of sorted) {
+    if (t.status !== 'PASSED') continue;
+    const at = t.completedAt ?? t.initiatedAt;
+    if (!passedOn.has(t.associateId) || at > passedOn.get(t.associateId)!) passedOn.set(t.associateId, at);
+  }
+  const testRows = sorted.map((t): Row => {
+    const latest = !seen.has(t.associateId);
+    seen.add(t.associateId);
+    const p = byPerson.get(t.associateId);
+    return {
+      key: t.id,
+      test: t,
+      associateId: t.associateId,
+      associateName: t.associateName,
+      associatePhotoUrl: t.associatePhotoUrl,
+      clientId: t.clientId,
+      clientName: t.clientName ?? null,
+      workStatus: t.workStatus ?? p?.workStatus ?? null,
+      lastPassedAt: p ? p.lastPassedAt : passedOn.get(t.associateId) ?? null,
+      clockFrom: p ? p.lastResultAt : passedOn.get(t.associateId) ?? null,
+      latest,
+    };
+  });
+  const untested = people
+    .filter((p) => !p.latestTestId && !seen.has(p.associateId))
+    .map((p): Row => ({
+      key: `person:${p.associateId}`,
+      test: null,
+      associateId: p.associateId,
+      associateName: p.associateName,
+      associatePhotoUrl: p.associatePhotoUrl,
+      clientId: p.clientId,
+      clientName: p.clientName ?? null,
+      workStatus: p.workStatus,
+      lastPassedAt: null,
+      // A result filed with no test on record still starts the clock.
+      clockFrom: p.lastResultAt,
+      latest: true,
+    }));
+  return { testRows, untested };
+}
+
 export function DrugTestTab({ canManage }: { canManage: boolean }) {
-  // ?associateId= deep-links one person's test (the scorecard's Fix links
-  // and the profile document vault send it) — auto-open their drawer once
-  // the ledger arrives. ?return= is the surface the reviewer came from; the
-  // drawer offers a way back. Both are captured into state once, then
-  // consumed (replace: true): ComplianceHome tab switches copy the current
-  // search params, so lingering params would re-arm on every tab visit.
+  // ?associateId= deep-links one person's test (the scorecard's Fix links,
+  // the profile document vault and the lab's result notices send it) —
+  // auto-open their newest test once the ledger arrives, on every group (a
+  // link to one person opens on All). ?return= is the surface the reviewer
+  // came from; the drawer offers a way back. ?status= (the Inbox) and
+  // ?workforce= pick the view for this visit. All are captured into state
+  // once, then consumed (replace: true): ComplianceHome tab switches copy
+  // the current search params, so lingering params would re-arm on every
+  // tab visit.
   const [deepLinkParams, setDeepLinkParams] = useSearchParams();
   const [deepLinkAssociateId] = useState<string | null>(() =>
     deepLinkParams.get('associateId'),
@@ -174,20 +294,27 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
   const [returnPath] = useState<string | null>(() =>
     sanitizeReturnPath(deepLinkParams.get('return')),
   );
+  const [deepLinkStatus] = useState<StatusFilter | null>(() => {
+    const v = deepLinkParams.get('status');
+    return STATUS_FILTER_VALUES.some((s) => s === v) ? (v as StatusFilter) : null;
+  });
+  const { workforce, setWorkforce } = useComplianceWorkforce({ wide: !!deepLinkAssociateId });
   const deepLinkOpened = useRef(false);
   const deepLinkConsumed = useRef(false);
   useEffect(() => {
     if (deepLinkConsumed.current) return;
-    if (!deepLinkParams.has('associateId') && !deepLinkParams.has('return')) return;
+    if (!['associateId', 'return', 'status', WORKFORCE_PARAM].some((k) => deepLinkParams.has(k))) return;
     deepLinkConsumed.current = true;
     const params = new URLSearchParams(deepLinkParams);
     params.delete('associateId');
     params.delete('return');
+    params.delete('status');
+    params.delete(WORKFORCE_PARAM);
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
-  const [tests, setTests] = useState<DrugTest[] | null>(null);
   const [errorLocal, setError] = useState<string | null>(null);
-  const [showInitiate, setShowInitiate] = useState(false);
+  // The order dialog, and who it opens on (a never-tested row, a link to someone with no test).
+  const [orderFor, setOrderFor] = useState<PickedAssociate | null | false>(false);
   const [showBulkOrder, setShowBulkOrder] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<DrugTest | null>(null);
   // Search / status / client survive revisits (same idiom as EVerifyTab) —
@@ -203,16 +330,33 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
     'all',
     (v): v is StatusFilter => STATUS_FILTER_VALUES.some((s) => s === v),
   );
-  // A deep link lands on the ALL view for this visit only — the linked
+  // A deep link lands on the widest view for this visit only — the linked
   // person must be present whatever their state, but a saved filter the
   // user deliberately chose must not be overwritten (same idiom as I9Tab).
   const [statusOverride, setStatusOverride] = useState<StatusFilter | null>(
-    deepLinkAssociateId ? 'all' : null,
+    deepLinkStatus ?? (deepLinkAssociateId ? 'all' : null),
   );
   const statusFilter = statusOverride ?? storedStatusFilter;
   const setStatusFilter = (f: StatusFilter) => {
     setStatusOverride(null);
     setStoredStatusFilter(f);
+  };
+  // Each person once, on their newest test — or every test ever ordered.
+  const [storedHistory, setStoredHistory] = usePersistentState<boolean>(
+    'alto:list.drugtests.history.v1',
+    false,
+    (v): v is boolean => typeof v === 'boolean',
+  );
+  const [historyOverride, setHistoryOverride] = useState<boolean | null>(deepLinkStatus ? false : null);
+  const showHistory = historyOverride ?? storedHistory;
+  const setShowHistory = (v: boolean) => {
+    setHistoryOverride(null);
+    setStoredHistory(v);
+  };
+  /** A tile is a filter: the rows it counts, one per person. */
+  const pickTile = (f: StatusFilter) => {
+    setStatusFilter(statusFilter === f ? 'all' : f);
+    if (showHistory) setShowHistory(false);
   };
   const [orderedFilter, setOrderedFilter] = useState<OrderedFilter>('any');
   // '' = all clients; 'none' = rows with no client attribution.
@@ -245,8 +389,8 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const refreshQuery = useQuery({
-    queryKey: ['DrugTestTab', 'tests'],
-    queryFn: () => listDrugTests(),
+    queryKey: ['DrugTestTab', 'tests', workforce],
+    queryFn: () => listDrugTests({ workforce }),
   });
   // Results for the open drawer — fetched on open (each read is an audited
   // disclosure server-side), null while loading. gcTime 0 so a re-opened
@@ -269,96 +413,105 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
           ? detailQuery.error.message
           : 'Could not load the result list.'
         : null);
-  useEffect(() => {
-    const res = refreshQuery.data;
-    if (res === undefined) return;
-    setTests(res.tests);
-  }, [refreshQuery.data]);
-  const refresh = async () => {
-    await refreshQuery.refetch();
-  };
-
+  const data = refreshQuery.data ?? null;
+  const tests = data?.tests ?? null;
+  const refresh = () => refreshQuery.refetch();
 
   const openDrawer = (t: DrugTest) => {
     setDrawerTarget(t);
   };
 
-  // Deep link: open the linked person's test as soon as the ledger row
+  const { testRows, untested } = useMemo(
+    () => buildRows(tests ?? [], data?.people ?? []),
+    [tests, data?.people],
+  );
+
+  // Deep link: open the linked person's newest test as soon as the ledger
   // arrives. Matched against the FULL list, not the filtered view, so a
-  // saved filter can never turn the link into a silent no-op.
+  // saved filter can never turn the link into a silent no-op — and a
+  // person with no test is said so, with a way to order one.
+  const [linkedWithoutTest, setLinkedWithoutTest] = useState<PickedAssociate | null>(null);
   useEffect(() => {
     if (!deepLinkAssociateId || deepLinkOpened.current || !tests) return;
-    const match = tests.find((t) => t.associateId === deepLinkAssociateId);
-    if (match) {
-      deepLinkOpened.current = true;
-      setDrawerTarget(match);
+    deepLinkOpened.current = true;
+    const match = testRows.find((r) => r.test && r.associateId === deepLinkAssociateId && r.latest);
+    if (match?.test) {
+      setDrawerTarget(match.test);
+      return;
     }
-  }, [tests, deepLinkAssociateId]);
+    const who = untested.find((r) => r.associateId === deepLinkAssociateId);
+    setLinkedWithoutTest({ id: deepLinkAssociateId, name: who?.associateName ?? '' });
+  }, [tests, testRows, untested, deepLinkAssociateId]);
 
   const updateStatus = async (id: string, status: DrugTestStatus) => {
     setPendingId(id);
     try {
-      await updateDrugTest(id, { status });
-      const fresh = await listDrugTests();
-      setTests(fresh.tests);
+      const updated = await updateDrugTest(id, { status });
+      const fresh = await refresh();
       setDrawerTarget((prev) =>
-        prev ? fresh.tests.find((t) => t.id === prev.id) ?? null : null,
+        prev ? fresh.data?.tests.find((t) => t.id === prev.id) ?? { ...prev, ...updated } : null,
       );
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Update failed.');
+      // Said where the person is looking: the drawer sits over the page banner.
+      toast.error(err instanceof ApiError ? err.message : 'Update failed.');
     } finally {
       setPendingId(null);
     }
   };
 
+  // One row per person: their newest test, and the people never tested.
+  const latestRows = useMemo(() => testRows.filter((r) => r.latest), [testRows]);
+  const peopleRows = useMemo(() => [...latestRows, ...untested], [latestRows, untested]);
+
   const visible = useMemo(() => {
-    if (!tests) return [];
     const q = query.trim().toLowerCase();
-    return tests.filter((t) => {
+    // "No passed test" and "Due again" are about people; the other views are the ledger.
+    const base = PEOPLE_FILTERS.includes(statusFilter) ? peopleRows : showHistory ? testRows : latestRows;
+    return base.filter((r) => {
       if (
         q &&
-        !t.associateName.toLowerCase().includes(q) &&
-        !t.provider.toLowerCase().includes(q) &&
-        !(t.externalId ?? '').toLowerCase().includes(q)
+        !r.associateName.toLowerCase().includes(q) &&
+        !(r.test?.provider ?? '').toLowerCase().includes(q) &&
+        !(r.test?.externalId ?? '').toLowerCase().includes(q)
       ) {
         return false;
       }
-      if (clientFilter && (clientFilter === 'none' ? !!t.clientId : t.clientId !== clientFilter)) {
-        return false;
-      }
-      return (
-        matchesStatus(t, statusFilter) &&
-        matchesOrdered(t.initiatedAt, orderedFilter)
-      );
+      if (!matchesClient(r, clientFilter)) return false;
+      return matchesStatus(r, statusFilter) && (!r.test || matchesOrdered(r.test.initiatedAt, orderedFilter));
     });
-  }, [tests, query, statusFilter, orderedFilter, clientFilter]);
+  }, [testRows, latestRows, peopleRows, query, statusFilter, orderedFilter, clientFilter, showHistory]);
 
   // Distinct clients present in the ledger, for the dropdown — derived from
   // the rows themselves so no extra fetch (and no /clients dependency).
   const clientOptions = useMemo(() => {
     const m = new Map<string, string>();
-    for (const t of tests ?? []) {
-      if (t.clientId && t.clientName) m.set(t.clientId, t.clientName);
+    for (const r of [...testRows, ...untested]) {
+      if (r.clientId && r.clientName) m.set(r.clientId, r.clientName);
     }
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [tests]);
-  const hasUnattributed = (tests ?? []).some((t) => !t.clientId);
+  }, [testRows, untested]);
+  const hasUnattributed = [...testRows, ...untested].some((r) => !r.clientId);
 
-  // Snapshot strip — same at-a-glance idiom as Background checks.
-  // Computed over ALL tests, not the filtered view: the KPIs answer "how
-  // are we doing overall", the filters narrow the table.
-  const open = (tests ?? []).filter((t) => !isTerminal(t.status));
+  // The tiles count PEOPLE of the chosen group (and client): each person on
+  // their newest test, so a re-test every 60 days is one person, not a
+  // growing "Passed". Each tile is a filter showing exactly the rows it counts.
+  const counted = peopleRows.filter((r) => matchesClient(r, clientFilter));
+  const latestTests = counted.flatMap((r) => (r.test ? [r.test] : []));
+  const open = latestTests.filter((t) => !isTerminal(t.status));
   const kpi = {
     inFlight: open.length,
-    needsReview: (tests ?? []).filter((t) => t.status === 'NEEDS_REVIEW').length,
+    needsReview: latestTests.filter((t) => t.status === 'NEEDS_REVIEW').length,
     stuck: open.filter((t) => ageInDays(t.initiatedAt) >= 7).length,
-    passed: (tests ?? []).filter((t) => t.status === 'PASSED').length,
-    failed: (tests ?? []).filter((t) => t.status === 'FAILED').length,
+    passed: latestTests.filter((t) => t.status === 'PASSED').length,
+    failed: latestTests.filter((t) => t.status === 'FAILED').length,
+    noPass: counted.filter((r) => !r.test || r.test.status !== 'PASSED').length,
+    due: counted.filter(isDue).length,
     // A finalized outcome with no lab result on file has no evidence.
-    missingResult: (tests ?? []).filter(
-      (t) => isTerminal(t.status) && (t.reportCount ?? 0) === 0,
-    ).length,
+    missingResult: latestTests.filter((t) => isTerminal(t.status) && (t.reportCount ?? 0) === 0).length,
   };
+  const groupWord = COMPLIANCE_WORKFORCE_LABELS[workforce].toLowerCase();
+  const tile = (f: StatusFilter) => ({ onClick: () => pickTile(f), active: statusFilter === f });
+  const hasAnything = (tests?.length ?? 0) > 0 || untested.length > 0;
 
   return (
     <section>
@@ -373,7 +526,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
                 <Download className="h-4 w-4" />
                 Bulk order CSV
               </Button>
-              <Button onClick={() => setShowInitiate(true)} size="sm">
+              <Button onClick={() => setOrderFor(null)} size="sm">
                 <Plus className="h-4 w-4" />
                 Order test
               </Button>
@@ -395,34 +548,85 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
         </ErrorBanner>
       )}
 
-      {tests && tests.length > 0 && (
+      {linkedWithoutTest && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-surface p-3 text-sm text-ink" role="status">
+          <span>
+            {linkedWithoutTest.name ? `${linkedWithoutTest.name} has` : 'The person you followed a link to has'} no drug test on file.
+          </span>
+          <div className="flex gap-2">
+            {canManage && (
+              <Button size="sm" onClick={() => setOrderFor(linkedWithoutTest.name ? linkedWithoutTest : null)}>
+                <Plus className="h-4 w-4" />
+                Order a test
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => setLinkedWithoutTest(null)}>
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {data?.truncated && (
+        <p className="mb-3 text-xs text-warning" role="status">
+          More tests matched than the list can show. Narrow it with the groups or the filters below.
+        </p>
+      )}
+
+      {data && hasAnything && (
         <KpiStrip>
-          <Kpi label="In flight" value={kpi.inFlight} />
+          <Kpi label="In flight" value={kpi.inFlight} hint={`People in ${groupWord} whose newest test is still out.`} {...tile('in_flight')} />
           <Kpi
             label="Needs review"
             value={kpi.needsReview}
             tone={kpi.needsReview > 0 ? 'text-warning' : undefined}
+            hint="People whose newest result needs a decision — often waiting on the Medical Review Officer."
+            {...tile('NEEDS_REVIEW')}
           />
           <Kpi
             label="Stuck 7d+"
             value={kpi.stuck}
             tone={kpi.stuck > 0 ? 'text-alert' : undefined}
+            hint="People whose newest test has been out a week or more."
+            {...tile('stuck')}
           />
-          <Kpi label="Passed" value={kpi.passed} tone="text-success" />
+          <Kpi label="Passed" value={kpi.passed} tone="text-success" hint="People whose newest test passed." {...tile('PASSED')} />
           <Kpi
             label="Failed"
             value={kpi.failed}
             tone={kpi.failed > 0 ? 'text-alert' : undefined}
+            hint="People whose newest test failed."
+            {...tile('FAILED')}
+          />
+          <Kpi
+            label="No passed test"
+            value={kpi.noPass}
+            of={counted.length}
+            tone={kpi.noPass > 0 ? 'text-warning' : undefined}
+            hint={`People in ${groupWord} whose newest test isn't a pass — never tested, still out, needing review or failed.`}
+            {...tile('no_pass')}
+          />
+          <Kpi
+            label="Due again"
+            value={kpi.due}
+            tone={kpi.due > 0 ? 'text-warning' : undefined}
+            hint="People with no passed result in the last 60 days."
+            {...tile('due')}
           />
           <Kpi
             label="Finalized, no result"
             value={kpi.missingResult}
             tone={kpi.missingResult > 0 ? 'text-warning' : undefined}
+            hint="People whose newest test was decided with no lab result on file."
+            {...tile('missing_result')}
           />
         </KpiStrip>
       )}
 
-      {tests && tests.length > 0 && (
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <WorkforceFilter value={workforce} onChange={setWorkforce} counts={data?.workforceCounts} />
+      </div>
+      {data && hasAnything && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <SearchInput
             value={query}
@@ -438,6 +642,8 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
             aria-label="Filter by test status"
           >
             <option value="all">All statuses</option>
+            <option value="no_pass">No passed test</option>
+            <option value="due">Due again (60 days)</option>
             <option value="in_flight">In flight (not finalized)</option>
             <option value="INITIATED">Ordered</option>
             <option value="IN_PROGRESS">In progress</option>
@@ -474,22 +680,33 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
             <option value="month">Ordered in the last 30 days</option>
             <option value="quarter">Ordered in the last 90 days</option>
           </Select>
+          {!PEOPLE_FILTERS.includes(statusFilter) && (
+            <FilterChip
+              active={showHistory}
+              onClick={() => setShowHistory(!showHistory)}
+              title="Each person shows once, on their newest test. Turn on to list every test ever ordered."
+            >
+              Earlier tests
+            </FilterChip>
+          )}
         </div>
       )}
 
-      {!tests && !error && <SkeletonRows count={4} rowHeight="h-12" />}
-      {tests && tests.length === 0 && (
+      {!data && !error && <SkeletonRows count={4} rowHeight="h-12" />}
+      {data && !hasAnything && (
         <EmptyState
           icon={FlaskConical}
-          title="No drug tests yet"
+          title={workforce === 'all' ? 'No drug tests yet' : `No one in ${groupWord}`}
           description={
-            canManage
-              ? 'Order tests individually or download the bulk CSV for everyone whose result is missing or older than 60 days.'
-              : 'Drug tests will appear here once they are ordered.'
+            workforce !== 'all'
+              ? 'Nobody in this group has a test or needs one. Pick another group above.'
+              : canManage
+                ? 'Order tests individually or download the bulk CSV for everyone whose result is missing or older than 60 days.'
+                : 'Drug tests will appear here once they are ordered.'
           }
           action={
-            canManage ? (
-              <Button onClick={() => setShowInitiate(true)} size="sm">
+            canManage && workforce === 'all' ? (
+              <Button onClick={() => setOrderFor(null)} size="sm">
                 <Plus className="h-4 w-4" />
                 Order test
               </Button>
@@ -497,25 +714,39 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
           }
         />
       )}
-      {tests && tests.length > 0 && visible.length === 0 && (
-        <EmptyState
-          icon={FlaskConical}
-          title="Nobody matches this filter"
-          description="Clear the search, status, or ordered-date filter to see every test."
-        />
+      {data && hasAnything && visible.length === 0 && (
+        testRows.length === 0 && !PEOPLE_FILTERS.includes(statusFilter) ? (
+          // Nobody in the group has a test, but people in it need one: say so, not "no match".
+          <EmptyState
+            icon={FlaskConical}
+            title={`No drug tests in ${groupWord}`}
+            description={`${untested.length} ${untested.length === 1 ? 'person here has' : 'people here have'} never been tested.`}
+            action={
+              <Button size="sm" variant="secondary" onClick={() => setStatusFilter('no_pass')}>
+                Show who has no passed test
+              </Button>
+            }
+          />
+        ) : (
+          <EmptyState
+            icon={FlaskConical}
+            title="Nobody matches this filter"
+            description="Clear the search, status, client, or ordered-date filter, or pick another group."
+          />
+        )
       )}
-      {tests && visible.length > 0 && (
+      {data && visible.length > 0 && (
         <TableShell>
-        <DataGrid<(typeof visible)[number]>
+        <DataGrid<Row>
           id="drug-tests"
           caption="Drug tests"
           rows={visible}
-          rowKey={(x) => x.id}
+          rowKey={(x) => x.key}
           search={false}
           urlState={false}
-          exportCsv={{ filename: 'drug-tests' }}
-          onRowClick={(x) => openDrawer(x)}
-          rowActionLabel={(x) => `Open ${x.associateName}`}
+          exportCsv={{ filename: `drug-tests-${workforce}-${ymdLocal()}` }}
+          onRowClick={(x) => (x.test ? openDrawer(x.test) : canManage ? setOrderFor({ id: x.associateId, name: x.associateName }) : undefined)}
+          rowActionLabel={(x) => (x.test ? `Open ${x.associateName}` : canManage ? `Order a test for ${x.associateName}` : `${x.associateName} has no test`)}
           columns={[
             {
               key: 'associate',
@@ -535,67 +766,132 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
               ),
             },
             {
+              key: 'employment',
+              header: 'Employment',
+              accessor: (x) => (x.workStatus ? workStatusEnglish(x.workStatus) : 'No longer on file'),
+              sortable: true,
+              cardMeta: true,
+              cell: (x) => (x.workStatus ? <PeopleStatusBadge status={x.workStatus} size="sm" /> : <span className="text-xs text-silver/60">No longer on file</span>),
+            },
+            {
               key: 'provider',
               header: 'Provider',
-              accessor: (x) => x.provider,
+              accessor: (x) => x.test?.provider ?? null,
               sortable: true,
               cardMeta: true,
               className: 'text-silver',
-              cell: (x) => (
-                <>
-                  <div>{x.provider}</div>
-                  {x.externalId && <div className="text-2xs font-mono text-silver/70 truncate max-w-[160px]">{x.externalId}</div>}
-                </>
-              ),
+              cell: (x) =>
+                x.test ? (
+                  <>
+                    <div>{x.test.provider}</div>
+                    {x.test.externalId && <div className="text-2xs font-mono text-silver/70 truncate max-w-[160px]">{x.test.externalId}</div>}
+                  </>
+                ) : (
+                  <span className="text-silver/40">—</span>
+                ),
             },
-            { key: 'status', header: 'Status', accessor: (x) => STATUS_LABELS[x.status], sortable: true, cardMeta: true, cell: (x) => <Badge variant={statusVariant(x.status)}>{STATUS_LABELS[x.status]}</Badge> },
+            {
+              key: 'reason',
+              header: 'Reason',
+              accessor: (x) => reasonLabel(x.test?.reason),
+              sortable: true,
+              defaultHidden: true,
+              className: 'text-silver',
+            },
+            {
+              key: 'status',
+              header: 'Status',
+              accessor: (x) => (x.test ? STATUS_LABELS[x.test.status] : 'No test'),
+              sortable: true,
+              cardMeta: true,
+              cell: (x) =>
+                x.test ? (
+                  <Badge variant={statusVariant(x.test.status)}>{STATUS_LABELS[x.test.status]}</Badge>
+                ) : (
+                  <Badge variant="outline">No test</Badge>
+                ),
+            },
             {
               key: 'report',
               header: 'Result',
-              accessor: (x) => ((x.reportCount ?? 0) > 0 ? (x.reportCount === 1 ? 'On file' : `${x.reportCount} on file`) : isTerminal(x.status) ? 'None' : null),
+              accessor: (x) => {
+                const t = x.test;
+                if (!t) return null;
+                return (t.reportCount ?? 0) > 0 ? (t.reportCount === 1 ? 'On file' : `${t.reportCount} on file`) : isTerminal(t.status) ? 'None' : null;
+              },
               sortable: true,
               searchable: false,
-              cell: (x) =>
-                (x.reportCount ?? 0) > 0 ? (
+              cell: (x) => {
+                const t = x.test;
+                if (!t) return <span className="text-xs text-silver/40">—</span>;
+                return (t.reportCount ?? 0) > 0 ? (
                   <span className="inline-flex items-center gap-1 text-xs text-success">
                     <FileCheck2 className="h-3.5 w-3.5" />
-                    {x.reportCount === 1 ? 'On file' : `${x.reportCount} on file`}
+                    {t.reportCount === 1 ? 'On file' : `${t.reportCount} on file`}
                   </span>
-                ) : isTerminal(x.status) ? (
+                ) : isTerminal(t.status) ? (
                   // Outcome recorded, evidence missing — the gap this
                   // column exists to surface.
                   <span className="text-xs text-warning">None</span>
                 ) : (
                   <span className="text-xs text-silver/40">—</span>
-                ),
+                );
+              },
             },
             {
               key: 'initiated',
               header: 'Ordered',
-              accessor: (x) => x.initiatedAt,
+              accessor: (x) => x.test?.initiatedAt ?? null,
               sortable: true,
               searchable: false,
               cardMeta: true,
               className: 'text-silver tabular-nums',
-              cell: (x) => (
-                <>
-                  {fmtDate(x.initiatedAt)}
-                  {!isTerminal(x.status) && <span className={cn('ml-1.5', ageTone(ageInDays(x.initiatedAt)))}>{ageInDays(x.initiatedAt)}d since ordered</span>}
-                </>
-              ),
+              cell: (x) => {
+                const t = x.test;
+                if (!t) return <span className="text-silver/40">—</span>;
+                return (
+                  <>
+                    {fmtDate(t.initiatedAt)}
+                    {!isTerminal(t.status) && <span className={cn('ml-1.5', ageTone(ageInDays(t.initiatedAt)))}>{ageInDays(t.initiatedAt)}d since ordered</span>}
+                  </>
+                );
+              },
             },
-            { key: 'completed', header: 'Completed', accessor: (x) => x.completedAt, sortable: true, searchable: false, className: 'text-silver tabular-nums', cell: (x) => fmtDate(x.completedAt) },
+            {
+              key: 'lastPassed',
+              header: 'Last passed',
+              accessor: (x) => x.lastPassedAt,
+              csv: (x) => (x.lastPassedAt ? fmtDate(x.lastPassedAt) : ''),
+              sortable: true,
+              searchable: false,
+              className: 'text-silver tabular-nums',
+              cell: (x) =>
+                x.lastPassedAt ? (
+                  <>
+                    {fmtDate(x.lastPassedAt)}
+                    <span className={cn('ml-1.5', isDue(x) ? 'text-warning' : 'text-silver/70')}>
+                      {ageWords(x.lastPassedAt)}
+                      {isDue(x) ? ' · due again' : ''}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-xs text-warning">Never</span>
+                ),
+            },
+            { key: 'completed', header: 'Completed', accessor: (x) => x.test?.completedAt ?? null, sortable: true, searchable: false, defaultHidden: true, className: 'text-silver tabular-nums', cell: (x) => fmtDate(x.test?.completedAt ?? null) },
           ]}
         />
         </TableShell>
       )}
 
       <OrderTestDialog
-        open={showInitiate}
-        onOpenChange={setShowInitiate}
+        open={orderFor !== false}
+        initialAssociate={orderFor || null}
+        onOpenChange={(o) => !o && setOrderFor(false)}
         onCreated={() => {
-          setShowInitiate(false);
-          refresh();
+          setOrderFor(false);
+          setLinkedWithoutTest(null);
+          void refresh();
         }}
         onError={setError}
       />
@@ -605,7 +901,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
         onOpenChange={setShowBulkOrder}
         onInitiated={() => {
           setShowBulkOrder(false);
-          refresh();
+          void refresh();
         }}
       />
 
@@ -626,13 +922,22 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
               void detailQuery.refetch();
               void refresh(); // result counts in the table + KPI strip
             }}
+            onTestChanged={(updated) => {
+              setDrawerTarget((prev) => (prev ? { ...prev, ...updated } : updated));
+              void refresh();
+            }}
             // Decide, then the next test in the list as filtered.
-            onNext={() => setDrawerTarget(nextInQueue(visible, drawerTarget.id))}
+            onNext={() => setDrawerTarget(nextInQueue(visible.flatMap((r) => (r.test ? [r.test] : [])), drawerTarget.id))}
           />
         )}
       </Drawer>
     </section>
   );
+}
+
+function reasonLabel(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  return DRUG_TEST_REASONS.find((r) => r === reason) ? DRUG_TEST_REASON_LABELS[reason as DrugTestReason] : reason;
 }
 
 function DrugTestDetailPanel({
@@ -643,6 +948,7 @@ function DrugTestDetailPanel({
   pending,
   onTransition,
   onReportsChanged,
+  onTestChanged,
   onNext,
 }: {
   test: DrugTest;
@@ -654,11 +960,17 @@ function DrugTestDetailPanel({
   pending: boolean;
   onTransition: (status: DrugTestStatus) => void;
   onReportsChanged: () => void;
+  /** An adverse-action step moved the test; here is the record as it now stands. */
+  onTestChanged: (updated: DrugTest) => void;
   /** Move to the next test in the list as filtered. */
   onNext?: () => void;
 }) {
   const ageDays = ageInDays(test.initiatedAt);
   const finalized = isTerminal(test.status);
+  // FCRA (2026-11-03): a result through a consumer reporting agency is failed
+  // by the final adverse notice, not a button.
+  const failByNotice = !!test.viaCra && test.adjudication !== 'ADVERSE';
+  const transitions = TRANSITION_OPTIONS.filter((s) => s !== test.status && !(s === 'FAILED' && failByNotice));
   return (
     <>
       <DrawerHeader>
@@ -687,10 +999,11 @@ function DrugTestDetailPanel({
         </div>
       </DrawerHeader>
       <DrawerBody>
-        <div className="flex items-center gap-3 mb-5">
+        <div className="flex flex-wrap items-center gap-3 mb-5">
           <Badge variant={statusVariant(test.status)}>
             {STATUS_LABELS[test.status]}
           </Badge>
+          {test.workStatus && <PeopleStatusBadge status={test.workStatus} size="sm" />}
           {!finalized && (
             <span className={cn('text-xs tabular-nums', ageTone(ageDays))}>
               {ageDays}d open
@@ -707,9 +1020,12 @@ function DrugTestDetailPanel({
           </DetailRow>
           <DetailRow label="Provider">{test.provider}</DetailRow>
           <DetailRow label="External ref">{test.externalId ?? '—'}</DetailRow>
+          <DetailRow label="Reason">{reasonLabel(test.reason) ?? 'Not recorded'}</DetailRow>
         </dl>
 
         <DrugProviderPanel testId={test.id} personName={test.associateName} canManage={canManage} onChanged={onReportsChanged} />
+
+        {test.viaCra && canManage && <DrugAdversePanel test={test} onChanged={onTestChanged} />}
 
         <div className="mt-6">
           <h3 className="mb-2 text-2xs uppercase tracking-widest text-silver/80">
@@ -734,10 +1050,15 @@ function DrugTestDetailPanel({
             to be revised.
           </p>
         )}
+        {canManage && failByNotice && test.status !== 'FAILED' && (
+          <p className="mt-3 text-xs text-silver">
+            This result came through {test.provider}, a consumer reporting agency. To fail them on it, take the adverse-action steps above: record the result as needing review, send the pre-adverse notice with the result, wait out the response period, then send the final notice.
+          </p>
+        )}
       </DrawerBody>
       {canManage && (
         <DrawerFooter className="flex-wrap">
-          {TRANSITION_OPTIONS.filter((s) => s !== test.status).map((s) => (
+          {transitions.map((s) => (
             <Button
               key={s}
               size="sm"
@@ -761,11 +1082,112 @@ function DrugTestDetailPanel({
 }
 
 /**
+ * The FCRA steps for a test obtained through a consumer reporting agency
+ * (2026-11-03): its result is a consumer report, so deciding against
+ * someone on it takes the pre-adverse notice with the result on file and
+ * the summary of rights, the waiting period, then the final notice — or
+ * withdrawing once they clear it up. A lab ordered directly has none of this.
+ */
+function DrugAdversePanel({ test, onChanged }: { test: DrugTest; onChanged: (t: DrugTest) => void }) {
+  const confirm = useConfirm();
+  const [busy, setBusy] = useState(false);
+  const decidable = !test.adjudication && (test.status === 'NEEDS_REVIEW' || test.status === 'FAILED');
+  const pendingNotice = test.adjudication === 'PRE_ADVERSE';
+  if (!decidable && !pendingNotice && test.adjudication !== 'ADVERSE') return null;
+  const waitOver = !!test.adverseWaitUntil && new Date(test.adverseWaitUntil).getTime() <= Date.now();
+
+  const run = async (fn: () => Promise<DrugTest>, done: string) => {
+    setBusy(true);
+    try {
+      onChanged(await fn());
+      toast.success(done);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'That did not go through. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-label="Adverse action" className="mt-6 space-y-3 rounded-lg border border-line p-4">
+      <h3 className="text-sm font-medium text-ink">Adverse action</h3>
+      {decidable && (
+        <>
+          <p className="text-sm text-ink-muted">
+            This result came through {test.provider}, a consumer reporting agency. To decide against {test.associateName} on it, the law asks for two notices: a pre-adverse notice with a copy of the result and a summary of their rights, a waiting period for them to respond, then the final notice. Upload the result below first — the notice carries it.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            loading={busy}
+            onClick={async () => {
+              const ok = await confirm({
+                title: 'Send the pre-adverse notice?',
+                description: `${test.associateName} gets the result on file and the summary of their FCRA rights, and has 7 days to respond before any final decision.`,
+                confirmLabel: 'Send pre-adverse notice',
+              });
+              if (ok) await run(() => sendDrugPreAdverse(test.id), 'Pre-adverse notice sent with the result.');
+            }}
+          >
+            Send pre-adverse notice
+          </Button>
+        </>
+      )}
+      {pendingNotice && (
+        <>
+          <p className="text-sm text-ink-muted">
+            Pre-adverse notice sent {test.preAdverseSentAt ? fmtDateTime(test.preAdverseSentAt) : ''}.{' '}
+            {test.adverseWaitUntil && (waitOver ? 'The waiting period is over.' : `They have until ${fmtDate(test.adverseWaitUntil)} to respond.`)}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              loading={busy}
+              disabled={!waitOver}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: 'Send the final adverse action notice?',
+                  description: `${test.associateName} is told the decision, with the result and their rights. The test is recorded as failed.`,
+                  confirmLabel: 'Send final notice',
+                  destructive: true,
+                });
+                if (ok) await run(() => sendDrugFinalAdverse(test.id), 'Final notice sent.');
+              }}
+            >
+              {waitOver ? 'Send final notice' : `Final notice from ${test.adverseWaitUntil ? fmtDate(test.adverseWaitUntil) : 'the end of the wait'}`}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              loading={busy}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: 'Withdraw the adverse action?',
+                  description: 'Use this when they cleared it up. The test is recorded as passed.',
+                  confirmLabel: 'Withdraw',
+                });
+                if (ok) await run(() => withdrawDrugAdverse(test.id), 'Adverse action withdrawn — the test is cleared.');
+              }}
+            >
+              They cleared it up — withdraw
+            </Button>
+          </div>
+        </>
+      )}
+      {test.adjudication === 'ADVERSE' && (
+        <p className="text-sm text-ink-muted">Final adverse action notice sent {test.adverseSentAt ? fmtDateTime(test.adverseSentAt) : ''}.</p>
+      )}
+    </section>
+  );
+}
+
+/**
  * The lab's result document. HR downloads it from the provider portal and
  * files it here so the evidence lives next to the recorded outcome. Stored
  * as DRUG_TEST_RESULT documents — the kind the compliance scorecard's
- * 60-day signal reads, so uploading here is also what turns that signal
- * green and resets the associate's 60-day clock.
+ * 60-day signal reads. A result belongs to the test that was current when
+ * it was filed; the 60-day clock runs from the test's completion.
  */
 function ResultSection({
   associateId,
@@ -818,7 +1240,7 @@ function ResultSection({
       {reports.length === 0 ? (
         <p className={cn('mb-2 text-xs', finalized ? 'text-warning' : 'text-silver')}>
           {finalized
-            ? 'This test is finalized but no lab result is on file — upload it so the outcome has its evidence and the 60-day compliance clock resets.'
+            ? 'This test is finalized but no lab result is on file — upload it so the outcome has its evidence.'
             : 'No result yet. When the lab completes the screen, download the result and file it here.'}
         </p>
       ) : (
@@ -854,11 +1276,48 @@ function ResultSection({
   );
 }
 
+/** The groups a bulk order may include, and what each means here. People who left are never listed. */
+const ROSTER_GROUPS: ReadonlyArray<{ key: ScreeningRosterGroup; hint: string }> = [
+  { key: 'current', hint: 'hired and still here' },
+  { key: 'starting', hint: 'onboarding, not hired yet' },
+  { key: 'paused', hint: 'paused by hand — usually left out' },
+];
+const DEFAULT_ROSTER = { current: true, starting: true, paused: false } as const;
+
+/** The row's group; an older server sent only the three-word status. */
+function rosterGroup(r: Pick<DrugTestPendingRow, 'group' | 'status'>): ScreeningRosterGroup {
+  return r.group ?? (r.status === 'ACTIVE' ? 'current' : r.status === 'PENDING' ? 'starting' : 'paused');
+}
+
+/** The API takes 500 people a call; a bigger order goes in turns. */
+const ORDER_BATCH = 500;
+
+/** Reason picker shared by the two order dialogs; '' until someone chooses. */
+function ReasonSelect({ value, onChange }: { value: DrugTestReason | ''; onChange: (r: DrugTestReason | '') => void }) {
+  return (
+    <Field label="Reason" required>
+      {(p) => (
+        <Select {...p} value={value} onChange={(e) => onChange(e.target.value as DrugTestReason | '')}>
+          <option value="">Choose why it was ordered</option>
+          {DRUG_TEST_REASONS.map((r) => (
+            <option key={r} value={r}>
+              {DRUG_TEST_REASON_LABELS[r]}
+            </option>
+          ))}
+        </Select>
+      )}
+    </Field>
+  );
+}
+
 /**
- * Bulk provider ordering. The roster is everyone whose newest result is
- * older than 60 days or absent — recurrence is the point, so "had a test
- * once" doesn't exempt anyone. Downloading marks NOTHING; the "mark
- * ordered" step is separate and gated behind the download.
+ * Bulk provider ordering. The roster is everyone whose 60-day clock ran out
+ * (or never started) — recurrence is the point, so "had a test once"
+ * doesn't exempt anyone — grouped by their one status (2026-11-03): Current
+ * and Starting soon ticked, Paused unticked, people who left never listed.
+ * A result awaiting review or a failed newest test keeps a person off it.
+ * Downloading marks NOTHING; the "mark ordered" step is separate, gated
+ * behind the download, and records why the tests were ordered and with whom.
  */
 function BulkOrderDialog({
   open,
@@ -872,9 +1331,9 @@ function BulkOrderDialog({
   const [errorLocal, setError] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState(false);
   const [busy, setBusy] = useState(false);
-  // Active + onboarding by default; inactive is opt-in — testing people who
-  // don't work here is usually wasted spend.
-  const [groups, setGroups] = useState({ ACTIVE: true, PENDING: true, INACTIVE: false });
+  const [groups, setGroups] = useState<Record<ScreeningRosterGroup, boolean>>({ ...DEFAULT_ROSTER });
+  const [reason, setReason] = useState<DrugTestReason | ''>('');
+  const [provider, setProvider] = useState('');
 
   const pendingQuery = useQuery({
     queryKey: ['BulkOrderDialog', 'pending', open],
@@ -885,16 +1344,18 @@ function BulkOrderDialog({
   const error = errorLocal ?? (pendingQuery.error ? pendingQuery.error instanceof ApiError ? pendingQuery.error.message : 'Could not load the pending list.' : null);
   useEffect(() => {
     setDownloaded(false);
-    setGroups({ ACTIVE: true, PENDING: true, INACTIVE: false });
+    setGroups({ ...DEFAULT_ROSTER });
+    setReason('');
+    setProvider('');
   }, [open]);
 
   const all = pending?.rows ?? [];
-  const countOf = (s: keyof typeof groups) => all.filter((r) => r.status === s).length;
-  const rows = all.filter((r) => groups[r.status]);
+  const countOf = (g: ScreeningRosterGroup) => all.filter((r) => rosterGroup(r) === g).length;
+  const rows = all.filter((r) => groups[rosterGroup(r)]);
   const expired = rows.filter((r) => r.lastResultAt !== null).length;
 
-  const toggleGroup = (s: keyof typeof groups) => {
-    setGroups((g) => ({ ...g, [s]: !g[s] }));
+  const toggleGroup = (g: ScreeningRosterGroup) => {
+    setGroups((cur) => ({ ...cur, [g]: !cur[g] }));
     // The CSV on disk no longer matches the selection — force a re-download
     // before "mark ordered" can fire.
     setDownloaded(false);
@@ -912,17 +1373,21 @@ function BulkOrderDialog({
   };
 
   const markOrdered = async () => {
-    if (rows.length === 0 || busy) return;
+    if (rows.length === 0 || busy || !reason) return;
     setBusy(true);
     try {
-      const res = await bulkInitiateDrugTests({
-        associateIds: rows.map((r) => r.associateId),
-        provider: 'checkr',
-      });
+      const ids = rows.map((r) => r.associateId);
+      let created = 0;
+      let skipped = 0;
+      for (let i = 0; i < ids.length; i += ORDER_BATCH) {
+        const res = await bulkInitiateDrugTests({ associateIds: ids.slice(i, i + ORDER_BATCH), provider: provider.trim() || 'manual', reason });
+        created += res.created;
+        skipped += res.skipped;
+      }
       toast.success(
-        res.skipped > 0
-          ? `Marked ${res.created} ordered (${res.skipped} already had an open order).`
-          : `Marked ${res.created} test${res.created === 1 ? '' : 's'} ordered.`,
+        skipped > 0
+          ? `Marked ${created} ordered (${skipped} already had a test out or awaiting review).`
+          : `Marked ${created} test${created === 1 ? '' : 's'} ordered.`,
       );
       onInitiated();
     } catch (err) {
@@ -938,8 +1403,9 @@ function BulkOrderDialog({
         <DialogHeader>
           <DialogTitle>Bulk order drug tests</DialogTitle>
           <DialogDescription>
-            Downloads everyone whose newest result is missing or older than 60
+            Downloads everyone whose newest pass is missing or older than 60
             days as a CSV ready for the provider&rsquo;s bulk-order upload.
+            People who left are never listed.
           </DialogDescription>
         </DialogHeader>
 
@@ -949,22 +1415,16 @@ function BulkOrderDialog({
 
         {pending && all.length === 0 && (
           <p className="text-sm text-silver">
-            Nobody is due — every associate has a result inside the 60-day
-            window or an order already in flight.
+            Nobody is due — everyone current, starting soon or paused has a
+            result inside the 60-day window, a test out, or one awaiting review.
           </p>
         )}
 
         {pending && all.length > 0 && (
           <div className="space-y-3">
             <fieldset className="space-y-2">
-              <legend className="sr-only">Employment groups to include</legend>
-              {(
-                [
-                  { key: 'ACTIVE', label: 'Active', hint: 'currently working' },
-                  { key: 'PENDING', label: 'Onboarding', hint: 'application in flight' },
-                  { key: 'INACTIVE', label: 'Inactive', hint: 'ended, declined, or never applied' },
-                ] as const
-              ).map(({ key, label, hint }) => (
+              <legend className="sr-only">Groups to include</legend>
+              {ROSTER_GROUPS.map(({ key, hint }) => (
                 <label
                   key={key}
                   className={cn(
@@ -979,7 +1439,7 @@ function BulkOrderDialog({
                     disabled={countOf(key) === 0}
                     className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
                   />
-                  <span className="text-white">{label}</span>
+                  <span className="text-white">{COMPLIANCE_WORKFORCE_LABELS[key]}</span>
                   <span className="text-xs text-silver/70">{hint}</span>
                   <span className="ml-auto tabular-nums text-silver">{countOf(key)}</span>
                 </label>
@@ -988,7 +1448,7 @@ function BulkOrderDialog({
 
             <p className="text-sm text-silver">
               <span className="font-semibold text-white tabular-nums">{rows.length}</span>{' '}
-              associate{rows.length === 1 ? '' : 's'} selected
+              {rows.length === 1 ? 'person' : 'people'} selected
               {rows.length > 0 && (
                 <span className="text-silver/70">
                   {' '}
@@ -998,7 +1458,7 @@ function BulkOrderDialog({
               {pending.truncated && (
                 <span className="text-warning">
                   {' '}
-                  — list capped at 500; run again after this batch to catch the rest
+                  — list capped at 5,000; run again after this batch to catch the rest
                 </span>
               )}
               .
@@ -1012,6 +1472,12 @@ function BulkOrderDialog({
                 {rows.length > 6 ? ` · +${rows.length - 6} more` : ''}
               </p>
             )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ReasonSelect value={reason} onChange={setReason} />
+              <Field label="Provider">
+                <Input placeholder="e.g. eScreen, Quest" maxLength={80} value={provider} onChange={(e) => setProvider(e.target.value)} />
+              </Field>
+            </div>
             {downloaded && (
               <p className="text-xs text-gold">
                 CSV downloaded. Once it&rsquo;s been uploaded to the provider,
@@ -1043,11 +1509,13 @@ function BulkOrderDialog({
             type="button"
             onClick={() => void markOrdered()}
             loading={busy}
-            disabled={!downloaded || rows.length === 0 || busy}
+            disabled={!downloaded || rows.length === 0 || busy || !reason}
             title={
-              downloaded
-                ? 'Click after the CSV has been uploaded to the provider'
-                : 'Download the CSV first'
+              !downloaded
+                ? 'Download the CSV first'
+                : !reason
+                  ? 'Choose why these tests were ordered'
+                  : 'Click after the CSV has been uploaded to the provider'
             }
           >
             Mark {rows.length > 0 ? rows.length : ''} ordered
@@ -1084,41 +1552,58 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 
 function OrderTestDialog({
   open,
+  initialAssociate = null,
   onOpenChange,
   onCreated,
   onError,
 }: {
   open: boolean;
+  /** Opens on this person (a never-tested row, a link to someone with no test). */
+  initialAssociate?: PickedAssociate | null;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
   onError: (msg: string) => void;
 }) {
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
+  const [provider, setProvider] = useState('');
+  const [reason, setReason] = useState<DrugTestReason | ''>('');
   const [externalId, setExternalId] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setAssociate(null);
+      setAssociate(initialAssociate);
+      setProvider('');
+      setReason('');
       setExternalId('');
     }
+    // Only on opening: the person picked inside the dialog stays theirs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!associate || busy) return;
+    if (!associate || !reason || busy) return;
     setBusy(true);
     try {
       const ref = externalId.trim();
       // One person's order through the same record the bulk CSV order makes
-      // (the old single "order" was a stub). Someone with an order still
-      // open isn't ordered twice.
+      // (the old single "order" was a stub). Someone with a test still out
+      // or awaiting review isn't ordered twice. The provider is who runs it
+      // ('manual' when not said — it used to say 'checkr' whatever the truth).
       const r = await bulkInitiateDrugTests({
         associateIds: [associate.id],
-        provider: 'checkr',
+        provider: provider.trim() || 'manual',
+        reason,
         ...(ref ? { externalId: ref } : {}),
       });
-      if (r.created === 0) toast.message(`${associate.name} already has a drug test in progress. Open it in the list.`);
+      if (r.created === 0) {
+        toast.message(
+          reason === 'RETURN_TO_DUTY' || reason === 'FOLLOW_UP'
+            ? `${associate.name} already has a drug test out or awaiting review. Open it in the list.`
+            : `${associate.name} has a drug test out, awaiting review, or failed — decide that one first. Open it in the list.`,
+        );
+      }
       onCreated();
     } catch (err) {
       onError(err instanceof ApiError ? err.message : 'Order failed.');
@@ -1145,9 +1630,18 @@ function OrderTestDialog({
               placeholder="Search by name…"
             />
           </Field>
+          <ReasonSelect value={reason} onChange={setReason} />
+          <Field label="Provider (optional)" hint="The lab or screening company that runs it. A consumer reporting agency such as Checkr means the FCRA notices apply before failing anyone.">
+            <Input
+              placeholder="e.g. eScreen, Quest, Checkr"
+              maxLength={80}
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+            />
+          </Field>
           <Field label="Provider reference / external ID (optional)">
             <Input
-              placeholder="e.g. Checkr screening id"
+              placeholder="e.g. eScreen order number"
               maxLength={120}
               value={externalId}
               onChange={(e) => setExternalId(e.target.value)}
@@ -1165,7 +1659,7 @@ function OrderTestDialog({
             <Button
               type="submit"
               loading={busy}
-              disabled={busy || !associate}
+              disabled={busy || !associate || !reason}
             >
               Order test
             </Button>

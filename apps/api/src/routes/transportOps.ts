@@ -47,6 +47,7 @@ import {
   vanDayKey,
   vanDayPreTrips,
 } from '../lib/transportDrivers.js';
+import { assertAuthorizedToWork } from '../lib/workAuthorization.js';
 
 /**
  * Transportation, the driver and fleet pack — mounted beside routes/transport
@@ -1211,6 +1212,9 @@ transportOpsRouter.post('/driver-shifts', MANAGE, async (req, res) => {
   }
   const settings = await hosSettings();
   await assertShiftWithinHos(driver.associateId, startsAt, endsAt, settings);
+  // Cleared to work (owner, 2026-11-03): a driver is scheduled like anyone
+  // else — never on a day after their work authorization or J-1 program ended.
+  await assertAuthorizedToWork(prisma, { id: driver.associateId }, { startsAt, endsAt }, { actorUserId: req.user!.id, via: 'driver_shift', clientId: null, canOverride: can(req.user!, 'manage:compliance') });
   const shift = await prisma.shift.create({
     data: {
       clientId: null,

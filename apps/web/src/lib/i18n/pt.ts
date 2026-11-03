@@ -2498,6 +2498,7 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'sched.pickupConfirmNote': 'Seu gestor confirma as solicitações antes de serem definitivas.',
   'sched.pickupConfirmTitle': 'Solicitar este turno?',
   'sched.pickupFailed': 'Não foi possível solicitar este turno.',
+  'sched.pickupNotCleared': 'Você não pode pegar turnos depois que sua autorização de trabalho ou seu programa J-1 terminar. Fale com o RH.',
   'sched.pickupToast': 'Turno solicitado — seu gestor vai confirmar.',
   'sched.refresh': 'Atualizar',
   'sched.startsIn': 'Começa em {time}',

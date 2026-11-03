@@ -44,7 +44,7 @@ const STAGE: Record<string, string> = {
   expired: 'Invitation expired',
 };
 
-export function BackgroundProviderPanel({ checkId, personName, canManage, onCleared, onChanged }: { checkId: string; personName: string; canManage: boolean; onCleared: () => void; onChanged: () => void }) {
+export function BackgroundProviderPanel({ checkId, personName, canManage, onCleared, onChanged }: { checkId: string; personName: string; canManage: boolean; onCleared: () => void | Promise<void>; onChanged: () => void }) {
   const qc = useQueryClient();
   const confirm = useSafeConfirm();
   const summary = useQuery({ queryKey: ['providers', 'summary'], queryFn: providerSummary, staleTime: 60_000 });
@@ -139,7 +139,17 @@ export function BackgroundProviderPanel({ checkId, personName, canManage, onClea
                     Read the report, then decide. To decide against {personName}, the law asks for two notices: a pre-adverse notice with the report and a summary of their rights, a waiting period for them to respond, and then the final notice.
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="secondary" onClick={onCleared} disabled={busy}>
+                    {/* Clearing them is recorded as the decision (2026-11-03): the check leaves the
+                        adverse-action worklist, and the panel reads the check again to say so. */}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={async () => {
+                        await onCleared();
+                        void view.refetch();
+                      }}
+                      disabled={busy}
+                    >
                       Clear to work
                     </Button>
                     <Button

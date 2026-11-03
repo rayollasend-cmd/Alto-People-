@@ -29,10 +29,12 @@ async function inbox(): Promise<Source[]> {
 const find = (s: Source[], key: string) => s.find((x) => x.key === key);
 const query = (path: string) => new URLSearchParams(path.split('?')[1] ?? '');
 
+/** Hired (an approved application): the current workforce, which the E-Verify and I-9 rows count (owner, 2026-11-03). */
 async function hire(name: string) {
   const client = await createClient();
   const a = await createAssociate({ firstName: name, lastName: 'Person' });
-  await createApplicationWithChecklist({ associateId: a.id, clientId: client.id });
+  const app = await createApplicationWithChecklist({ associateId: a.id, clientId: client.id });
+  await prisma.application.update({ where: { id: app.id }, data: { status: 'APPROVED', approvedAt: new Date() } });
   return a;
 }
 
@@ -45,12 +47,13 @@ describe('Inbox links carry the filter their count uses', () => {
     expect(query(one.path).get('tab')).toBe('everify');
     expect(query(one.path).get('status')).toBe('issue');
     expect(query(one.path).get('associateId')).toBe(maria.id);
+    expect(query(one.path).get('workforce')).toBe('current');
 
     const jo = await hire('Jo');
     await prisma.i9Verification.create({ data: { associateId: jo.id, eVerifyStatus: 'TENTATIVE_NONCONFIRMATION', eVerifyCaseNumber: 'C-2' } });
     const two = find(await inbox(), 'everify-mismatches')!;
     expect(two.count).toBe(2);
-    expect(two.path).toBe('/compliance?tab=everify&status=issue');
+    expect(two.path).toBe('/compliance?tab=everify&status=issue&workforce=current');
   });
 
   it('E-Verify cases to open: filtered to “not yet run”', async () => {
@@ -59,11 +62,12 @@ describe('Inbox links carry the filter their count uses', () => {
     const s = find(await inbox(), 'everify')!;
     expect(s.count).toBe(1);
     expect(query(s.path).get('status')).toBe('not_run');
+    expect(query(s.path).get('workforce')).toBe('current');
   });
 
   it('I-9 reverification: the I-9 list’s work-authorization filter', async () => {
     const a = await createAssociate({ firstName: 'Oli', lastName: 'Visa' });
-    await prisma.i9Verification.create({ data: { associateId: a.id, workAuthExpiresAt: new Date(Date.now() + 20 * 86_400_000) } });
+    await prisma.i9Verification.create({ data: { associateId: a.id, citizenshipStatus: 'ALIEN_AUTHORIZED_TO_WORK', workAuthExpiresAt: new Date(Date.now() + 20 * 86_400_000) } });
     const s = find(await inbox(), 'i9-reverification')!;
     expect(s.count).toBe(1);
     expect(query(s.path).get('tab')).toBe('i9');

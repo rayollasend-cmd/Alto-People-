@@ -190,6 +190,12 @@ const EnvSchema = z.object({
   DORMANCY_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
   DORMANCY_DEACTIVATE_DAYS: z.coerce.number().int().min(0).default(30),
   DORMANCY_WARN_DAYS: z.coerce.number().int().min(1).default(7),
+  // Paused over 120 days becomes a separation (lib/pausedSeparation.ts;
+  // owner, 2026-11-03): HR gets one heads-up at 110 days paused, then the
+  // separation is completed the way a person would. The day counts are
+  // the owner's rule, in code; this is only how often it looks. Daily by
+  // default; 0 turns the rule off.
+  PAUSED_SEPARATION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Store-ops evening digest (lib/opsDigest.ts): summarizes each store's
   // ops shifts once per org-day after 8pm. On by default (hourly scan).
   // Set 0 to disable.

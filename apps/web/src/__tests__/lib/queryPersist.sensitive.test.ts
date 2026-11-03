@@ -37,6 +37,8 @@ describe('isSensitiveQueryKey', () => {
     [['Section2Verifier', 'docs', 'app-1']],
     [['J1DocsTask', 'docs', 'app-1']],
     [['J1Tab', 'profiles']],
+    // Cleared to work (2026-11-03): whose work authorization or J-1 program ended.
+    [['compliance', 'clearedToWork', 'current']],
     [['BackgroundTab', 'checks']],
     [['BulkOrderDialog', 'pending']],
     [['DrugTestTab', 'tests']],

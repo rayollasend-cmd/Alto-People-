@@ -773,7 +773,12 @@ function OpenShiftsSection({ estRate, quietWhenEmpty = false }: { estRate: numbe
       toast.success(t('sched.pickupToast'));
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : t('sched.pickupFailed'),
+        // Cleared to work: the server's sentence is written for HR; say it to the person.
+        err instanceof ApiError && err.code === 'not_authorized_to_work'
+          ? t('sched.pickupNotCleared')
+          : err instanceof ApiError
+            ? err.message
+            : t('sched.pickupFailed'),
       );
     } finally {
       setBusyId(null);

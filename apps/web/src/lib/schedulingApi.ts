@@ -219,9 +219,11 @@ export function listOpenShiftClaims(): Promise<AdminOpenShiftClaimListResponse> 
   return apiFetch<AdminOpenShiftClaimListResponse>('/scheduling/open-shift-claims');
 }
 
-export function approveOpenShiftClaim(id: string): Promise<{ ok: boolean }> {
+export function approveOpenShiftClaim(id: string, body: { overrideWorkAuthorization?: { reason: string } } = {}): Promise<{ ok: boolean }> {
   return apiFetch<{ ok: boolean }>(`/scheduling/open-shift-claims/${id}/approve`, {
     method: 'POST',
+    // "Approve anyway" past a work-authorization block (HR only, audited).
+    ...(body.overrideWorkAuthorization ? { body } : {}),
   });
 }
 

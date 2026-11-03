@@ -101,10 +101,12 @@ export const updateClaim = (
   claimId: string,
   status: 'APPROVED' | 'REJECTED' | 'WITHDRAWN',
   decisionNote?: string | null,
+  /** "Approve anyway" past a work-authorization block (HR only, audited). */
+  overrideWorkAuthorization?: { reason: string },
 ) =>
   apiFetch<{ ok: true }>(`/shifts/${shiftId}/claims/${claimId}`, {
     method: 'PUT',
-    body: { status, decisionNote },
+    body: { status, decisionNote, ...(overrideWorkAuthorization ? { overrideWorkAuthorization } : {}) },
   });
 export const listPendingClaims = () =>
   apiFetch<{ claims: PendingClaim[] }>('/shifts/claims/pending');

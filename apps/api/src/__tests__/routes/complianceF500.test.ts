@@ -66,7 +66,9 @@ describe('GET /compliance/i9 — the scorecard’s population', () => {
     await prisma.i9Verification.create({ data: { associateId: onboarding.id, section1CompletedAt: at, section2CompletedAt: at } });
 
     const a = await hr();
-    const res = await a.get('/compliance/i9');
+    // Everyone on file: Maria is onboarding ("Starting soon"), outside the
+    // list's default group (the current workforce).
+    const res = await a.get('/compliance/i9?workforce=all');
     expect(res.status).toBe(200);
     const byId = new Map(res.body.i9s.map((r: { associateId: string; placed?: boolean }) => [r.associateId, r.placed]));
     expect(byId.get(done.id)).toBe(true);

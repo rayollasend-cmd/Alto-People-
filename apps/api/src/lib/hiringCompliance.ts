@@ -1,6 +1,8 @@
 import type { Prisma } from '@prisma/client';
-import type { EeoApplicantReport } from '@alto-people/shared';
+import type { EeoApplicantReport, WorkforceGroup } from '@alto-people/shared';
 import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
+import { isBusinessDay } from './payrollTaxCalendar.js';
 
 /**
  * Hiring compliance (2026-10-21 system audit, Tier 1 #14): the pure parts
@@ -38,24 +40,58 @@ function addYearsUtc(d: Date, years: number): Date {
 
 /* ----- I-9 ---------------------------------------------------------------- */
 
+/** A day as UTC midnight: a 'YYYY-MM-DD', or a @db.Date value as it is. */
+function asDay(d: Date | string): Date {
+  return typeof d === 'string' ? new Date(`${d.slice(0, 10)}T00:00:00.000Z`) : d;
+}
+
+/**
+ * The day employment ended, for retention (owner, 2026-11-03): the
+ * completed separation's last day worked (a date column); else the day the
+ * person was separated (an instant, read as the company's day). Null while
+ * they still work here.
+ */
+export function i9TerminationDay(lastDayWorked: Date | null | undefined, separatedAt: Date | null | undefined): string | null {
+  if (lastDayWorked) return dateColumnKey(lastDayWorked);
+  if (separatedAt) return ymd(separatedAt);
+  return null;
+}
+
 /**
  * Keep the I-9 until the later of three years from the hire date and one
- * year from the separation date. Null until the person has a hire date; an
- * employee still working has no end date, so the three-year mark stands
- * until they leave (and then moves if a year after leaving is later).
+ * year from the day employment ended. Null until the person has a hire
+ * date; an employee still working has no end date, so the three-year mark
+ * stands until they leave (and then moves if a year after leaving is later).
+ * `ended` is a day ('YYYY-MM-DD', i9TerminationDay) or an instant (read as
+ * the company's day).
  */
-export function i9RetainUntil(hireDate: Date | null | undefined, separatedAt: Date | null | undefined): Date | null {
+export function i9RetainUntil(hireDate: Date | string | null | undefined, ended: Date | string | null | undefined): Date | null {
   if (!hireDate) return null;
-  const threeYears = addYearsUtc(hireDate, 3);
-  if (!separatedAt) return threeYears;
-  const sep = new Date(`${ymd(separatedAt)}T00:00:00.000Z`);
-  const oneYear = addYearsUtc(sep, 1);
+  const threeYears = addYearsUtc(asDay(hireDate), 3);
+  if (!ended) return threeYears;
+  const end = typeof ended === 'string' ? asDay(ended) : new Date(`${ymd(ended)}T00:00:00.000Z`);
+  const oneYear = addYearsUtc(end, 1);
   return oneYear.getTime() > threeYears.getTime() ? oneYear : threeYears;
 }
 
-/** Reverification is due the day the work authorization expires; null when it never does. */
-export function i9ReverifyDueAt(workAuthExpiresAt: Date | null | undefined): Date | null {
-  return workAuthExpiresAt ? new Date(workAuthExpiresAt.getTime()) : null;
+/** Past retention: the person left and the retain-until day is behind us. One rule for the list's rows and the Inbox count. */
+export function i9PastRetention(retainUntil: Date | null, ended: string | null, now: Date = new Date()): boolean {
+  return !!retainUntil && !!ended && retainUntil.getTime() < todayUtc(now).getTime();
+}
+
+/**
+ * The one Section 1 status that ever re-verifies (owner, 2026-11-03; 8 CFR
+ * 274a.2(b)(1)(vii)): an alien authorized to work until a date. Citizens,
+ * noncitizen nationals and permanent residents never do — a green card's
+ * expiry is not a re-verification trigger, and asking for a new one is
+ * over-documentation.
+ */
+export const REVERIFYING_CITIZENSHIP = 'ALIEN_AUTHORIZED_TO_WORK' as const;
+
+/** Reverification is due the day the work authorization expires; null when it never does, or the person never re-verifies. */
+export function i9ReverifyDueAt(workAuthExpiresAt: Date | null | undefined, citizenshipStatus: string | null | undefined): Date | null {
+  if (citizenshipStatus !== REVERIFYING_CITIZENSHIP || !workAuthExpiresAt) return null;
+  return new Date(workAuthExpiresAt.getTime());
 }
 
 /** Today as a date-only UTC midnight. */
@@ -66,29 +102,72 @@ export function todayUtc(now: Date = new Date()): Date {
 /** How far ahead a work-authorization expiry counts as reverification due. */
 export const REVERIFY_WINDOW_DAYS = 90;
 
+/** The groups that re-verify: still employed (Current or Paused). Starting soon hasn't started; Former has left. */
+export const REVERIFYING_GROUPS: readonly WorkforceGroup[] = ['current', 'paused'];
+
 /**
- * The I-9s whose reverification is due: work authorization expired or
- * expiring within REVERIFY_WINDOW_DAYS, for people still working. One
- * predicate for the I-9 list's `?status=reverification` and the Inbox count.
+ * Is this I-9's reverification due — the row's flag on the I-9 list? The
+ * same rule as i9ReverificationWhere: an alien authorized to work, the
+ * authorization expired or ending within REVERIFY_WINDOW_DAYS, and the
+ * person still employed (`group` current or paused).
  */
-export function i9ReverificationWhere(now: Date = new Date()): Prisma.I9VerificationWhereInput {
+export function i9ReverificationDue(
+  i9: { citizenshipStatus: string | null | undefined; workAuthExpiresAt: Date | null | undefined },
+  group: WorkforceGroup | null,
+  now: Date = new Date(),
+): boolean {
+  const due = i9ReverifyDueAt(i9.workAuthExpiresAt, i9.citizenshipStatus);
+  if (!due || !group || !REVERIFYING_GROUPS.includes(group)) return false;
+  return due.getTime() <= todayUtc(now).getTime() + REVERIFY_WINDOW_DAYS * DAY_MS;
+}
+
+/**
+ * The I-9s whose reverification is due: an alien authorized to work whose
+ * authorization expired or expires within REVERIFY_WINDOW_DAYS, and who has
+ * not left. One predicate for the I-9 list's `?status=reverification` and
+ * the Inbox count; pass the group's ids (lib/complianceWorkforce idsOf) to
+ * narrow it to Current (the Inbox) or Current + Paused (the rule).
+ */
+export function i9ReverificationWhere(now: Date = new Date(), opts: { associateIds?: string[] } = {}): Prisma.I9VerificationWhereInput {
   return {
+    citizenshipStatus: REVERIFYING_CITIZENSHIP,
     workAuthExpiresAt: { not: null, lte: new Date(todayUtc(now).getTime() + REVERIFY_WINDOW_DAYS * DAY_MS) },
-    associate: { separatedAt: null, deactivatedAt: null },
+    associate: { separatedAt: null, erasedAt: null, deletedAt: null },
+    ...(opts.associateIds ? { associateId: { in: opts.associateIds } } : {}),
   };
 }
 
 /**
- * The I-9s past retention: the person left, and both the three-years-from-
- * hire and the one-year-from-separation marks are behind us
- * (i9RetainUntil < today). One predicate for the list and the Inbox count.
+ * The I-9s that may be past retention — the database's half of the rule:
+ * the person left, hired (the newest employment's start, else
+ * Associate.hireDate — lib/hireDate) three years ago or more, and their
+ * employment ended (the latest completed separation's last day worked,
+ * else separatedAt) a year ago or more. A day of slack on each mark keeps
+ * the leap-day edge inside; callers keep a row only when
+ * i9PastRetention(i9RetainUntil(...)) says so, so the list and the Inbox
+ * count the same people.
  */
 export function i9RetentionWhere(now: Date = new Date()): Prisma.I9VerificationWhereInput {
   const today = todayUtc(now);
+  const hiredBefore = new Date(addYearsUtc(today, -3).getTime() + DAY_MS);
+  const endedBefore = new Date(addYearsUtc(today, -1).getTime() + DAY_MS);
   return {
     associate: {
-      hireDate: { not: null, lt: addYearsUtc(today, -3) },
-      separatedAt: { not: null, lt: addYearsUtc(today, -1) },
+      AND: [
+        { separatedAt: { not: null } },
+        {
+          OR: [
+            { employments: { some: {}, none: { hireDate: { gte: hiredBefore } } } },
+            { employments: { none: {} }, hireDate: { not: null, lt: hiredBefore } },
+          ],
+        },
+        {
+          OR: [
+            { separations: { some: { status: 'COMPLETE' }, none: { status: 'COMPLETE', lastDayWorked: { gte: endedBefore } } } },
+            { separations: { none: { status: 'COMPLETE' } }, separatedAt: { lt: endedBefore } },
+          ],
+        },
+      ],
     },
   };
 }
@@ -97,6 +176,157 @@ export function i9RetentionWhere(now: Date = new Date()): Prisma.I9VerificationW
 export function daysUntil(deadline: Date, today: Date = new Date()): number {
   const t = new Date(`${ymd(today)}T00:00:00.000Z`).getTime();
   return Math.round((deadline.getTime() - t) / DAY_MS);
+}
+
+/* ----- I-9 Section 2 and E-Verify deadlines -------------------------------- */
+
+/**
+ * `days` business days after a day (UTC dates): weekends and federal
+ * holidays skipped (lib/payrollTaxCalendar), so a deadline never lands on a
+ * day the government is closed.
+ */
+export function addFederalBusinessDays(start: Date | string, days: number): Date {
+  const s = asDay(start);
+  const d = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), s.getUTCDate()));
+  let added = 0;
+  while (added < days) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (isBusinessDay(d)) added += 1;
+  }
+  return d;
+}
+
+/** Section 2 and the E-Verify case are both due by the 3rd business day after the first day of employment. */
+export const FIRST_DAY_DEADLINE_BUSINESS_DAYS = 3;
+
+/** Section 2 due: the 3rd business day after the first day of employment (the one hire date, lib/hireDate). */
+export function section2DueBy(firstDay: Date | string | null | undefined): Date | null {
+  return firstDay ? addFederalBusinessDays(firstDay, FIRST_DAY_DEADLINE_BUSINESS_DAYS) : null;
+}
+
+/**
+ * The E-Verify case's due day (owner, 2026-11-03): the deadline the
+ * connected provider stored when the case was made for this employment
+ * (eVerifyDueBy), else the 3rd business day after the first day of
+ * employment. A stored day before this employment's first day belongs to an
+ * earlier one, and is ignored.
+ */
+export function eVerifyDueBy(firstDay: Date | string | null | undefined, stored: Date | null | undefined): Date | null {
+  if (stored && (!firstDay || stored.getTime() >= asDay(firstDay).getTime())) return stored;
+  return section2DueBy(firstDay);
+}
+
+/**
+ * Overdue: no case at all for this employment, and the due day is behind
+ * the company's today. A case on file — opened, numbered or with an outcome
+ * — is never overdue (an Authorized case with no opened date read Overdue).
+ */
+export function eVerifyOverdue(dueBy: Date | null, hasCase: boolean, now: Date = new Date()): boolean {
+  return !hasCase && !!dueBy && dueBy.getTime() < todayUtc(now).getTime();
+}
+
+/**
+ * A case still open in E-Verify: waiting for a result, a mismatch, or
+ * referred, and not closed. For someone who has left, it must be closed
+ * there with "employee no longer employed".
+ */
+export function eVerifyCaseOpen(i9: {
+  eVerifyStatus: string | null;
+  eVerifyClosedAt: Date | null;
+  eVerifyReferredAt?: Date | null;
+}): boolean {
+  if (i9.eVerifyClosedAt) return false;
+  return i9.eVerifyStatus === 'PENDING' || i9.eVerifyStatus === 'TENTATIVE_NONCONFIRMATION' || !!i9.eVerifyReferredAt;
+}
+
+/**
+ * A rehire's case that belongs to an earlier employment (owner,
+ * 2026-11-03): the person has a spell that ended before this one began, and
+ * the case was opened on or before that spell's last day. This employment
+ * needs a case of its own. A first hire's case opened a few days before
+ * their start is theirs (no earlier spell), and so is one opened between
+ * the spells.
+ */
+export function caseFromEarlierEmployment(
+  caseOpenedAt: Date | string | null | undefined,
+  currentHire: string | null | undefined,
+  spells: ReadonlyArray<{ hireDate: Date; endDate: Date | null }>,
+): boolean {
+  if (!caseOpenedAt || !currentHire) return false;
+  let prevEnd: string | null = null;
+  for (const s of spells) {
+    if (!s.endDate) continue;
+    const end = dateColumnKey(s.endDate);
+    if (end < currentHire && (!prevEnd || end > prevEnd)) prevEnd = end;
+  }
+  // An instant is read as the company's day; a 'YYYY-MM-DD' is already one.
+  const opened = typeof caseOpenedAt === 'string' ? caseOpenedAt.slice(0, 10) : ymd(caseOpenedAt);
+  return !!prevEnd && opened <= prevEnd;
+}
+
+/* ----- I-9 Supplement B: rehire ------------------------------------------- */
+
+/** A rehire may reuse the original I-9 within this many years of its completion (8 CFR 274a.2(c)(1)(i)). */
+export const REHIRE_REUSE_YEARS = 3;
+
+/** The last day a rehire may reuse an I-9 completed (Section 2) on `originalSection2On`. */
+export function rehireReuseEnds(originalSection2On: string): string {
+  return dateColumnKey(addYearsUtc(asDay(originalSection2On), REHIRE_REUSE_YEARS));
+}
+
+/**
+ * Does a REHIRE Supplement B belong to the employment that began on
+ * `currentHire`? Its rehire date is on or after that first day, or it was
+ * recorded within the employment's first three business days (a rehire
+ * date typed as the offer's day). A late entry for an older rehire never
+ * covers a newer employment.
+ */
+export function rehireCoversEmployment(r: { rehiredOn: string; reviewedOn: string }, currentHire: string | null | undefined): boolean {
+  if (!currentHire) return false;
+  if (r.rehiredOn >= currentHire) return true;
+  const third = section2DueBy(currentHire);
+  return r.reviewedOn >= currentHire && !!third && r.reviewedOn <= dateColumnKey(third);
+}
+
+/**
+ * A rehire exempt from a new E-Verify case (owner, 2026-11-03): the earlier
+ * I-9 was reused through a REHIRE Supplement B for this employment, and the
+ * case on file — from the earlier employment — ended Employment Authorized.
+ * No case, a nonconfirmation, or a case closed without authorization means
+ * this employment still needs a case of its own.
+ */
+export function earlierI9Reused(
+  earlierCaseStatus: string | null | undefined,
+  rehires: ReadonlyArray<{ rehiredOn: string; reviewedOn: string }>,
+  currentHire: string | null | undefined,
+): boolean {
+  return earlierCaseStatus === 'EMPLOYMENT_AUTHORIZED' && rehires.some((r) => rehireCoversEmployment(r, currentHire));
+}
+
+/* ----- I-9 needs review --------------------------------------------------- */
+
+/**
+ * Needs review (owner, 2026-11-03): an older I-9 with a work-authorization
+ * end date but no Section 1 citizenship status. Nobody can tell whether the
+ * date is a re-verification deadline (an alien authorized to work) or a
+ * green card's expiry (never one), so HR checks the paper Section 1. For
+ * people still employed (Current or Paused); a warning, never a block.
+ */
+export function i9NeedsReview(
+  i9: { citizenshipStatus: string | null | undefined; workAuthExpiresAt: Date | null | undefined },
+  group: WorkforceGroup | null,
+): boolean {
+  return !i9.citizenshipStatus && !!i9.workAuthExpiresAt && !!group && REVERIFYING_GROUPS.includes(group);
+}
+
+/** The I-9s that need review — the I-9 list's `?status=needs_review` and the Inbox count; narrow to a group with its ids. */
+export function i9NeedsReviewWhere(opts: { associateIds?: string[] } = {}): Prisma.I9VerificationWhereInput {
+  return {
+    citizenshipStatus: null,
+    workAuthExpiresAt: { not: null },
+    associate: { separatedAt: null, erasedAt: null, deletedAt: null },
+    ...(opts.associateIds ? { associateId: { in: opts.associateIds } } : {}),
+  };
 }
 
 /* ----- FCRA --------------------------------------------------------------- */

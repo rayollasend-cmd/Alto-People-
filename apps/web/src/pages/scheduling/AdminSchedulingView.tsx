@@ -121,6 +121,7 @@ import { useI18n } from '@/lib/i18n';
 import { useStoreScope } from '@/lib/storeScope';
 import { boundedClientOf, hasCapability, isClientBoundedRole } from '@/lib/roles';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
+import { askWorkAuthOverride, bulkSkipReasonWords, isNotAuthorizedToWork, useWorkAuthAsk, type WorkAuthAsk } from './workAuthorizationBlock';
 import { Button } from '@/components/ui/Button';
 import { DateRangeField } from '@/components/ui/DateField';
 import { Badge } from '@/components/ui/Badge';
@@ -623,6 +624,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const clientsOn = moduleOn('clientPortal');
   const confirm = useConfirm();
   const { user, can } = useAuth();
+  // Cleared to work: HR may assign past a work-authorization block with a reason.
+  const workAuthAsk = useWorkAuthAsk();
   // Client-scoped ROLES (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Pin every client control to their one bound client
   // instead of fetching, so the Location → Team cascade still unlocks.
@@ -2647,6 +2650,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                     confirm,
                     patch.assignedAssociateName ?? `This ${term('worker').toLowerCase()}`,
                     reasonBody,
+                    workAuthAsk,
                   );
                   if (!ok) {
                     if (timesWritten) {
@@ -2692,7 +2696,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         commitFailedMessage: 'Move failed.',
       });
     },
-    [refresh, gridTimeZone, associates, patchShift, replaceShift, confirm, term, askChangeReason]
+    [refresh, gridTimeZone, associates, patchShift, replaceShift, confirm, term, askChangeReason, workAuthAsk]
   );
 
   const onAutoFill = async (id: string) => {
@@ -2717,6 +2721,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         associateId,
         confirm,
         `This ${term('worker').toLowerCase()}`,
+        {},
+        workAuthAsk,
       );
       if (assigned) {
         setAutoFillForShift(null);
@@ -2760,6 +2766,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         c.associateId,
         confirm,
         c.associateName,
+        {},
+        workAuthAsk,
       );
       if (assigned) {
         toast.success(`Assigned to ${c.associateName}.`);
@@ -2857,7 +2865,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             return a ? `${a.firstName} ${a.lastName}` : `This ${term('worker').toLowerCase()}`;
           })()
         : '';
-      const r = await copyShiftToCell(s, target, confirm, who);
+      const r = await copyShiftToCell(s, target, confirm, who, workAuthAsk);
       if (r === 'declined') toast.warning('Copied as an open shift — the assignment was not made.');
       else toast.success(target.associateId ? `Copied to ${who}.` : 'Copied as an open shift.');
       await refresh();
@@ -4731,6 +4739,7 @@ export function AssignDialog({
   const [picked, setPicked] = useState<AssociateLite | null>(null);
   const [query, setQuery] = useState('');
   const confirmOverride = useConfirm();
+  const workAuthAsk = useWorkAuthAsk();
   // Predictability pay: assigning someone to a published shift inside the
   // notice window is a schedule change for them (audit #9).
   const [changeReason, setChangeReason] = useState<ChangeReason | ''>('');
@@ -4844,6 +4853,7 @@ export function AssignDialog({
         confirmOverride,
         `${picked.firstName} ${picked.lastName}`,
         changeReason ? { changeReason } : {},
+        workAuthAsk,
       );
       if (assigned) {
         if (mode === 'next') {
@@ -5435,6 +5445,7 @@ export async function copyShiftToCell(
   target: { associateId: string | null; dayStart: Date },
   confirm: (opts: ConfirmOptions) => Promise<boolean>,
   who = 'This associate',
+  workAuth?: WorkAuthAsk,
 ): Promise<'copied' | 'declined'> {
   const times = shiftTimesOnDay(s, ymd(target.dayStart), s.timezone || null);
   const made = await createShift({
@@ -5449,7 +5460,7 @@ export async function copyShiftToCell(
     ...(s.notes ? { notes: s.notes } : {}),
   });
   if (!target.associateId) return 'copied';
-  const ok = await assignWithOverridePrompt(made.id, target.associateId, confirm, who);
+  const ok = await assignWithOverridePrompt(made.id, target.associateId, confirm, who, {}, workAuth);
   return ok ? 'copied' : 'declined';
 }
 
@@ -5459,15 +5470,27 @@ async function assignWithOverridePrompt(
   confirm: (opts: ConfirmOptions) => Promise<boolean>,
   who = 'This associate',
   extra: { changeReason?: ChangeReason } = {},
+  /** Cleared to work: HR's "Assign anyway" with a reason. Without it the server's "Ask HR" message is thrown. */
+  workAuth?: WorkAuthAsk,
 ): Promise<boolean> {
-  const overrides: { overrideUnavailability?: boolean; overrideRestGap?: boolean } = {};
-  // Both soft blocks can apply to one assignment; each is asked at most once.
+  const overrides: { overrideUnavailability?: boolean; overrideRestGap?: boolean; overrideWorkAuthorization?: { reason: string } } = {};
+  // Every block can apply to one assignment; each is asked at most once.
   for (;;) {
     try {
       await assignShift(shiftId, { associateId, ...overrides, ...extra });
       return true;
     } catch (err) {
       if (!(err instanceof ApiError)) throw err;
+      // The HARD block (owner, 2026-11-03): not cleared to work that day.
+      // A scheduler without manage:compliance gets the server's message,
+      // which says to ask HR; HR may assign anyway with a reason.
+      if (isNotAuthorizedToWork(err) && !overrides.overrideWorkAuthorization) {
+        const answer = await askWorkAuthOverride(err, workAuth, who);
+        if (answer === 'not_allowed') throw err;
+        if (!answer) return false;
+        overrides.overrideWorkAuthorization = answer;
+        continue;
+      }
       if (err.code === 'associate_unavailable' && !overrides.overrideUnavailability) {
         const ok = await confirm({
           title: 'Assign on their day off?',
@@ -6440,7 +6463,7 @@ export function CreateShiftDialog({
               (k) =>
                 `${k.associateName}${
                   k.startsAt ? ` ${fmtWeekdayTz(k.startsAt, siteTz)}` : ''
-                } — ${k.reason}`,
+                } — ${bulkSkipReasonWords(k.reason)}`,
             ),
             ...(res.skipped.length > 5
               ? [`+ ${res.skipped.length - 5} more`]

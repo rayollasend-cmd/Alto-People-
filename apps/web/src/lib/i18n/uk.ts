@@ -2498,6 +2498,7 @@ export const uk: Partial<Record<MessageKey, string>> = {
   'sched.pickupConfirmNote': 'Ваш керівник підтверджує запити, перш ніж вони стануть остаточними.',
   'sched.pickupConfirmTitle': 'Запросити цю зміну?',
   'sched.pickupFailed': 'Не вдалося запросити цю зміну.',
+  'sched.pickupNotCleared': 'Ви не можете брати зміни після завершення дозволу на роботу або програми J-1. Зверніться до відділу кадрів.',
   'sched.pickupToast': 'Запит надіслано — ваш керівник його підтвердить.',
   'sched.refresh': 'Оновити',
   'sched.startsIn': 'Починається через {time}',

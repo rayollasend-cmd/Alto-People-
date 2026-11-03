@@ -37,6 +37,7 @@ import { countUnreadMessages } from './messages.js';
 import { QUEUE_DESK_ROLES, QUEUE_REGISTRY, staffsQueueDesk, type QueueDesk } from '@alto-people/shared';
 import { deskOf } from './relay.js';
 import { transportNeedsYou } from './transportOps.js';
+import { scheduledNotCleared } from './clearedToWork.js';
 import { countToCertify } from '../lib/accessCertification.js';
 import { expiringQualificationsWhere } from '../lib/expirationScope.js';
 import { hrCaseReach, hrDeskScope } from '../lib/hrCaseScope.js';
@@ -46,7 +47,9 @@ import { certifiedWeeksDue } from '../lib/certifiedPayroll.js';
 import { contractorsNeedingYou } from '../lib/contractors.js';
 import { payrollFundingNeedingYou } from '../lib/banking/funding.js';
 import { countMovesThisWeek, countUnassigned } from './paySchedules.js';
-import { i9ReverificationWhere, i9RetentionWhere } from '../lib/hiringCompliance.js';
+import { i9NeedsReviewWhere, i9ReverificationWhere } from '../lib/hiringCompliance.js';
+import { i9ListReach, pastRetentionCount, workforceForRequest } from '../lib/i9Records.js';
+import { currentEVerifyRoster } from './everify.js';
 import { certificationRequired } from '../lib/leaveOfAbsence.js';
 import { coverageGapLabel, coverageGapPath, coverageGapsForUser } from '../lib/coverageGaps.js';
 import { daysPastDue, portalScopeOf, serviceReportToReview, unpaidStatementsWhere, waitingCandidatesWhere } from '../lib/portalNeedsYou.js';
@@ -55,6 +58,8 @@ import { overdueContractDuties, seesContractDuties } from '../lib/contractDuties
 import { stuckWhere } from '../lib/applicationFilters.js';
 import { carrierAnswersNeedingYou } from '../lib/carrierAcks.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
+import { scopeBackgroundChecks, scopeDrugTests } from '../lib/scope.js';
+import { currentOf, inWorkforces, latestByPerson } from '../lib/screeningRecords.js';
 
 /**
  * GET /me/inbox — every decision waiting on the signed-in person, across
@@ -352,35 +357,48 @@ const SOURCES: SourceDef[] = [
         where: { AND: [scopeApplications(u), stuckWhere()] },
       }),
   },
+  // The I-9 and E-Verify rows count the CURRENT workforce and link to that
+  // group (owner, 2026-11-03: lib/complianceWorkforce), so each number is
+  // the list it opens — not everyone who ever worked here.
   {
     key: 'i9-section2',
     urgency: 'legal',
     label: 'I-9 Section 2 to complete',
-    description: 'New hires who signed Section 1 and uploaded their documents — HR has three business days from their first day to examine them.',
-    path: '/compliance?tab=i9',
+    description: 'Current employees who signed Section 1 and uploaded their documents — HR has three business days from their first day to examine them.',
+    path: '/compliance?tab=i9&status=ready&workforce=current',
     module: 'compliance',
     visible: (u) => can(u, 'manage:compliance'),
-    count: () =>
-      prisma.i9Verification.count({
+    count: async (u) => {
+      const reading = await workforceForRequest(u);
+      return prisma.i9Verification.count({
         where: {
-          tenantId: tenantIdForWrite(),
-          documentsSubmittedAt: { not: null },
-          section2CompletedAt: null,
-          associate: { deletedAt: null },
+          AND: [
+            { tenantId: tenantIdForWrite(), documentsSubmittedAt: { not: null }, section2CompletedAt: null },
+            { associateId: { in: reading.idsOf('current') ?? [] } },
+            { associate: { AND: [{ deletedAt: null }, i9ListReach(u)] } },
+          ],
         },
-      }),
+      });
+    },
   },
   // Audit 2026-10-21 #14: the same predicates the I-9 list's ?status= filters use (lib/hiringCompliance).
   {
     key: 'i9-reverification',
     urgency: 'legal',
     label: 'I-9 reverification due',
-    description: 'Work authorizations that have expired or expire within 90 days — Supplement B is due by the expiry date.',
-    path: '/compliance?tab=i9&status=work_auth',
+    description: 'Current employees authorized to work until a date that has passed or comes within 90 days — Supplement B is due by that date.',
+    path: '/compliance?tab=i9&status=work_auth&workforce=current',
     module: 'compliance',
     visible: (u) => can(u, 'manage:compliance'),
     count: async (u) => {
-      const where = { AND: [{ tenantId: tenantIdForWrite() }, i9ReverificationWhere(), { associate: scopeActiveAssociates(u) }] };
+      const reading = await workforceForRequest(u);
+      const where = {
+        AND: [
+          { tenantId: tenantIdForWrite() },
+          i9ReverificationWhere(new Date(), { associateIds: reading.idsOf('current') ?? [] }),
+          { associate: { AND: [{ deletedAt: null }, i9ListReach(u)] } },
+        ],
+      };
       const [count, first] = await Promise.all([
         prisma.i9Verification.count({ where }),
         prisma.i9Verification.findFirst({ where, orderBy: { workAuthExpiresAt: 'asc' }, select: { workAuthExpiresAt: true } }),
@@ -389,39 +407,52 @@ const SOURCES: SourceDef[] = [
     },
   },
   {
-    key: 'i9-retention',
-    label: 'I-9s past retention',
-    description: 'People who left more than a year ago and were hired more than three years ago — their I-9s may now be destroyed.',
-    path: '/compliance?tab=i9&status=retention',
+    // Owner, 2026-11-03: an older I-9 with an end date and no citizenship
+    // status can't say whether it must be re-verified — HR checks it.
+    key: 'i9-needs-review',
+    urgency: 'legal',
+    label: 'I-9s to review',
+    description: 'Citizenship status missing — check Section 1 and the expiry date. These current employees’ I-9s have a work-authorization end date but no citizenship status, so nobody can tell whether it must be re-verified.',
+    path: '/compliance?tab=i9&status=needs_review&workforce=current',
     module: 'compliance',
     visible: (u) => can(u, 'manage:compliance'),
-    count: (u) =>
-      prisma.i9Verification.count({
-        where: { AND: [{ tenantId: tenantIdForWrite() }, i9RetentionWhere(), { associate: { AND: [{ deletedAt: null }, scopeAssociatesIncludingFormer(u)] } }] },
-      }),
+    count: async (u) => {
+      const reading = await workforceForRequest(u);
+      return prisma.i9Verification.count({
+        where: {
+          AND: [
+            { tenantId: tenantIdForWrite() },
+            i9NeedsReviewWhere({ associateIds: reading.idsOf('current') ?? [] }),
+            { associate: { AND: [{ deletedAt: null }, i9ListReach(u)] } },
+          ],
+        },
+      });
+    },
+  },
+  {
+    // Retention is about people who left: this one counts the Former group.
+    key: 'i9-retention',
+    label: 'I-9s past retention',
+    description: 'People who left: three years since they were hired and a year since their last day have both passed — their I-9s may now be destroyed.',
+    path: '/compliance?tab=i9&status=retention&workforce=former',
+    module: 'compliance',
+    visible: (u) => can(u, 'manage:compliance'),
+    count: async (u) => pastRetentionCount(u, await workforceForRequest(u)),
   },
   {
     key: 'everify',
     urgency: 'legal',
     label: 'E-Verify cases to open',
-    description: 'I-9s with Section 2 done and no E-Verify case yet — the federal portal wants the case within three business days.',
-    // Role walk HR 3: the link carries the filter its count uses.
-    path: '/compliance?tab=everify&status=not_run',
+    description: 'Current employees with no E-Verify case for this job yet — the federal portal wants the case within three business days of their first day.',
+    // Role walk HR 3: the link carries the filter its count uses. The count
+    // is the roster's own "Not yet run" rows (rehires included).
+    path: '/compliance?tab=everify&status=not_run&workforce=current',
     module: 'compliance',
     visible: (u) => can(u, 'manage:compliance'),
-    count: () =>
-      prisma.i9Verification.count({
-        where: {
-          tenantId: tenantIdForWrite(),
-          section2CompletedAt: { not: null },
-          eVerifyStatus: null,
-          eVerifyCaseNumber: null,
-          associate: {
-            deletedAt: null,
-            applications: { some: { deletedAt: null, status: { notIn: ['REJECTED', 'CANCELLED'] } } },
-          },
-        },
-      }),
+    count: async (u) => {
+      const notRun = (await currentEVerifyRoster(u)).rows.filter((r) => r.status === null);
+      return { count: notRun.length, dueDate: soonestDay(...notRun.map((r) => r.dueBy)) };
+    },
   },
   // Connected providers (lib/providers): the steps their answers leave for a person.
   {
@@ -429,60 +460,100 @@ const SOURCES: SourceDef[] = [
     urgency: 'legal',
     label: 'E-Verify mismatches to act on',
     description: 'E-Verify returned a Tentative Nonconfirmation: give the employee the notice and record whether they will take action.',
-    path: '/compliance?tab=everify&status=issue',
+    path: '/compliance?tab=everify&status=issue&workforce=current',
     module: 'compliance',
     visible: (u) => can(u, 'manage:compliance'),
     // Role walk HR 3: the list opens filtered to mismatches; with exactly
     // one, straight onto that person's case.
     count: async (u) => {
-      const where = {
-        tenantId: tenantIdForWrite(),
-        eVerifyStatus: 'TENTATIVE_NONCONFIRMATION' as const,
-        eVerifyTncDecision: null,
-        associate: scopeActiveAssociates(u),
-      };
-      const [count, rows] = await Promise.all([
-        prisma.i9Verification.count({ where }),
-        prisma.i9Verification.findMany({ where, select: { associateId: true }, take: 2 }),
-      ]);
-      const path = count === 1 && rows[0] ? `/compliance?tab=everify&status=issue&associateId=${rows[0].associateId}` : '/compliance?tab=everify&status=issue';
+      const rows = (await currentEVerifyRoster(u)).rows.filter((r) => r.status === 'TENTATIVE_NONCONFIRMATION' && !r.tncDecision);
+      const count = rows.length;
+      const path =
+        count === 1 && rows[0]
+          ? `/compliance?tab=everify&status=issue&workforce=current&associateId=${rows[0].associateId}`
+          : '/compliance?tab=everify&status=issue&workforce=current';
       return { count, path };
     },
   },
+  // The screening rows count the CURRENT workforce and open their tab on that
+  // group (owner, 2026-11-03: lib/complianceWorkforce), in the list's own
+  // reach, so each number is the rows the person lands on.
   {
     key: 'screening-decisions',
     urgency: 'legal',
     label: 'Background checks to decide',
-    description: 'Reports that came back “consider”, and adverse actions whose waiting period is over.',
-    path: '/compliance?tab=background',
+    description: 'Reports about current employees and people starting soon that came back “consider”, and adverse actions whose waiting period is over.',
+    // The tab's adverse-action worklist: its "Decide" and "Final notice due"
+    // rows. Current AND Starting soon (lead, 2026-11-03): adverse action is
+    // mostly about applicants, so the worklist takes the two groups at once.
+    path: '/compliance?tab=background&workforce=current,starting',
     module: 'compliance',
     visible: (u) => can(u, 'manage:compliance'),
-    count: (u) =>
-      prisma.backgroundCheck.count({
+    count: async (u) => {
+      const rows = await prisma.backgroundCheck.findMany({
         where: {
-          tenantId: tenantIdForWrite(),
-          associate: scopeActiveAssociates(u),
-          OR: [
-            { result: 'consider', adjudication: null },
-            // Hand-recorded checks that came back for review (audit 2026-10-21 #14).
-            { status: 'NEEDS_REVIEW', adjudication: null },
-            { adjudication: 'PRE_ADVERSE', adverseWaitUntil: { lte: new Date() } },
+          AND: [
+            { tenantId: tenantIdForWrite() },
+            scopeBackgroundChecks(u),
+            {
+              OR: [
+                { result: 'consider', adjudication: null },
+                // Hand-recorded checks that came back for review (audit 2026-10-21 #14).
+                { status: 'NEEDS_REVIEW', adjudication: null },
+                { adjudication: 'PRE_ADVERSE', adverseWaitUntil: { lte: new Date() } },
+              ],
+            },
           ],
         },
-      }),
+        select: { associateId: true },
+      });
+      if (rows.length === 0) return 0;
+      const inView = await inWorkforces(tenantIdForWrite(), rows.map((r) => r.associateId), ['current', 'starting']);
+      return rows.filter((r) => inView.has(r.associateId)).length;
+    },
   },
   {
     key: 'drug-results-review',
     urgency: 'legal',
     label: 'Drug test results to review',
-    description: 'Results that are not a verified negative — a positive awaiting the Medical Review Officer, a dilute, or a cancelled test.',
-    path: '/compliance?tab=drug-tests',
+    description: 'Current employees’ results waiting on a decision — a positive awaiting the Medical Review Officer, a dilute, a cancelled test, or one recorded as needing review.',
+    // The tab is `drugtests` (`drug-tests` landed on the scorecard). It shows
+    // each person's newest test, so the count is newest tests needing review.
+    path: '/compliance?tab=drugtests&status=NEEDS_REVIEW&workforce=current',
     module: 'compliance',
     visible: (u) => can(u, 'manage:compliance'),
-    count: (u) =>
-      prisma.drugTest.count({
-        where: { tenantId: tenantIdForWrite(), status: 'NEEDS_REVIEW', resultCode: { not: null }, associate: scopeActiveAssociates(u) },
-      }),
+    count: async (u) => {
+      const reach = { AND: [{ tenantId: tenantIdForWrite() }, scopeDrugTests(u)] };
+      const flagged = await prisma.drugTest.findMany({ where: { AND: [reach, { status: 'NEEDS_REVIEW' as const }] }, select: { id: true, associateId: true } });
+      if (flagged.length === 0) return 0;
+      const current = await currentOf(tenantIdForWrite(), flagged.map((t) => t.associateId));
+      const mine = flagged.filter((t) => current.has(t.associateId));
+      if (mine.length === 0) return 0;
+      const theirs = await prisma.drugTest.findMany({
+        where: { AND: [reach, { associateId: { in: mine.map((t) => t.associateId) } }] },
+        select: { id: true, associateId: true, initiatedAt: true },
+      });
+      const newest = latestByPerson(theirs);
+      return mine.filter((t) => newest.get(t.associateId)?.id === t.id).length;
+    },
+  },
+  {
+    // Cleared to work (owner, 2026-11-03): current people with a shift ahead
+    // on or after the day their work authorization or J-1 program ends (or
+    // after an E-Verify final nonconfirmation). Scheduling refuses NEW such
+    // shifts; these were booked before the date was known or passed. The
+    // link opens the Cleared to work tab on exactly these people.
+    key: 'scheduled-not-cleared',
+    urgency: 'legal',
+    label: 'Scheduled but not cleared to work',
+    description: 'People on the schedule for a day after their work authorization or J-1 program ends. Move the shift, or record the re-verification first.',
+    path: '/compliance?tab=cleared&workforce=current&status=scheduled',
+    module: 'compliance',
+    visible: (u) => can(u, 'manage:compliance'),
+    count: async (u) => {
+      const r = await scheduledNotCleared(u);
+      return { count: r.count, dueDate: r.firstDay, preview: r.names.slice(0, 3) };
+    },
   },
   {
     key: 'efile-rejected',

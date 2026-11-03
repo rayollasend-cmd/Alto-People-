@@ -66,6 +66,9 @@ import {
   type PublishWeekSkip,
   type Shift,
   MAX_SHIFT_WALL_MIN,
+  WorkAuthorizationOverrideSchema,
+  type WorkBlocker,
+  can,
   isClientBoundedRole,
   minuteOfDayInZone,
   paidMinutesForRange,
@@ -158,6 +161,7 @@ import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { ledWindows, windowCovers } from '../lib/shiftWindows.js';
 import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
 import { assertClientAllowed, clientRestrictionsFor } from '../lib/programRules.js';
+import { assertAuthorizedToWork, auditOverride, auditSkipped, authorizationFactsFor, blockersForShift, notClearedFor } from '../lib/workAuthorization.js';
 import { REST_GAP_MIN_HOURS, assertEmployed, assignWithinRules, autoFillScore, blockedForWindow, dayKeyInZone, describeClash, findOverlapExcluding } from '../lib/shiftAssign.js';
 import { recordConfirmationAnswer } from '../lib/attendanceConfirm.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
@@ -3295,6 +3299,29 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       ),
     );
 
+    // Cleared to work (owner, 2026-11-03): nobody goes on a day copy that
+    // falls after their work authorization or J-1 program ended, or after an
+    // E-Verify final nonconfirmation. Skipped with a reason, per day (cleared
+    // Monday, not Friday), and the attempt audited once per person. No
+    // override in bulk: HR assigns one shift, with a reason, if it must.
+    const authFacts = await authorizationFactsFor(prisma, candidateIds);
+    const notClearedByOcc = occurrences.map((o) => {
+      const blocked = new Map<string, ReturnType<typeof blockersForShift>>();
+      for (const f of authFacts.values()) {
+        const b = blockersForShift(f, { startsAt: o.startsAt, endsAt: o.endsAt, timezone: location.timezone }, now, 'scheduler');
+        if (b.length) blocked.set(f.associateId, b);
+      }
+      return blocked;
+    });
+    const auditedNotCleared = new Set<string>();
+    notClearedByOcc.forEach((blocked, i) => {
+      for (const [id, b] of blocked) {
+        if (auditedNotCleared.has(id)) continue;
+        auditedNotCleared.add(id);
+        auditSkipped(id, b, { startsAt: occurrences[i].startsAt, endsAt: occurrences[i].endsAt, timezone: location.timezone }, { actorUserId: req.user!.id, via: 'bulk_create', clientId: bulkClientId });
+      }
+    });
+
     // Conflict-check + create everything atomically, one pass per day copy.
     const { createdIds, assignedCount, conflictedSkips, notifyList } =
       await prisma.$transaction(
@@ -3331,18 +3358,21 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
             const conflicted = new Set(
               conflictRows.map((r) => r.assignedAssociateId),
             );
+            const notCleared = notClearedByOcc[i];
             const toAssign = candidateIds.filter(
-              (id) => !conflicted.has(id) && !unavailableIds.has(id),
+              (id) => !conflicted.has(id) && !unavailableIds.has(id) && !notCleared.has(id),
             );
             conflictedSkips.push(
               ...candidateIds
-                .filter((id) => conflicted.has(id) || unavailableIds.has(id))
+                .filter((id) => conflicted.has(id) || unavailableIds.has(id) || notCleared.has(id))
                 .map((id) => ({
                   associateId: id,
                   associateName: nameById.get(id)!,
-                  reason: conflicted.has(id)
-                    ? 'already_scheduled'
-                    : 'day_unavailable',
+                  reason: notCleared.has(id)
+                    ? 'not_authorized_to_work'
+                    : conflicted.has(id)
+                      ? 'already_scheduled'
+                      : 'day_unavailable',
                   startsAt: occ.startsAt.toISOString(),
                 })),
             );
@@ -3796,12 +3826,16 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
     // The rules live in lib/shiftAssign (shared with the Workforce agent's approved fills).
+    // Cleared to work (owner, 2026-11-03): only HR (manage:compliance) may
+    // assign past a work-authorization block, and only with a reason.
+    const canOverrideWorkAuth = can(req.user!, 'manage:compliance');
     const updated = await assignWithinRules(prisma, shift, associate, {
       actorUserId: req.user!.id,
       via: 'assign',
       overrideUnavailability: parsed.data.overrideUnavailability,
       overrideRestGap: parsed.data.overrideRestGap,
       expectUnassigned: parsed.data.expectUnassigned,
+      workAuthorization: { canOverride: canOverrideWorkAuth, override: parsed.data.overrideWorkAuthorization ?? null },
     });
 
     // Fieldglass handoff for first-time workers (deduped inside).
@@ -4619,6 +4653,21 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
     if (claim.status !== 'PENDING') {
       throw new HttpError(409, 'not_pending', `Request is ${claim.status}`);
     }
+    // "Approve anyway" (owner, 2026-11-03): HR (manage:compliance) may pass
+    // a reason past a work-authorization block, as on a direct assign.
+    const approveBody = z.object({ overrideWorkAuthorization: WorkAuthorizationOverrideSchema.optional() }).safeParse(req.body ?? {});
+    if (!approveBody.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', approveBody.error.flatten());
+    }
+    const claimWorkAuth = {
+      actorUserId: user.id,
+      via: 'claim_approve',
+      shiftId: claim.shiftId,
+      clientId: claim.shift.clientId,
+      canOverride: can(user, 'manage:compliance'),
+      override: approveBody.data.overrideWorkAuthorization ?? null,
+    };
+    let claimOverridden: Awaited<ReturnType<typeof assertAuthorizedToWork>> = null;
     const claimant = await prisma.associate.findUnique({
       where: { id: claim.associateId },
       select: { firstName: true, lastName: true, deactivatedAt: true, separatedAt: true },
@@ -4630,6 +4679,14 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
         via: 'claim_approve',
         shiftId: claim.shiftId,
       });
+      // Cleared to work (owner, 2026-11-03): no pickup on a day after their
+      // work authorization or J-1 program ended, unless HR approves anyway.
+      claimOverridden = await assertAuthorizedToWork(
+        prisma,
+        { id: claim.associateId },
+        { startsAt: claim.shift.startsAt, endsAt: claim.shift.endsAt, timezone: claim.shift.locationRel?.timezone },
+        claimWorkAuth,
+      );
     }
 
     // Atomic: CAS the claim, guarded-claim the shift (it must STILL be
@@ -4696,6 +4753,9 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
         },
       });
     });
+    if (claimOverridden && claimWorkAuth.override) {
+      auditOverride(claim.associateId, claimOverridden.blockers, claimOverridden.day, { ...claimWorkAuth, shiftId: claim.shiftId, reason: claimWorkAuth.override.reason });
+    }
 
     await recordShiftEvent({
       actorUserId: user.id,
@@ -5158,7 +5218,10 @@ async function rankAutoFillCandidates(
     target.locationRel?.id ? { id: target.locationRel.id, state: target.locationRel.state ?? null, city: target.locationRel.city ?? null, timezone: target.locationRel.timezone } : null;
   const targetEntry = plannedEntry({ startsAt: target.startsAt, endsAt: target.endsAt, paidMinutes: targetMinutes, site: targetSite });
 
-  const candidates: AutoFillCandidate[] = associates.map((a) => {
+  // Cleared to work (owner, 2026-11-03): nobody whose work authorization or
+  // J-1 program has ended by the shift's day is suggested — the assign would refuse them.
+  const notCleared = await notClearedFor(prisma, poolIds, { startsAt: target.startsAt, endsAt: target.endsAt, timezone: targetTz }, now);
+  const candidates: AutoFillCandidate[] = associates.filter((a) => !notCleared.has(a.id)).map((a) => {
     const dayWindows = a.availability.filter((w) => w.dayOfWeek === targetDOW).sort((x, y) => x.startMinute - y.startMinute);
     const matchesAvailability = dayWindows.some((w) => w.startMinute <= startMin && w.endMinute >= endMin);
     const noConflict = !a.assignedShifts.some((s) => s.startsAt < target.endsAt && s.endsAt > target.startsAt);
@@ -5628,6 +5691,31 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
         shiftId: swap.counterpartShiftId,
       });
     }
+    // Cleared to work (owner, 2026-11-03), on each receiving side: the
+    // counterparty takes the requester's shift; in a trade the requester
+    // takes the exchange shift. HR (manage:compliance) may approve anyway
+    // with a reason; each overridden leg is audited once the swap lands.
+    const swapCanOverride = can(req.user!, 'manage:compliance');
+    const swapOverride = parsed.data.overrideWorkAuthorization ?? null;
+    const swapOverridden: Array<{ associateId: string; shiftId: string; clientId: string | null; blockers: WorkBlocker[]; day: string }> = [];
+    if (counterparty) {
+      const o = await assertAuthorizedToWork(
+        prisma,
+        counterparty,
+        { startsAt: swap.shift.startsAt, endsAt: swap.shift.endsAt, timezone: swap.shift.locationRel?.timezone },
+        { actorUserId: req.user!.id, via: 'swap_approve', shiftId: swap.shiftId, clientId: swap.shift.clientId, canOverride: swapCanOverride, override: swapOverride },
+      );
+      if (o) swapOverridden.push({ associateId: counterparty.id, shiftId: swap.shiftId, clientId: swap.shift.clientId, ...o });
+    }
+    if (requester && swap.counterpartShift) {
+      const o = await assertAuthorizedToWork(
+        prisma,
+        requester,
+        { startsAt: swap.counterpartShift.startsAt, endsAt: swap.counterpartShift.endsAt, timezone: swap.counterpartShift.locationRel?.timezone },
+        { actorUserId: req.user!.id, via: 'swap_approve', shiftId: swap.counterpartShiftId, clientId: swap.counterpartShift.clientId, canOverride: swapCanOverride, override: swapOverride },
+      );
+      if (o) swapOverridden.push({ associateId: requester.id, shiftId: swap.counterpartShift.id, clientId: swap.counterpartShift.clientId, ...o });
+    }
 
     // Declared unavailability blocks the receiving side of each leg — PTO
     // approved (or a day off added) AFTER the peer accepted must not get
@@ -5755,6 +5843,10 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
         }
       }
     });
+    for (const leg of swapOverridden) {
+      if (!swapOverride) break;
+      auditOverride(leg.associateId, leg.blockers, leg.day, { actorUserId: user.id, via: 'swap_approve', clientId: leg.clientId, shiftId: leg.shiftId, reason: swapOverride.reason });
+    }
 
     await recordShiftEvent({
       actorUserId: user.id,
@@ -6748,6 +6840,12 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     // double-bookings are screened.
     const preserveAssignments = parsed.data.preserveAssignments ?? true;
     const assignedAt = new Date();
+    // Cleared to work (owner, 2026-11-03): an assignment is not carried onto
+    // a day the person may no longer work (work authorization or J-1 program
+    // ended, E-Verify final nonconfirmation) — that copy lands open instead.
+    const copyAuthFacts = preserveAssignments
+      ? await authorizationFactsFor(prisma, [...new Set(sourceShifts.map((s) => s.assignedAssociateId).filter((id): id is string => !!id))])
+      : new Map<string, never>();
 
     // Idempotency by content. This route used to say "idempotency is on
     // the user; calling twice produces duplicates" — and users obliged:
@@ -6813,12 +6911,16 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     // 1 backfill and by every writer since).
     const data: Prisma.ShiftCreateManyInput[] = [];
     for (const s of sourceShifts) {
-      const carry = preserveAssignments && s.assignedAssociateId != null;
       // Calendar-day shift in the WORK SITE's zone so a copy across a DST
       // boundary keeps its wall-clock time (9am stays 9am).
       const tz = s.locationRel?.timezone ?? companyWorkweek().timezone;
       const startsAt = addDaysInZone(s.startsAt, dayOffset, tz);
       const endsAt = addDaysInZone(s.endsAt, dayOffset, tz);
+      const auth = s.assignedAssociateId ? copyAuthFacts.get(s.assignedAssociateId) : undefined;
+      const carry =
+        preserveAssignments &&
+        s.assignedAssociateId != null &&
+        !(auth && blockersForShift(auth, { startsAt, endsAt, timezone: tz }, assignedAt, 'scheduler').length > 0);
       // Never propagate a corrupted span (the 31-hour-shift class) into
       // the target week — the copy quietly multiplies the damage.
       if ((endsAt.getTime() - startsAt.getTime()) / 60_000 > MAX_SHIFT_WALL_MIN) {
@@ -7621,6 +7723,9 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       ptoByAssociate.set(x.associateId, list);
     }
 
+    // Cleared to work (owner, 2026-11-03): read once, checked per shift day below.
+    const autoAuthFacts = await authorizationFactsFor(prisma, associates.map((a) => a.id));
+
     const states: AssocState[] = associates.map((a) => {
       const scheduledMins = a.assignedShifts.reduce(
         (sum, s) => sum + Math.floor((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
@@ -7693,6 +7798,10 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
           (p) => p.start <= shiftDayEnd && p.end >= shiftDayStart,
         );
         if (onPto) continue;
+        // So is a shift day after their work authorization or J-1 program
+        // ended: auto-schedule leaves them out, never overrides.
+        const auth = autoAuthFacts.get(s.id);
+        if (auth && blockersForShift(auth, { startsAt: shift.startsAt, endsAt: shift.endsAt, timezone: shiftTz }, autoNow, 'scheduler').length > 0) continue;
 
         // Conflict against any prior or just-added shift this week.
         const hasConflict = s.busy.some(

@@ -66,7 +66,7 @@ async function handle(conn: ProviderConnection, ctx: ProviderContext, body: Buff
       payload: { type: e.type, status: e.rawStatus, result: e.result },
       apply: async () => {
         const ids = [e.objectId, e.reportId].filter((x): x is string => !!x);
-        const check = await prisma.backgroundCheck.findFirst({ where: { tenantId: conn.tenantId, externalId: { in: ids } }, select: { id: true, status: true } });
+        const check = await prisma.backgroundCheck.findFirst({ where: { tenantId: conn.tenantId, externalId: { in: ids } }, select: { id: true, status: true, associateId: true } });
         if (!check) return { status: 'IGNORED', note: 'unknown_check' };
         await applyScreeningReport(check.id, {
           externalId: e.reportId ?? e.objectId,
@@ -75,7 +75,8 @@ async function handle(conn: ProviderConnection, ctx: ProviderContext, body: Buff
           complete: e.rawStatus === 'complete',
         });
         if (e.rawStatus === 'complete' && e.result === 'consider') {
-          await notifyCompliance('A background check needs a decision', 'A report came back “consider”. Review it before deciding — adverse action has required steps.', '/compliance?tab=background');
+          // Straight onto the person's check (the link opens on every group, so it is there whoever they are).
+          await notifyCompliance('A background check needs a decision', 'A report came back “consider”. Review it before deciding — adverse action has required steps.', `/compliance?tab=background&associateId=${check.associateId}`);
         }
         return { status: 'PROCESSED', subjectType: 'BackgroundCheck', subjectId: check.id };
       },
@@ -88,11 +89,12 @@ async function handle(conn: ProviderConnection, ctx: ProviderContext, body: Buff
       eventType: 'order.updated',
       payload: { status: e.rawStatus, result: e.resultCode, mroVerified: e.mroVerified },
       apply: async () => {
-        const t = await prisma.drugTest.findFirst({ where: { tenantId: conn.tenantId, externalId: e.externalId }, select: { id: true } });
+        const t = await prisma.drugTest.findFirst({ where: { tenantId: conn.tenantId, externalId: e.externalId }, select: { id: true, associateId: true } });
         if (!t) return { status: 'IGNORED', note: 'unknown_order' };
         await applyDrugStatus(t.id, e);
         if (e.resultCode && e.resultCode !== 'NEGATIVE') {
-          await notifyCompliance('A drug test result needs review', 'A result came back that is not a verified negative. Review it before any decision.', '/compliance?tab=drug-tests');
+          // The tab is `drugtests` (`drug-tests` opened the scorecard); straight onto the person's test.
+          await notifyCompliance('A drug test result needs review', 'A result came back that is not a verified negative. Review it before any decision.', `/compliance?tab=drugtests&associateId=${t.associateId}`);
         }
         return { status: 'PROCESSED', subjectType: 'DrugTest', subjectId: t.id };
       },

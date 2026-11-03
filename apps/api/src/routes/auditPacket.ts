@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { csvCell as sharedCsvCell } from '@alto-people/shared';
+import { csvCell as sharedCsvCell, WORK_STATUS_LABELS, type WorkStatus } from '@alto-people/shared';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -7,7 +7,7 @@ import { EMPLOYED_WHERE, placements } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
-import { recordCriticalAudit } from '../lib/audit.js';
+import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { getBlobStore } from '../lib/blobStore.js';
 import { COMPANY_INFO, formatRef } from '../lib/emailTemplates.js';
@@ -18,6 +18,9 @@ import { ReportPdf } from '../lib/reportPdf.js';
 import { logger } from '../lib/logger.js';
 import { companyWorkweek, dateKeyInZone, orgDateKey } from '../lib/timeAnomalies.js';
 import { dateColumnKey } from '../lib/timezone.js';
+import { peopleStandings } from '../lib/peopleStatus.js';
+import { scopeAssociatesIncludingFormer } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * Client-audit packet generator.
@@ -2196,3 +2199,156 @@ auditPacketRouter.post(
     res.end(Buffer.from(bytes));
   },
 );
+
+/* ----- the "as of a date" roster ----------------------------------------- */
+
+/** E-Verify's own words for a case's status, as an auditor reads them. */
+const EVERIFY_STATUS_WORDS: Record<string, string> = {
+  PENDING: 'Pending',
+  EMPLOYMENT_AUTHORIZED: 'Employment authorized',
+  TENTATIVE_NONCONFIRMATION: 'Tentative nonconfirmation',
+  FINAL_NONCONFIRMATION: 'Final nonconfirmation',
+  CLOSE_CASE_AND_RESUBMIT: 'Close case and resubmit',
+};
+
+export interface AsOfRosterRow {
+  associateId: string;
+  firstName: string;
+  lastName: string;
+  /** Where they stand today (lib/peopleStatus), and its word. */
+  workStatus: WorkStatus;
+  employment: string;
+  hiredOn: string | null;
+  /** The day they left (a completed separation's last day worked), whether before or after today. */
+  separatedOn: string | null;
+  section1On: string | null;
+  section2On: string | null;
+  eVerifyCaseNumber: string | null;
+  eVerifyStatus: string | null;
+  eVerifyStatusWords: string | null;
+  workAuthEndsOn: string | null;
+  /** Keep the I-9 until this day; null while they still work here (it is kept for as long as they do). */
+  retainUntil: string | null;
+}
+
+export interface AsOfRosterResponse {
+  date: string;
+  generatedAt: string;
+  total: number;
+  /** Still on the books today (working or paused). */
+  stillEmployed: number;
+  /** On the books that day, gone since. */
+  leftSince: number;
+  /** No I-9 Section 2 on file. */
+  noSection2: number;
+  rows: AsOfRosterRow[];
+}
+
+/** The same calendar day `years` on (the I-9 retention rule's arithmetic, on day keys). */
+function addYearsToKey(key: string, years: number): string {
+  const d = new Date(`${key}T00:00:00.000Z`);
+  d.setUTCFullYear(d.getUTCFullYear() + years);
+  return dateColumnKey(d);
+}
+
+/**
+ * GET /audit-packets/roster-as-of?date=YYYY-MM-DD — everyone on the books
+ * that day (owner, 2026-11-03). An I-9 inspection notice asks for the I-9s
+ * of the people employed on a date, and the compliance lists only answer
+ * "who is here now". This answers "who was here then": hired on or before
+ * the day and not gone before it began, from the one status rule
+ * (lib/peopleStatus Standings: the same hire date Headcount uses). Someone
+ * who has since left is on it with the day they left; someone hired after
+ * the day is not.
+ *
+ * The day someone left is their completed separation's last day worked when
+ * there is one (the termination date the I-9 retention rule counts from),
+ * else the day their record says they left. Each row carries the I-9
+ * Section 1 and 2 dates, the E-Verify case and status, the work
+ * authorization end and how long the I-9 must be kept (the later of three
+ * years from hire and one year from leaving; still employed = keep it).
+ *
+ * Same audience as the packet (export:audit-packet) and the caller's reach;
+ * each read is on the audit log. No SSNs, documents or pay: names, dates and
+ * case numbers, so no written reason is asked for.
+ */
+auditPacketRouter.get('/roster-as-of', HR_ADMIN, async (req: Request, res: Response) => {
+  const date = z.string().date().parse(req.query.date);
+  const now = new Date();
+  if (date > orgDateKey(now)) {
+    throw new HttpError(400, 'future_date', 'Pick today or an earlier day: the roster shows who was on the books then.');
+  }
+  const tenantId = tenantIdForWrite();
+  const people = await prisma.associate.findMany({
+    where: { AND: [{ tenantId, deletedAt: null }, scopeAssociatesIncludingFormer(req.user!)] },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      hireDate: true,
+      separations: {
+        where: { status: 'COMPLETE' },
+        orderBy: { completedAt: 'desc' },
+        take: 1,
+        select: { lastDayWorked: true },
+      },
+      i9Verification: {
+        select: { section1CompletedAt: true, section2CompletedAt: true, eVerifyCaseNumber: true, eVerifyStatus: true, workAuthExpiresAt: true },
+      },
+    },
+    orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+  });
+  const standings = await peopleStandings({ tenantId, associateIds: people.map((p) => p.id) }, now);
+
+  const rows: AsOfRosterRow[] = [];
+  for (const p of people) {
+    const st = standings.people.get(p.id);
+    if (!st?.hiredOn) continue; // never hired
+    const hiredOn = p.hireDate ? dateColumnKey(p.hireDate) : orgDateKey(st.hiredOn);
+    const lastDay = p.separations[0]?.lastDayWorked;
+    const separatedOn = st.leftAt ? (lastDay ? dateColumnKey(lastDay) : orgDateKey(st.leftAt)) : null;
+    if (hiredOn > date || (separatedOn !== null && separatedOn < date)) continue;
+    const i9 = p.i9Verification;
+    const retainUntil = separatedOn
+      ? [addYearsToKey(hiredOn, 3), addYearsToKey(separatedOn, 1)].sort()[1]!
+      : null;
+    rows.push({
+      associateId: p.id,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      workStatus: st.status,
+      employment: WORK_STATUS_LABELS[st.status],
+      hiredOn,
+      separatedOn,
+      section1On: i9?.section1CompletedAt ? ymd(i9.section1CompletedAt) : null,
+      section2On: i9?.section2CompletedAt ? ymd(i9.section2CompletedAt) : null,
+      eVerifyCaseNumber: i9?.eVerifyCaseNumber ?? null,
+      eVerifyStatus: i9?.eVerifyStatus ?? null,
+      eVerifyStatusWords: i9?.eVerifyStatus ? (EVERIFY_STATUS_WORDS[i9.eVerifyStatus] ?? i9.eVerifyStatus) : null,
+      workAuthEndsOn: i9?.workAuthExpiresAt ? day(i9.workAuthExpiresAt) : null,
+      retainUntil,
+    });
+  }
+
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'compliance.as_of_roster_viewed',
+      entityType: 'Organization',
+      entityId: date,
+      metadata: { date, people: rows.length, ip: req.ip ?? null },
+    },
+    'auditPacket.rosterAsOf',
+  );
+  const body: AsOfRosterResponse = {
+    date,
+    generatedAt: now.toISOString(),
+    total: rows.length,
+    stillEmployed: rows.filter((r) => r.separatedOn === null).length,
+    leftSince: rows.filter((r) => r.separatedOn !== null).length,
+    noSection2: rows.filter((r) => r.section2On === null).length,
+    rows,
+  };
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json(body);
+});

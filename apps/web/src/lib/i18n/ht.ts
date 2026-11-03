@@ -2498,6 +2498,7 @@ export const ht: Partial<Record<MessageKey, string>> = {
   'sched.pickupConfirmNote': 'Manadjè w konfime demann yo anvan yo final.',
   'sched.pickupConfirmTitle': 'Mande chif sa a?',
   'sched.pickupFailed': 'Nou pa t ka mande chif sa a.',
+  'sched.pickupNotCleared': 'Ou pa ka pran chif apre otorizasyon travay ou oswa pwogram J-1 ou fini. Pale ak RH.',
   'sched.pickupToast': 'Demann voye — manadjè w ap konfime l.',
   'sched.refresh': 'Rafrechi',
   'sched.startsIn': 'Kòmanse nan {time}',

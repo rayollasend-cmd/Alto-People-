@@ -9,7 +9,8 @@ import { apiFetch } from './api';
  *   ['credentialRequirements', 'list']   every requirement with its latest week
  */
 
-export type RequirementKind = 'VACCINATION' | 'TRAINING' | 'QUALIFICATION';
+/** BACKGROUND_CHECK / DRUG_TEST (cleared to work, owner 2026-11-03): a passed one no older than maxAgeDays. */
+export type RequirementKind = 'VACCINATION' | 'TRAINING' | 'QUALIFICATION' | 'BACKGROUND_CHECK' | 'DRUG_TEST';
 
 export interface CredentialRequirementRow {
   id: string;
@@ -21,15 +22,21 @@ export interface CredentialRequirementRow {
   vaccinationKind: string | null;
   complianceTag: string | null;
   qualificationId: string | null;
+  /** Screenings: how old the latest passed one may be, in days; null = any. Absent from older servers. */
+  maxAgeDays?: number | null;
   latest: { weekOf: string; population: number; missing: number } | null;
 }
 
 export interface CredentialRequirementInput {
-  locationId: string;
+  /** One site, (clientId) every site of a client, or (companyWide) everyone in the workforce. */
+  locationId?: string;
+  clientId?: string;
+  companyWide?: boolean;
   kind: RequirementKind;
   vaccinationKind?: string | null;
   complianceTag?: string | null;
   qualificationId?: string | null;
+  maxAgeDays?: number | null;
   label: string;
 }
 

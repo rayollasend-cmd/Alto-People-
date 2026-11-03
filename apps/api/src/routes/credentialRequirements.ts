@@ -17,6 +17,14 @@ import { dateColumnKey } from '../lib/timezone.js';
  *   DELETE /credential-requirements/:id  soft delete; past weeks keep their meaning (manage:compliance)
  *
  * Nothing is required until someone sets it here. Every change is audited.
+ *
+ * Cleared to work (owner, 2026-11-03): a requirement may also be a passed
+ * BACKGROUND_CHECK or DRUG_TEST with a maximum age in days (365 = a yearly
+ * re-screen, 60 = a drug test every 60 days; null = any passed one counts).
+ * Those need no target, and the Cleared to work tab shows who is missing one.
+ * A requirement may be company-wide (`companyWide: true`, neither a site nor
+ * a client): everyone in the workforce — the owner's answer for background
+ * checks and drug tests ("every client requires them").
  */
 
 export const credentialRequirementsRouter = Router();
@@ -27,17 +35,24 @@ const InputSchema = z
   .object({
     locationId: z.string().uuid().nullable().optional(),
     clientId: z.string().uuid().nullable().optional(),
-    kind: z.enum(['VACCINATION', 'TRAINING', 'QUALIFICATION']),
+    /** Everyone in the workforce: no site, no client. */
+    companyWide: z.boolean().optional(),
+    kind: z.enum(['VACCINATION', 'TRAINING', 'QUALIFICATION', 'BACKGROUND_CHECK', 'DRUG_TEST']),
     vaccinationKind: z.enum(['COVID19', 'INFLUENZA_FLU', 'HEPATITIS_B', 'TDAP', 'MMR', 'TB_TEST', 'OTHER']).nullable().optional(),
     complianceTag: z.enum(['EEO_HARASSMENT', 'OSHA_SAFETY', 'WALMART_CADE', 'FOOD_HANDLER']).nullable().optional(),
     qualificationId: z.string().uuid().nullable().optional(),
+    /** BACKGROUND_CHECK / DRUG_TEST only: the latest passed one may be at most this many days old. */
+    maxAgeDays: z.number().int().min(1).max(3650).nullable().optional(),
     label: z.string().trim().min(2).max(120),
   })
   .strict()
   .superRefine((v, ctx) => {
-    if (!v.locationId && !v.clientId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['locationId'], message: 'Name a site or a client.' });
-    const target = { VACCINATION: v.vaccinationKind, TRAINING: v.complianceTag, QUALIFICATION: v.qualificationId }[v.kind];
+    if (v.companyWide && (v.locationId || v.clientId)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['companyWide'], message: 'A company-wide requirement names no site or client.' });
+    if (!v.companyWide && !v.locationId && !v.clientId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['locationId'], message: 'Name a site or a client, or make it company-wide.' });
+    const screening = v.kind === 'BACKGROUND_CHECK' || v.kind === 'DRUG_TEST';
+    const target = v.kind === 'BACKGROUND_CHECK' || v.kind === 'DRUG_TEST' ? v.kind : { VACCINATION: v.vaccinationKind, TRAINING: v.complianceTag, QUALIFICATION: v.qualificationId }[v.kind];
     if (!target) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['kind'], message: 'Name what is required for this kind.' });
+    if (!screening && v.maxAgeDays != null) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['maxAgeDays'], message: 'A maximum age applies to a background check or a drug test only.' });
   });
 
 credentialRequirementsRouter.get('/', async (_req, res) => {
@@ -53,6 +68,7 @@ credentialRequirementsRouter.get('/', async (_req, res) => {
       vaccinationKind: r.vaccinationKind,
       complianceTag: r.complianceTag,
       qualificationId: r.qualificationId,
+      maxAgeDays: r.maxAgeDays ?? null,
       latest: r.latest ? { weekOf: dateColumnKey(r.latest.weekOf), population: r.latest.population, missing: r.latest.missing } : null,
     })),
   });
@@ -80,12 +96,13 @@ credentialRequirementsRouter.post('/', MANAGE, async (req, res) => {
       vaccinationKind: input.kind === 'VACCINATION' ? input.vaccinationKind : null,
       complianceTag: input.kind === 'TRAINING' ? input.complianceTag : null,
       qualificationId: input.kind === 'QUALIFICATION' ? input.qualificationId : null,
+      maxAgeDays: input.kind === 'BACKGROUND_CHECK' || input.kind === 'DRUG_TEST' ? (input.maxAgeDays ?? null) : null,
       label: input.label,
       createdById: req.user!.id,
     },
     select: { id: true },
   });
-  enqueueAudit({ actorUserId: req.user!.id, clientId: input.clientId ?? null, action: 'credential_requirement.created', entityType: 'CredentialRequirement', entityId: created.id, metadata: { kind: input.kind, label: input.label, locationId: input.locationId ?? null } }, 'credentialRequirements');
+  enqueueAudit({ actorUserId: req.user!.id, clientId: input.clientId ?? null, action: 'credential_requirement.created', entityType: 'CredentialRequirement', entityId: created.id, metadata: { kind: input.kind, label: input.label, locationId: input.locationId ?? null, companyWide: !input.locationId && !input.clientId, maxAgeDays: input.maxAgeDays ?? null } }, 'credentialRequirements');
   res.status(201).json({ id: created.id });
 });
 

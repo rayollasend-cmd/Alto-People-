@@ -179,3 +179,8 @@ export function usePrompt(): PromptFn {
 export function useConfirmIfMounted(): ConfirmFn | null {
   return useContext(ConfirmContext)?.confirm ?? null;
 }
+
+/** The shared prompt, or null outside a <ConfirmProvider> (a component rendered alone in a test). */
+export function usePromptIfMounted(): PromptFn | null {
+  return useContext(ConfirmContext)?.prompt ?? null;
+}

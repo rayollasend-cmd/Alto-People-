@@ -31,7 +31,20 @@ export async function assertAssetsReturned(associateId: string, waivedAt: Date |
   }
 }
 
-export async function completeSeparation(id: string, actorUserId: string, opts: { approvalRequestId?: string | null; note?: string | null } = {}): Promise<void> {
+export interface CompleteSeparationOpts {
+  approvalRequestId?: string | null;
+  note?: string | null;
+  /**
+   * A standing rule completed it, not a person (lib/pausedSeparation: paused
+   * over 120 days, owner 2026-11-03). There is no actor, the rule's facts
+   * ride on the audit row, and the per-person notice to the admins is left
+   * to the caller, which sends HR one summary per sweep instead. Everything
+   * else a separation does happens exactly as it does for a person.
+   */
+  automatic?: { rule: string; metadata?: Record<string, string | number | boolean | null> };
+}
+
+export async function completeSeparation(id: string, actorUserId: string | null, opts: CompleteSeparationOpts = {}): Promise<void> {
   const existing = await prisma.separation.findUnique({
     where: { id },
     include: { associate: { select: { firstName: true, lastName: true } } },
@@ -62,7 +75,18 @@ export async function completeSeparation(id: string, actorUserId: string, opts: 
   });
   for (const uid of disabledUserIds) invalidateUserCache(uid);
   enqueueAudit(
-    { actorUserId, action: 'separation.completed', entityType: 'Separation', entityId: id, metadata: { associateId: existing.associateId, approvalRequestId: opts.approvalRequestId ?? null, note: opts.note ?? null } },
+    {
+      actorUserId,
+      action: 'separation.completed',
+      entityType: 'Separation',
+      entityId: id,
+      metadata: {
+        associateId: existing.associateId,
+        approvalRequestId: opts.approvalRequestId ?? null,
+        note: opts.note ?? null,
+        ...(opts.automatic ? { ...opts.automatic.metadata, automatic: true, rule: opts.automatic.rule } : {}),
+      },
+    },
     'separationComplete',
   );
   repairSoon(releasedShiftIds, { kind: 'separation', associateId: existing.associateId });
@@ -86,6 +110,8 @@ export async function completeSeparation(id: string, actorUserId: string, opts: 
     entityId: existing.id,
     context: { associateId: existing.associateId, separation: { id: existing.id, reason: existing.reason, lastDayWorked: lastDay }, approvalRequestId: opts.approvalRequestId ?? null },
   });
+  // The automatic rule tells HR once per sweep, in its own summary.
+  if (opts.automatic) return;
   const who = `${existing.associate.firstName} ${existing.associate.lastName}`;
   void notifyAllAdmins({
     subject: `Separation completed: ${who}`,

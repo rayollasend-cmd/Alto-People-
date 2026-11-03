@@ -2566,6 +2566,7 @@ export const es: Record<Exclude<MessageKey, keyof typeof enExecPortal | keyof ty
   'sched.openPickUp': 'Tomar',
   'sched.pickupToast': 'Turno solicitado — tu gerente lo confirmará.',
   'sched.pickupFailed': 'No se pudo solicitar este turno.',
+  'sched.pickupNotCleared': 'No puedes tomar turnos después de que termine tu permiso de trabajo o tu programa J-1. Habla con Recursos Humanos.',
   'sched.withdrawFailed': 'No se pudo retirar la solicitud.',
   'sched.pickupConfirmTitle': '¿Solicitar este turno?',
   'sched.pickupConfirmNote':

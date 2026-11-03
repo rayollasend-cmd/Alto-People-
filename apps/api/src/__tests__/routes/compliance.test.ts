@@ -276,7 +276,7 @@ describe('Background check endpoints', () => {
     expect(audit).toBeTruthy();
   });
 
-  it('pending lists never-screened associates tagged with directory status', async () => {
+  it('pending lists never-screened people by their one status — never the people who left', async () => {
     const client = await createClient();
     const mkApplicant = async (
       firstName: string,
@@ -301,27 +301,32 @@ describe('Background check endpoints', () => {
     await prisma.backgroundCheck.create({
       data: { associateId: checked.id, provider: 'alto-stub', status: 'FAILED' },
     });
-    const declined = await mkApplicant('Was', 'Rejected', 'REJECTED');
     const noApp = await createAssociate({ firstName: 'No', lastName: 'Application' });
+    const paused = await mkApplicant('On', 'Pause', 'APPROVED');
+    await prisma.associate.update({ where: { id: paused.id }, data: { deactivatedAt: new Date() } });
+    const left = await mkApplicant('Has', 'Left', 'APPROVED');
+    await prisma.associate.update({ where: { id: left.id }, data: { separatedAt: new Date() } });
 
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
     const res = await a.get('/compliance/background/pending');
     expect(res.status).toBe(200);
-    // A FAILED check still counts as screened — everyone else appears,
-    // tagged with the same status rule the People directory uses.
+    // A FAILED check still counts as screened. Everyone else is grouped by
+    // the one status the People directory shows (2026-11-03, not "any
+    // approved application = active"); the people who left are not listed.
     const byId = new Map(
-      (res.body.rows as { associateId: string; status: string }[]).map((r) => [
+      (res.body.rows as { associateId: string; status: string; group: string }[]).map((r) => [
         r.associateId,
-        r.status,
+        r,
       ]),
     );
     expect(byId.size).toBe(4);
     expect(byId.has(checked.id)).toBe(false);
-    expect(byId.get(working.id)).toBe('ACTIVE');
-    expect(byId.get(onboarding.id)).toBe('PENDING');
-    expect(byId.get(declined.id)).toBe('INACTIVE');
-    expect(byId.get(noApp.id)).toBe('INACTIVE');
+    expect(byId.has(left.id)).toBe(false);
+    expect(byId.get(working.id)).toMatchObject({ group: 'current', status: 'ACTIVE' });
+    expect(byId.get(onboarding.id)).toMatchObject({ group: 'starting', status: 'PENDING' });
+    expect(byId.get(noApp.id)).toMatchObject({ group: 'current', status: 'ACTIVE' });
+    expect(byId.get(paused.id)).toMatchObject({ group: 'paused', status: 'INACTIVE' });
     expect(res.body.truncated).toBe(false);
 
     // The export read is audited.
