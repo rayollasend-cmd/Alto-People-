@@ -5814,8 +5814,15 @@ export {
   roleWantsCategory,
   bucketForCategory,
   isUrgentCategory,
+  notificationTier,
+  INFO_ONLY_CATEGORIES,
+  defaultDeliveryFor,
+  DEFAULT_QUIET_HOURS,
+  SUMMARY_HOUR,
   type NotificationCategory,
   type NotificationAudience,
+  type NotificationTier,
+  type DeliveryModeKey,
 } from './notificationCategories.js';
 
 const NOTIFICATION_CATEGORY_KEYS = /* @__PURE__ */ (() => NOTIFICATION_CATEGORIES.map((c) => c.key) as [

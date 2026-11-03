@@ -458,6 +458,18 @@ const EnvSchema = z.object({
     .transform((v) =>
       v === undefined ? true : v === '1' || v.toLowerCase() === 'true',
     ),
+  // Calm notifications (owner, 2026-11-02): someone who never chose how
+  // notices reach them gets their role's defaults — quiet 21:00–07:00, the
+  // office a 7 AM summary, the floor only what needs them
+  // (lib/notificationDelivery). Off for the test suite, whose older tests
+  // assert an email goes out at once (and would fail at night); the calm
+  // tests flip the parsed flag on explicitly. Same string parse as above.
+  NOTIFY_ROLE_DEFAULTS: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v === undefined ? true : v === '1' || v.toLowerCase() === 'true',
+    ),
   // Scheduled-report delivery sweep (lib/reportScheduleRunner.ts): runs
   // ReportSchedule rows whose nextRunAt has passed and emails the CSV to
   // the stored recipients. Ticks every N seconds; each tick only touches

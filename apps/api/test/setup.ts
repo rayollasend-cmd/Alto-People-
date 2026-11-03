@@ -72,6 +72,12 @@ process.env.RESEND_WEBHOOK_SECRET =
 // the parsed env flag on explicitly.
 process.env.KIOSK_REQUIRE_SCHEDULED_SHIFT = 'false';
 
+// Calm-notification role defaults (quiet hours, the morning summary) are on
+// in prod. Off for the suite: older tests assert an email goes out at once,
+// which quiet hours would hold whenever the suite runs at night. The calm
+// tests set env.NOTIFY_ROLE_DEFAULTS = true themselves.
+process.env.NOTIFY_ROLE_DEFAULTS = 'false';
+
 // Preload the payroll tax config cache from the alto_test DB. Route-level
 // tests that drive the payroll engine (paystub, disbursement, payroll)
 // would otherwise throw "config cache empty" at compute time. Test files

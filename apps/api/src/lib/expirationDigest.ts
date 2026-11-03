@@ -9,7 +9,30 @@ import { buildExpirationsTile } from '../routes/complianceScorecard.js';
 import { publicBaseUrl } from './emailLayout.js';
 import { chaseItems } from './complianceAgent.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
+import { dayBoundsInTz, orgTimeZone, todayInTz } from './siteDay.js';
 import { logger } from './logger.js';
+
+const DIGEST_CATEGORY = 'compliance.expirations';
+
+/**
+ * True when this tenant's digest already went out today (the company's
+ * day). The day's own Notification rows are the stamp, as the schedule
+ * digest's are; sentAt, not createdAt, so the check follows the same clock
+ * as the sender.
+ */
+async function digestSentToday(now: Date): Promise<boolean> {
+  const tz = orgTimeZone();
+  const { start, end } = dayBoundsInTz(todayInTz(tz, now), tz);
+  const row = await prisma.notification.findFirst({
+    where: {
+      tenantId: currentTenantId() ?? ALTO_TENANT_ID,
+      category: DIGEST_CATEGORY,
+      sentAt: { gte: start, lt: end },
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 /**
  * Daily compliance-expiration digest.
@@ -18,11 +41,16 @@ import { logger } from './logger.js';
  * authorizations, J-1 program ends, training certs — was pull-only:
  * a work authorization lapsing in 5 days produced a red row that only
  * existed if a human happened to open /compliance that day. This sweep
- * pushes the same data: one digest email to admins per tick listing
+ * pushes the same data: one digest email to admins a day listing
  * everything expiring within 30 days (expired items first). Sent only
- * when there is something to say; the daily cadence is the de-dup.
+ * when there is something to say.
+ *
+ * Once a company day, however often the process starts (owner, 2026-11-02):
+ * the cron ticks at boot and then every 24 hours with nothing stored, so
+ * every deploy and restart re-sent it — up to 8 copies a day to HR and Ops.
  */
-export async function runExpirationDigest(now: Date = new Date()): Promise<{ notified: number }> {
+export async function runExpirationDigest(now: Date = new Date()): Promise<{ notified: number; skipped?: 'already_sent' }> {
+  if (await digestSentToday(now)) return { notified: 0, skipped: 'already_sent' };
   const tile = await buildExpirationsTile();
   // The red bucket is the 0–30 day window: the tile reads from today on, so
   // it never held the items already expired this comment always promised.
@@ -70,12 +98,14 @@ export async function runExpirationDigest(now: Date = new Date()): Promise<{ not
   const overflow =
     sorted.length > 40 ? `\n  …and ${sorted.length - 40} more.` : '';
 
-  void notifyAllAdmins({
+  // Awaited (it never rejects): the bell rows it writes are today's stamp,
+  // so they land before this tick returns.
+  await notifyAllAdmins({
     subject: `[Compliance] ${sorted.length} item${sorted.length === 1 ? '' : 's'} expired or expiring within 30 days`,
     body:
       `Compliance items needing renewal:\n\n${lines}${overflow}\n\n` +
       `Full list: ${publicBaseUrl()}/compliance`,
-    category: 'compliance.expirations',
+    category: DIGEST_CATEGORY,
   });
   return { notified: sorted.length };
 }

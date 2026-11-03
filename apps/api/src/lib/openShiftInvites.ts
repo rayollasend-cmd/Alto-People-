@@ -3,6 +3,7 @@ import { benchFor } from './scope.js';
 import { blockedForWindow } from './shiftAssign.js';
 import { deliveryPrefsFor, deferralFor } from './notificationDelivery.js';
 import { notifyUser } from './notify.js';
+import { dayBoundsInTz, orgTimeZone, todayInTz } from './siteDay.js';
 import { shiftTimezone } from './shiftZone.js';
 import { formatDateInZone, formatTimeInZone, zonedDayOfWeek, zonedMinutes } from './timezone.js';
 
@@ -95,6 +96,39 @@ export async function recordInvites(db: Db, shiftId: string, associateIds: reado
       update: { lastSentAt: now, sendCount: { increment: 1 } },
     });
   }
+}
+
+/**
+ * The people who already had an open-shift invitation email today (the
+ * company's day), or have one held for later today or tomorrow morning
+ * (quiet hours, the morning summary, the unseen-bell rule): this sweep
+ * reaches them on the bell and the lock screen only.
+ */
+export async function invitedByEmailToday(db: Db, userIds: readonly string[], now: Date = new Date()): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  const tz = orgTimeZone();
+  const { start, end } = dayBoundsInTz(todayInTz(tz, now), tz);
+  const [sent, held] = await Promise.all([
+    db.notification.findMany({
+      where: {
+        recipientUserId: { in: [...userIds] },
+        category: INVITE_CATEGORY,
+        channel: 'EMAIL',
+        // sentAt carries the sender's clock; failed sends have none and
+        // did not reach anyone.
+        sentAt: { gte: start, lt: end },
+      },
+      select: { recipientUserId: true },
+    }),
+    // A held email due today, or still to come: today's (or the morning's)
+    // email is already spoken for. One due before today and never sent is
+    // not counted — it was dropped, not delivered.
+    db.deferredNotification.findMany({
+      where: { userId: { in: [...userIds] }, category: INVITE_CATEGORY, channel: 'EMAIL', dueAt: { gte: start } },
+      select: { userId: true },
+    }),
+  ]);
+  return new Set([...sent.flatMap((n) => (n.recipientUserId ? [n.recipientUserId] : [])), ...held.map((h) => h.userId)]);
 }
 
 /** Sent / declined per shift, for the managers' Open shifts tab. */
@@ -234,11 +268,14 @@ export async function rebroadcastOpenShift(
   }
 
   const message = inviteMessage(shift, { again: true });
+  // At most one invitation email a day (owner, 2026-11-02): whoever had
+  // today's already hears about this one on the bell and the lock screen.
+  const emailedToday = await invitedByEmailToday(db, toAsk.map((p) => p.userId), now);
   let heldCount = 0;
   for (const person of toAsk) {
     const prefs = await deliveryPrefsFor(person.userId, db as PrismaClient);
     if (deferralFor(prefs, 'PUSH', { category: INVITE_CATEGORY }, now)?.reason === 'QUIET_HOURS') heldCount += 1;
-    await notifyUser(person.userId, { ...message, category: INVITE_CATEGORY });
+    await notifyUser(person.userId, { ...message, category: INVITE_CATEGORY, skipEmail: emailedToday.has(person.userId) });
   }
   await recordInvites(db, shift.id, toAsk.map((p) => p.associateId), now);
   const counts = (await inviteCountsFor(db, [shift.id])).get(shift.id)!;

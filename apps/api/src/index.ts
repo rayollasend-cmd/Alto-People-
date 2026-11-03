@@ -27,6 +27,7 @@ import { startPortalEngagementDigestCron } from './lib/portalEngagement.js';
 import { startPortalCoverageAlertCron } from './lib/portalCoverageAlert.js';
 import { startAttestationReminderCron } from './lib/attestationReminder.js';
 import { startExpirationDigestCron } from './lib/expirationDigest.js';
+import { startAlertEscalationCron } from './lib/alertEscalation.js';
 import { startWorkflowWorkerCron } from './lib/workflow.js';
 import { startAccessGrantSweepCron } from './lib/accessChanges.js';
 import { startComplianceSnapshotCron } from './lib/complianceSnapshot.js';
@@ -158,6 +159,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startPortalCoverageAlertCron();
   startAttestationReminderCron();
   startExpirationDigestCron();
+  // No-shows and overtime reach the store's supervisor first; unanswered after 30 minutes, the office (owner, 2026-11-02).
+  startAlertEscalationCron();
   // The approval engine: queued workflow runs execute per tenant; temporary access reverts on time.
   startWorkflowWorkerCron();
   startAccessGrantSweepCron();

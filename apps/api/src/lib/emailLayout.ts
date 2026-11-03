@@ -8,7 +8,8 @@ import { getBrandingSync } from './branding.js';
  * with the hosted logo and the wordmark as real text, a thin gold rule, a
  * white card with one headline, one or two sentences, an optional summary
  * block and one button, and a short footer with the legal name, address,
- * phone, one support address, the security line and a reference id.
+ * phone, one support address, the security line, a "Manage notifications"
+ * link and a reference id.
  *
  * Built for the inboxes people actually use:
  *   - tables with role="presentation" and inline CSS, 600px wide, fluid
@@ -88,24 +89,33 @@ export const COMPANY = {
   supportEmail: 'info@altohr.com',
 } as const;
 
-const CHROME: Record<EmailLang, { security: string; questions: (email: string) => string; reference: string; sentBy: string }> = {
+const CHROME: Record<
+  EmailLang,
+  { security: string; questions: (email: string) => string; reference: string; sentBy: string; manage: string; stop: string }
+> = {
   en: {
     security: 'We will never ask for your password or Social Security number by email.',
     questions: (e) => `Questions? Email ${e}.`,
     reference: 'Reference',
     sentBy: 'Sent by Alto HR',
+    manage: 'Manage notifications',
+    stop: 'Stop emails like this',
   },
   es: {
     security: 'Nunca le pediremos su contraseña ni su número de Seguro Social por correo electrónico.',
     questions: (e) => `¿Preguntas? Escríbanos a ${e}.`,
     reference: 'Referencia',
     sentBy: 'Enviado por Alto HR',
+    manage: 'Administrar notificaciones',
+    stop: 'Dejar de recibir correos como este',
   },
   tr: {
     security: 'E-posta yoluyla asla parolanızı veya Sosyal Güvenlik numaranızı istemeyiz.',
     questions: (e) => `Sorularınız için ${e} adresine yazın.`,
     reference: 'Referans',
     sentBy: 'Alto HR tarafından gönderildi',
+    manage: 'Bildirimleri yönet',
+    stop: 'Bu tür e-postaları durdur',
   },
 };
 
@@ -130,6 +140,11 @@ function hostOf(url: string): string {
   } catch {
     return '';
   }
+}
+
+/** Settings › Notifications — where every email's "Manage notifications" goes. */
+export function manageNotificationsUrl(): string {
+  return `${publicBaseUrl()}/settings#notifications`;
 }
 
 /** Absolute URL for an in-app path. */
@@ -172,6 +187,9 @@ function supportEmail(): string {
 function brandName(): string {
   return getBrandingSync().orgName || COMPANY.brand;
 }
+
+/** The name the emails sign with (the org's, else the company's) — for pages that stand beside them. */
+export const getEmailBrandName = brandName;
 
 function para(text: string, extra = ''): string {
   return `<p class="ink" style="margin:0 0 16px;font-family:${FONT};font-size:16px;line-height:24px;color:${INK}${extra}">${escapeHtml(text)}</p>`;
@@ -300,6 +318,7 @@ a{color:${NAVY}}
             <div class="muted" style="color:${MUTED}">${escapeHtml(COMPANY.legalName)} · ${escapeHtml(COMPANY.address)}</div>
             <div class="muted" style="color:${MUTED}"><a class="plain" href="${COMPANY.phoneHref}" style="color:${MUTED};text-decoration:none">${escapeHtml(COMPANY.phone)}</a> · <a class="plain" href="mailto:${escapeHtml(support)}" style="color:${MUTED};text-decoration:none">${escapeHtml(support)}</a></div>
             ${security ? `<div class="muted" style="margin-top:10px;color:${MUTED}">${escapeHtml(security)}</div>` : ''}
+            <div class="muted" style="margin-top:10px;color:${MUTED}">${LINKS_OPEN}${footerLinks(lang, null)}${LINKS_CLOSE}</div>
             <div class="muted" style="margin-top:10px;color:${MUTED}">${escapeHtml(chrome.reference)} <span style="font-family:Menlo,Consolas,monospace">${escapeHtml(refId)}</span></div>
           </td>
         </tr>
@@ -324,6 +343,7 @@ a{color:${NAVY}}
   for (const p of o.after ?? []) textLines.push(p, '');
   textLines.push('—', chrome.sentBy, `${COMPANY.legalName} · ${COMPANY.address}`, `${COMPANY.phone} · ${support}`);
   if (security) textLines.push(security);
+  textLines.push(`${chrome.manage}: ${manageNotificationsUrl()}`);
   textLines.push(`${chrome.reference} ${refId}`);
   const text = textLines.join('\n');
 
@@ -341,4 +361,75 @@ export function greetingFor(lang: EmailLang, firstName: string | null | undefine
 /** Coerce a stored preference to a supported language, English when unknown. */
 export function toEmailLang(v: string | null | undefined): EmailLang {
   return v === 'es' || v === 'tr' ? v : 'en';
+}
+
+/* ---- "Manage notifications" and "Stop emails like this" ------------------- *
+ *
+ * Owner, 2026-11-02: no email said where to change what arrives, and only
+ * announcements could be unsubscribed from. Every email now carries the
+ * Manage link; a notice that can be muted also carries "Stop emails like
+ * this", which needs the recipient's address, so it is added where the
+ * message leaves (send() in lib/notifications.ts), not when it is drawn.
+ * This layout marks where its links sit; an email drawn by another
+ * template gets them as a small block at the foot.
+ */
+
+const LINKS_OPEN = '<!--alto:links-->';
+const LINKS_CLOSE = '<!--/alto:links-->';
+
+function footerLinks(lang: EmailLang, stopUrl: string | null): string {
+  const chrome = CHROME[lang];
+  const link = (href: string, label: string) =>
+    `<a class="plain" href="${escapeHtml(href)}" style="color:${MUTED};text-decoration:underline">${escapeHtml(label)}</a>`;
+  const links = [link(manageNotificationsUrl(), chrome.manage)];
+  if (stopUrl) links.push(link(stopUrl, chrome.stop));
+  return links.join(' · ');
+}
+
+function langOf(html: string | undefined): EmailLang {
+  const m = html ? /<html[^>]*\blang="(en|es|tr)"/i.exec(html) : null;
+  return toEmailLang(m?.[1]?.toLowerCase());
+}
+
+/**
+ * The email as it leaves: the Manage link on every one (once), and the stop
+ * link when `stopUrl` is given — in the HTML where this layout marked it
+ * (else at the foot) and as lines at the end of the plain text.
+ */
+export function withNotificationLinks(
+  mail: { html?: string; text: string },
+  stopUrl: string | null,
+): { html?: string; text: string } {
+  const lang = langOf(mail.html);
+  const chrome = CHROME[lang];
+  let html = mail.html;
+  if (html) {
+    const start = html.indexOf(LINKS_OPEN);
+    const end = start >= 0 ? html.indexOf(LINKS_CLOSE, start) : -1;
+    if (start >= 0 && end > start) {
+      html = `${html.slice(0, start + LINKS_OPEN.length)}${footerLinks(lang, stopUrl)}${html.slice(end)}`;
+    } else {
+      const block = `<div style="max-width:600px;margin:0 auto;padding:0 16px 24px;text-align:center;font-family:${FONT};font-size:12px;line-height:18px;color:${MUTED}">${footerLinks(lang, stopUrl)}</div>`;
+      const close = html.toLowerCase().lastIndexOf('</body>');
+      html = close >= 0 ? `${html.slice(0, close)}${block}\n${html.slice(close)}` : `${html}\n${block}`;
+    }
+  }
+  const manageLine = `${chrome.manage}: ${manageNotificationsUrl()}`;
+  const lines: string[] = [];
+  let text = mail.text;
+  if (!text.includes(manageNotificationsUrl())) lines.push(manageLine);
+  if (stopUrl) lines.push(`${chrome.stop}: ${stopUrl}`);
+  if (lines.length) {
+    // After this layout's own Manage line when there is one; else a short
+    // signed-off block at the end.
+    const at = text.indexOf(manageLine);
+    if (at >= 0) {
+      const eol = text.indexOf('\n', at);
+      const cut = eol >= 0 ? eol : text.length;
+      text = `${text.slice(0, cut)}\n${lines.join('\n')}${text.slice(cut)}`;
+    } else {
+      text = `${text.replace(/\s+$/, '')}\n\n—\n${lines.join('\n')}`;
+    }
+  }
+  return html === undefined ? { text } : { html, text };
 }

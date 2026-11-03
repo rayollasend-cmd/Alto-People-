@@ -284,6 +284,13 @@ export function createApp() {
   }
 
   app.use(stripApiPrefix);
+  // "Stop emails like this" in an email footer opens a page the API draws
+  // itself (routes/emailUnsubscribe.ts — no app bundle), so that one path
+  // is never answered with the SPA shell below (owner, 2026-11-02).
+  app.use('/communications/unsubscribe', (req: Request & { isApiCall?: boolean }, _res, next) => {
+    req.isApiCall = true;
+    next();
+  });
   // Declare the negotiation, or a cache will mix the two answers.
   //
   // Dozens of paths serve BOTH the SPA page and a JSON API resource

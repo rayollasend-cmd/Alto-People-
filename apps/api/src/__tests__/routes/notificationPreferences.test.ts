@@ -32,14 +32,27 @@ describe('GET /auth/me/notification-preferences', () => {
       emailEnabled: boolean;
     }>;
     // 10 staff opt-out-able (the assistant's tasks and notes among them) +
-    // messages + 3 mandatory = 14; the portal buckets are not offered to staff.
-    expect(entries.length).toBe(14);
+    // messages + 3 mandatory = 14; since 2026-11-02 every kind of notice has
+    // a bucket, adding transport and emergencies (mandatory) = 16. The
+    // office's own buckets (finance, recruiting, approvals, reports) and the
+    // portal buckets are not offered to someone on shift.
+    expect(entries.length).toBe(16);
     expect(entries.some((e) => e.category.startsWith('store_'))).toBe(false);
+    expect(entries.some((e) => ['finance', 'recruiting', 'approvals_tasks', 'reports_digests'].includes(e.category))).toBe(false);
     // Every entry defaults to enabled when no row exists.
     expect(entries.every((e) => e.emailEnabled)).toBe(true);
     // Mandatory ones are flagged.
     const mandatoryKeys = entries.filter((e) => e.mandatory).map((e) => e.category);
-    expect(mandatoryKeys.sort()).toEqual(['discipline', 'probation', 'security']);
+    expect(mandatoryKeys.sort()).toEqual(['discipline', 'emergency', 'probation', 'security']);
+  });
+
+  it('the office also gets its own buckets: finance, recruiting, approvals and reports', async () => {
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = agent();
+    await loginAs(a, user.email, DEFAULT_TEST_PASSWORD);
+    const keys = ((await a.get('/auth/me/notification-preferences')).body.entries as Array<{ category: string }>).map((e) => e.category);
+    expect(keys).toHaveLength(20);
+    expect(keys).toEqual(expect.arrayContaining(['finance', 'recruiting', 'approvals_tasks', 'reports_digests']));
   });
 
   it('reflects a stored mute', async () => {
@@ -62,7 +75,7 @@ describe('GET /auth/me/notification-preferences', () => {
     await loginAs(a, user.email, DEFAULT_TEST_PASSWORD);
     const res = await a.get('/auth/me/notification-preferences');
     const keys = (res.body.entries as Array<{ category: string }>).map((e) => e.category).sort();
-    expect(keys).toEqual(['messages', 'security', 'store_alerts', 'store_daily', 'store_reports', 'store_requests']);
+    expect(keys).toEqual(['emergency', 'messages', 'security', 'store_alerts', 'store_daily', 'store_reports', 'store_requests', 'transport']);
     expect((await a.patch('/auth/me/notification-preferences').send({ category: 'store_alerts', emailEnabled: false })).status).toBe(204);
     expect((await a.patch('/auth/me/notification-preferences').send({ category: 'onboarding', emailEnabled: false })).status).toBe(400);
   });

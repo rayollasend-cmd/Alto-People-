@@ -1,3 +1,4 @@
+import { INFO_ONLY_CATEGORIES } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { tenantJob } from './tenantJobs.js';
 import { env } from '../config/env.js';
@@ -21,15 +22,24 @@ import { logger } from './logger.js';
  *
  * Deletes are chunked so a first run against years of backlog can't hold
  * a giant lock or bloat one transaction.
+ *
+ * And one tidy-up that is not a delete: a notice that only informed (an
+ * earnings receipt, a birthday, a digest — the info and digest tiers) is
+ * marked read once it is two weeks old. Nobody acts on those, and they
+ * were the bulk of a backlog that reached 75 unread rows for a typical
+ * person and 16,357 for one (calm notifications, 2026-11-02). Anything
+ * that asked the person to do something stays unread until they do.
  */
 
 const IN_APP_READ_RETENTION_DAYS = 90;
 const DELIVERY_AUDIT_RETENTION_DAYS = 365;
 const DELETE_CHUNK = 5_000;
+const INFO_ARCHIVE_DAYS = 14;
 
 export interface NotificationRetentionResult {
   inAppDeleted: number;
   auditDeleted: number;
+  infoArchived: number;
 }
 
 async function deleteChunked(
@@ -64,6 +74,16 @@ export async function runNotificationRetention(
     now.getTime() - DELIVERY_AUDIT_RETENTION_DAYS * 86_400_000,
   );
 
+  const { count: infoArchived } = await prisma.notification.updateMany({
+    where: {
+      channel: 'IN_APP',
+      readAt: null,
+      createdAt: { lt: new Date(now.getTime() - INFO_ARCHIVE_DAYS * 86_400_000) },
+      OR: [{ category: { in: [...INFO_ONLY_CATEGORIES] } }, { category: { startsWith: 'hugo_note' } }],
+    },
+    data: { readAt: now, seenAt: now },
+  });
+
   const inAppDeleted = await deleteChunked({
     channel: 'IN_APP',
     readAt: { not: null, lt: inAppCutoff },
@@ -73,6 +93,7 @@ export async function runNotificationRetention(
     createdAt: { lt: auditCutoff },
   });
 
+  if (infoArchived > 0) logger.info(`notification retention: archived ${infoArchived} information-only bell rows (>${INFO_ARCHIVE_DAYS}d)`);
   if (inAppDeleted > 0 || auditDeleted > 0) {
     logger.info(
       `notification retention: removed ${inAppDeleted} read ` +
@@ -80,7 +101,7 @@ export async function runNotificationRetention(
         `delivery-audit rows (>${DELIVERY_AUDIT_RETENTION_DAYS}d)`,
     );
   }
-  return { inAppDeleted, auditDeleted };
+  return { inAppDeleted, auditDeleted, infoArchived };
 }
 
 let timer: NodeJS.Timeout | null = null;

@@ -31,6 +31,13 @@ export interface PushPayload {
    * rows were each checked before they were bundled).
    */
   category: string | null | undefined;
+  /**
+   * Pushes of one kind replace each other on the lock screen instead of
+   * piling up (sw.js showNotification `tag`). Defaults to the category.
+   */
+  tag?: string;
+  /** Buzz again when replacing one with the same tag — only for what cannot wait. */
+  renotify?: boolean;
 }
 
 /** What sendPushToUser did: 'muted' = the person turned push off for this
@@ -95,7 +102,13 @@ function ensureVapid(): void {
 export async function sendPushToUser(userId: string, payload: PushPayload): Promise<PushOutcome> {
   if (await isPushMuted(userId, payload.category)) return 'muted';
   // What goes over the wire: the words and the link, not the category.
-  const message = { title: payload.title, body: payload.body, ...(payload.url ? { url: payload.url } : {}) };
+  const tag = payload.tag ?? payload.category ?? undefined;
+  const message = {
+    title: payload.title,
+    body: payload.body,
+    ...(payload.url ? { url: payload.url } : {}),
+    ...(tag ? { tag, renotify: payload.renotify === true } : {}),
+  };
   // The native apps (iOS / Android) first — independent of VAPID, so a
   // deployment with only APNs/FCM configured still reaches phones. Every
   // caller has already applied quiet hours / digest choices.

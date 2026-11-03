@@ -23,6 +23,12 @@ export interface NativePushMessage {
   body: string;
   /** In-app path the notification opens. */
   url?: string;
+  /**
+   * Pushes of one kind replace each other instead of piling up on the lock
+   * screen (APNs apns-collapse-id, FCM android tag) — calm notifications,
+   * 2026-11-02. Defaults to none: every push stands alone.
+   */
+  tag?: string;
 }
 
 export type SendResult = 'sent' | 'gone' | 'failed';
@@ -62,7 +68,7 @@ function apnsAuthToken(): string {
 async function sendApns(token: string, msg: NativePushMessage): Promise<SendResult> {
   const host = env.APNS_ENV === 'sandbox' ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
   const payload = JSON.stringify({
-    aps: { alert: { title: msg.title, body: msg.body }, sound: 'default', 'thread-id': 'alto' },
+    aps: { alert: { title: msg.title, body: msg.body }, sound: 'default', 'thread-id': msg.tag ?? 'alto' },
     ...(msg.url ? { url: msg.url } : {}),
   });
   return new Promise<SendResult>((resolve) => {
@@ -86,6 +92,8 @@ async function sendApns(token: string, msg: NativePushMessage): Promise<SendResu
       'apns-topic': env.APNS_BUNDLE_ID,
       'apns-push-type': 'alert',
       'apns-priority': '10',
+      // APNs caps the collapse id at 64 bytes.
+      ...(msg.tag ? { 'apns-collapse-id': msg.tag.slice(0, 64) } : {}),
       'content-type': 'application/json',
     });
     let status = 0;
@@ -161,7 +169,7 @@ async function sendFcm(token: string, msg: NativePushMessage): Promise<SendResul
         token,
         notification: { title: msg.title, body: msg.body },
         data: msg.url ? { url: msg.url } : {},
-        android: { priority: 'high', notification: { channel_id: 'alto_default', icon: 'ic_stat_alto', color: '#D9B967' } },
+        android: { priority: 'high', notification: { channel_id: 'alto_default', icon: 'ic_stat_alto', color: '#D9B967', ...(msg.tag ? { tag: msg.tag } : {}) } },
       },
     }),
   });

@@ -16,12 +16,12 @@ import { armJob, stopJob } from './jobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { formatShiftLine, notifyShift, shiftWa } from './notifyShift.js';
-import { notifyAllAdmins, notifyClientSupervisors } from './notify.js';
+import { alertFloorFirst, punchesSince, workingSince } from './alertEscalation.js';
 import {
   recordNoShowAttendance,
   withdrawContradictedNoShows,
 } from './attendance.js';
-import { endOfWeekUTC, startOfWeekUTC } from './timeAnomalies.js';
+import { endOfWeekUTC, orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { loadLiveRules } from './laborRules/live.js';
 import { payFor, plannedEntry, splitHours, sumHours, type HoursEntry } from './laborRules/hours.js';
@@ -51,7 +51,7 @@ export interface ShiftReminderSweepResult {
   confirmNudges: number;
   /** PENDING pickup claims whose shift already started — flipped to EXPIRED. */
   expiredClaims: number;
-  /** Shifts flagged to admins as possible no-shows this sweep. */
+  /** Shifts flagged as possible no-shows this sweep (to the store's supervisors, or the office when it has none). */
   noShows: number;
   /** Ended shifts recorded as attendance no-call no-shows this sweep. */
   noShowsRecorded: number;
@@ -177,7 +177,7 @@ export async function runShiftReminderSweep(
   // Published, assigned shifts whose start passed >15min ago with NO
   // TimeEntry linked (the punch↔shift matcher links every in-window
   // punch). Claim-before-notify via noShowNotifiedAt, same pattern as
-  // reminders, so each shift alerts admins at most once.
+  // reminders, so each shift raises one alert, ever.
   const suspects = await prisma.shift.findMany({
     where: {
       status: 'ASSIGNED',
@@ -211,32 +211,15 @@ export async function runShiftReminderSweep(
     (min, s) => (s.startsAt < min ? s.startsAt : min),
     now,
   );
-  const coveringEntries =
-    suspectAssociateIds.length > 0
-      ? await prisma.timeEntry.findMany({
-          where: {
-            associateId: { in: suspectAssociateIds },
-            clockInAt: { lte: now },
-            OR: [{ clockOutAt: null }, { clockOutAt: { gte: earliestStart } }],
-          },
-          select: { associateId: true, clockOutAt: true },
-        })
-      : [];
-  const entriesByAssociate = new Map<string, { clockOutAt: Date | null }[]>();
-  for (const e of coveringEntries) {
-    const arr = entriesByAssociate.get(e.associateId) ?? [];
-    arr.push({ clockOutAt: e.clockOutAt });
-    entriesByAssociate.set(e.associateId, arr);
-  }
+  // (lib/alertEscalation asks the same probe again 30 minutes later.)
+  const entriesByAssociate = await punchesSince(prisma, suspectAssociateIds, earliestStart, now);
 
   for (const shift of suspects) {
     try {
       // Matcher blind spot: an associate who punched in >2h early (or via
       // an admin-created entry) is working but unlinked. Any open/covering
       // entry means "showed up" — stamp without alerting.
-      const working = (entriesByAssociate.get(shift.assignedAssociateId!) ?? []).some(
-        (e) => e.clockOutAt === null || e.clockOutAt >= shift.startsAt,
-      );
+      const working = workingSince(entriesByAssociate.get(shift.assignedAssociateId!), shift.startsAt);
       const claim = await prisma.shift.updateMany({
         where: { id: shift.id, noShowNotifiedAt: null },
         data: { noShowNotifiedAt: now },
@@ -259,18 +242,24 @@ export async function runShiftReminderSweep(
         // Their week, on this shift's store — where you'd reassign it.
         linkUrl: associateWeekLink({ associateId: shift.assignedAssociateId!, clientId: shift.clientId, week: shift.startsAt }),
       };
-      // Fire-and-forget — both helpers never reject, and the sweep's job
-      // is the claim stamp, not the delivery.
-      void notifyAllAdmins(noShowNotice);
       // The on-site supervisor is the one person who can physically walk
-      // the floor and find (or replace) the associate.
-      void notifyClientSupervisors(shift.clientId, {
-        ...noShowNotice,
+      // the floor and find (or replace) the associate, so they hear first;
+      // the office hears only when the store has no supervisor for it, or
+      // 30 minutes on when nobody there picked it up and the person is
+      // still missing (owner, 2026-11-02 — 1,590 no-show emails to the
+      // office in 14 days, 1% of the bell copies ever opened).
+      await alertFloorFirst(prisma, {
+        kind: 'no_show',
+        clientId: shift.clientId,
+        notice: noShowNotice,
         // The lead of the window this shift starts in walks the floor first
         // — or, when the missing person is a floor supervisor, the shift
         // supervisor in charge of them.
         at: { locationId: shift.locationId, startsAt: shift.startsAt },
         aboutAssociateId: shift.assignedAssociateId,
+        shiftId: shift.id,
+        associateId: shift.assignedAssociateId,
+        now,
       });
       // NO attendance event here. Fifteen minutes of silence is a reason
       // to walk the floor, not a finding about the person — they may be
@@ -515,13 +504,26 @@ async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
       // Their week, scrolled to their row — where the trimming happens.
       linkUrl: associateWeekLink({ associateId, clientId: rem.clientId, week: weekStart }),
     };
-    void notifyAllAdmins(notice);
-    // Supervisors get the hours, never the billed cost — money is withheld
-    // from store-bound roles (owner decision 2026-09-17).
-    void notifyClientSupervisors(rem.clientId, {
-      ...notice,
-      body: notice.body.replace(cost, ''),
-    });
+    // The store's supervisors first, the office when the store has none for
+    // it or 30 minutes on when none of them opened it (owner, 2026-11-02;
+    // lib/alertEscalation). Supervisors get the hours, never the billed
+    // cost — money is withheld from store-bound roles (owner decision
+    // 2026-09-17); the office's copy keeps it.
+    try {
+      await alertFloorFirst(prisma, {
+        kind: 'ot_radar',
+        clientId: rem.clientId,
+        notice,
+        supervisorBody: notice.body.replace(cost, ''),
+        associateId,
+        weekKey: orgDateKey(weekStart),
+        now,
+      });
+    } catch (err) {
+      // The supervisors were told; a lost escalation row must not stop the
+      // rest of the week's alerts.
+      console.warn('[ot-radar] escalation not recorded:', err instanceof Error ? err.message : err);
+    }
     alerts++;
   }
   return alerts;

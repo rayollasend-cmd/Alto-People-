@@ -26,6 +26,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { pushReachFor } from '../lib/webPush.js';
+import { effectiveDeliveryPrefs, resetDeliveryPrefsCache } from '../lib/notificationDelivery.js';
 import { ssoRequiredFor } from '../lib/identity.js';
 import { breakGlassVerdict, recordBreakGlassUse } from '../lib/breakGlass.js';
 import { loadSecurityPolicy } from '../lib/securityPolicy.js';
@@ -39,7 +40,7 @@ import {
   signSession,
   verifyMfaPending,
 } from '../lib/jwt.js';
-import { EMAIL_LANGUAGES, mfaPolicyAppliesTo, type EmailLanguage } from '@alto-people/shared';
+import { EMAIL_LANGUAGES, defaultDeliveryFor, mfaPolicyAppliesTo, type EmailLanguage } from '@alto-people/shared';
 import { ACCOUNT_PHOTO_SELECT, accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { sopBlockingClockOut, sopOpenMessage } from '../lib/storeShiftSop.js';
 import {
@@ -2094,7 +2095,7 @@ authRouter.delete('/me/devices/:id', requireAuth, async (req, res, next) => {
 
 /* ===== Access pack: quiet hours and digest delivery ==================== */
 
-const DeliveryModeSchema = z.enum(['REALTIME', 'DIGEST']);
+const DeliveryModeSchema = z.enum(['REALTIME', 'DIGEST', 'IMPORTANT', 'DAILY', 'OFF']);
 const PatchDeliverySchema = z
   .object({
     quietHoursStart: z.number().int().min(0).max(1439).nullable().optional(),
@@ -2106,36 +2107,73 @@ const PatchDeliverySchema = z
   .refine((v) => (v.quietHoursStart === undefined) === (v.quietHoursEnd === undefined), { message: 'Quiet hours need both a start and an end.' })
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to change.' });
 
-/** GET /auth/me/notification-delivery — quiet hours and per-channel digest vs real time. */
+const DELIVERY_SELECT = {
+  role: true,
+  quietHoursStart: true,
+  quietHoursEnd: true,
+  deliveryEmail: true,
+  deliveryPush: true,
+  deliverySms: true,
+  timezone: true,
+  deliveryPrefsSetAt: true,
+} as const;
+
+/**
+ * What Settings shows: the choices as they apply (the role's defaults when
+ * the person never chose — calm notifications, 2026-11-02), whether those
+ * are the defaults, and what the defaults are (Settings marks "Recommended").
+ */
+function deliveryView(u: Parameters<typeof effectiveDeliveryPrefs>[0]) {
+  const e = effectiveDeliveryPrefs(u);
+  const d = defaultDeliveryFor(u.role);
+  return {
+    quietHoursStart: e.quietHoursStart,
+    quietHoursEnd: e.quietHoursEnd,
+    deliveryEmail: e.deliveryEmail,
+    deliveryPush: e.deliveryPush,
+    deliverySms: e.deliverySms,
+    timezone: u.timezone,
+    isDefault: e.isDefault,
+    defaults: d,
+  };
+}
+
+/** GET /auth/me/notification-delivery — quiet hours and how each channel reaches the person. */
 authRouter.get('/me/notification-delivery', requireAuth, async (req, res, next) => {
   try {
-    const u = await prisma.user.findUniqueOrThrow({
-      where: { id: req.user!.id },
-      select: { quietHoursStart: true, quietHoursEnd: true, deliveryEmail: true, deliveryPush: true, deliverySms: true, timezone: true },
-    });
-    res.json(u);
+    const u = await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id }, select: DELIVERY_SELECT });
+    res.json(deliveryView(u));
   } catch (err) {
     next(err);
   }
 });
 
-/** PATCH /auth/me/notification-delivery — critical safety and pay items still arrive at once. */
+/**
+ * PATCH /auth/me/notification-delivery — critical safety and pay items still
+ * arrive at once. Saving anything makes the whole set the person's own: what
+ * they were getting by default is written down with their change, so turning
+ * one switch never silently resets the others.
+ */
 authRouter.patch('/me/notification-delivery', requireAuth, async (req, res, next) => {
   try {
     const parsed = PatchDeliverySchema.safeParse(req.body);
     if (!parsed.success) throw new HttpError(400, 'invalid_body', parsed.error.issues[0]?.message ?? 'Invalid request body', parsed.error.flatten());
     const d = parsed.data;
+    const current = effectiveDeliveryPrefs(await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id }, select: DELIVERY_SELECT }));
     const u = await prisma.user.update({
       where: { id: req.user!.id },
       data: {
-        ...(d.quietHoursStart !== undefined ? { quietHoursStart: d.quietHoursStart, quietHoursEnd: d.quietHoursEnd ?? null } : {}),
-        ...(d.deliveryEmail ? { deliveryEmail: d.deliveryEmail } : {}),
-        ...(d.deliveryPush ? { deliveryPush: d.deliveryPush } : {}),
-        ...(d.deliverySms ? { deliverySms: d.deliverySms } : {}),
+        quietHoursStart: d.quietHoursStart !== undefined ? d.quietHoursStart : current.quietHoursStart,
+        quietHoursEnd: d.quietHoursStart !== undefined ? (d.quietHoursEnd ?? null) : current.quietHoursEnd,
+        deliveryEmail: d.deliveryEmail ?? current.deliveryEmail,
+        deliveryPush: d.deliveryPush ?? current.deliveryPush,
+        deliverySms: d.deliverySms ?? current.deliverySms,
+        deliveryPrefsSetAt: new Date(),
       },
-      select: { quietHoursStart: true, quietHoursEnd: true, deliveryEmail: true, deliveryPush: true, deliverySms: true, timezone: true },
+      select: DELIVERY_SELECT,
     });
-    res.json(u);
+    resetDeliveryPrefsCache();
+    res.json(deliveryView(u));
   } catch (err) {
     next(err);
   }

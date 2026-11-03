@@ -198,7 +198,10 @@ function shellFor(pathname) {
 
 // ---- Web push -------------------------------------------------------------
 // Payload contract (set by the API's push sender): JSON
-//   { title, body, url? }  — url is a relative in-app path to open on tap.
+//   { title, body, url?, tag?, renotify? }  — url is a relative in-app path
+//   to open on tap. tag stacks notices of one kind into one entry on the
+//   lock screen instead of a pile (owner, 2026-11-02); renotify (true only
+//   for critical ones) makes a replaced entry buzz again, and needs a tag.
 // Everything is defensive: a malformed payload still shows SOMETHING so a
 // user-visible push is never silently dropped (required by Chrome anyway
 // when userVisibleOnly is true).
@@ -217,6 +220,10 @@ self.addEventListener('push', (event) => {
     badge: '/icon-192.png',
     data: { url: data.url || '/' },
   };
+  if (typeof data.tag === 'string' && data.tag) {
+    options.tag = data.tag;
+    if (data.renotify === true) options.renotify = true;
+  }
   event.waitUntil(
     Promise.all([
       self.registration.showNotification(title, options),

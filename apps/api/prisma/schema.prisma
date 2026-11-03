@@ -83,6 +83,13 @@ enum MfaRequirement {
 enum DeliveryMode {
   REALTIME
   DIGEST
+  /// Calm notifications (owner, 2026-11-02): only what needs the person —
+  /// pushed now, emailed when nothing else reached them; the floor's default.
+  IMPORTANT
+  /// One summary each morning at 7 (the office's default).
+  DAILY
+  /// Only urgent and required notices.
+  OFF
 }
 
 enum AccessCertificationScope {
@@ -549,6 +556,10 @@ model User {
   deliveryEmail          DeliveryMode       @default(REALTIME)
   deliveryPush           DeliveryMode       @default(REALTIME)
   deliverySms            DeliveryMode       @default(REALTIME)
+  /// When the person last saved their delivery choices. Null: they never
+  /// did, so the role's defaults apply (quiet 21:00–07:00; the office gets a
+  /// morning summary, the floor only what needs them — lib/notificationDelivery).
+  deliveryPrefsSetAt     DateTime?          @db.Timestamptz(6)
   associate              Associate?         @relation(fields: [associateId], references: [id], onDelete: SetNull)
   delegationsGiven       TeamDelegation[]   @relation("DelegationFrom")
   delegationsReceived    TeamDelegation[]   @relation("DelegationTo")
@@ -1904,6 +1915,38 @@ model OtAlertStamp {
 
   @@id([associateId, weekStart])
   @@index([tenantId])
+}
+
+/// A floor alert told to the store's supervisors first (owner, 2026-11-02): a
+/// possible no-show or projected overtime. Still unresolved and unread 30
+/// minutes on, it goes to the office, once (lib/alertEscalation). The sweep
+/// removes rows after 30 days.
+model AlertEscalation {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// no_show | ot_radar
+  kind            String    @db.VarChar(16)
+  /// The possible no-show's shift (no_show only).
+  shiftId         String?   @db.Uuid
+  /// Who it is about: the missing associate, or the one heading into overtime.
+  associateId     String?   @db.Uuid
+  /// The company week (its first day, YYYY-MM-DD) an overtime alert is about.
+  weekKey         String?   @db.VarChar(10)
+  /// The notice as the office gets it: the same category, link and words.
+  category        String    @db.VarChar(64)
+  linkUrl         String?
+  subject         String?
+  body            String
+  /// The supervisors it was addressed to; one of them reading it settles it.
+  notifiedUserIds String[]  @db.Uuid
+  notifiedAt      DateTime  @db.Timestamptz(6)
+  escalateAt      DateTime  @db.Timestamptz(6)
+  escalatedAt     DateTime? @db.Timestamptz(6)
+  resolvedAt      DateTime? @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId])
+  @@index([tenantId, escalateAt])
 }
 
 // Monthly client billing/SLA statement. DRAFT recomputes freely as late
@@ -13470,8 +13513,15 @@ model DeferredNotification {
   userId    String    @db.Uuid
   /// EMAIL | PUSH | WHATSAPP
   channel   String    @db.VarChar(16)
-  /// QUIET_HOURS | DIGEST
+  /// QUIET_HOURS | DIGEST | SUMMARY (the morning summary) | UNSEEN (email
+  /// only if the bell copy is still unseen when it comes due)
   reason    String    @db.VarChar(16)
+  /// The bell copy of the same notice: a held email it has already been seen
+  /// through is dropped.
+  notificationId String? @db.Uuid
+  /// The email as it would have gone out (held UNSEEN copies send it whole).
+  html      String?
+  text      String?
   subject   String?   @db.VarChar(300)
   body      String
   linkUrl   String?   @db.VarChar(500)

@@ -107,7 +107,7 @@ async function notifyShiftInner(
   if (!user || user.status !== 'ACTIVE') return;
 
   const linkUrl = params.linkUrl ?? '/scheduling';
-  await tx.notification.create({
+  const bell = await tx.notification.create({
     data: {
       channel: 'IN_APP',
       status: 'QUEUED',
@@ -120,6 +120,7 @@ async function notifyShiftInner(
       byAgentId: params.byAgentId ?? null,
       linkUrl,
     },
+    select: { id: true },
   });
   // Live nudge — best-effort: when called inside a transaction the row
   // isn't committed yet, so a racing refetch may find nothing new and
@@ -138,7 +139,7 @@ async function notifyShiftInner(
     linkUrl,
     wa: params.wa,
     byAgentId: params.byAgentId ?? null,
-  });
+  }, bell.id);
 }
 
 /**

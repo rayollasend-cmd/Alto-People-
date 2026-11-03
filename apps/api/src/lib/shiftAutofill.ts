@@ -6,13 +6,20 @@
 // the open-shifts marketplace. The supervisor's queue item only remains
 // for shifts the machine couldn't fill — and says the bench was already
 // asked.
+//
+// One message per person per sweep, however many shifts it offers them, and
+// at most one invitation email a day (owner, 2026-11-02): one message per
+// open shift was 2,683 emails in 14 days to 174 associates — five or more on
+// 153 person-days, ten or more on 54 — often the same words for the same
+// slot. Past the day's first email, the bell and the lock screen carry it.
 
 import type { PrismaClient } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { benchFor } from './scope.js';
 import { notifyUser } from './notify.js';
-import { INVITE_CATEGORY, inviteMessage, recordInvites } from './openShiftInvites.js';
+import { INVITE_CATEGORY, invitedByEmailToday, inviteMessage, inviteZone, recordInvites, type InviteShift } from './openShiftInvites.js';
+import { formatDateInZone, formatTimeInZone } from './timezone.js';
 import { runShiftFill } from './workforceAgent.js';
 import { runScheduleRepair } from './scheduleRepair.js';
 import { runAttendanceConfirm } from './attendanceConfirm.js';
@@ -23,11 +30,43 @@ const SWEEP_SECONDS = 15 * 60;
 const HORIZON_MS = 48 * 3600_000;
 const MAX_INVITES_PER_SHIFT_PER_SWEEP = 20;
 const CATEGORY = INVITE_CATEGORY;
+/** A batched invitation names this many shifts; the rest are "and N more". */
+const LISTED_PER_MESSAGE = 3;
+
 
 export interface AutofillResult {
   shiftsScanned: number;
+  /** Invitations recorded this sweep: one per person per shift. */
   invitesSent: number;
+  /** Messages sent this sweep: one per person, however many shifts it offers. */
+  messagesSent: number;
 }
+
+/**
+ * The words for every shift a person is newly offered in one sweep. One
+ * shift reads exactly as the single invitation always has (inviteMessage,
+ * linked to that shift); more are listed soonest first — day, time, position
+ * and store, on each store's own clock — up to three, then "and N more",
+ * linked to the marketplace. English only, like the single invitation.
+ */
+export function batchedInviteMessage(shifts: readonly InviteShift[]): { subject: string; body: string; linkUrl: string } {
+  if (shifts.length === 1) return inviteMessage(shifts[0]!);
+  const sorted = [...shifts].sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+  const lines = sorted.slice(0, LISTED_PER_MESSAGE).map((shift) => {
+    const tz = inviteZone(shift);
+    const where = shift.client?.name ?? shift.locationRel?.name ?? shift.location ?? '';
+    const when = `${formatDateInZone(shift.startsAt, tz)}, ${formatTimeInZone(shift.startsAt, tz)}–${formatTimeInZone(shift.endsAt, tz)}`;
+    const spot = shift.location && shift.location !== where ? ` · ${shift.location}` : '';
+    return `• ${when} · ${shift.position}${where ? ` at ${where}` : ''}${spot}`;
+  });
+  const more = sorted.length - LISTED_PER_MESSAGE;
+  return {
+    subject: `${sorted.length} open shifts you can pick up`,
+    body: `${lines.join('\n')}${more > 0 ? `\nand ${more} more` : ''}\nFirst come, first served — tap to see them.`,
+    linkUrl: '/marketplace',
+  };
+}
+
 
 export async function runShiftAutofillSweep(
   prisma: PrismaClient = defaultPrisma,
@@ -56,6 +95,10 @@ export async function runShiftAutofillSweep(
     take: 100,
   });
   let invitesSent = 0;
+  // Per person, every shift they are newly offered this sweep; per shift,
+  // who was asked (the invite rows are written per shift, as before).
+  const offers = new Map<string, InviteShift[]>();
+  const askedByShift: Array<{ shiftId: string; associateIds: string[] }> = [];
 
   for (const shift of shifts) {
     // The bench is the client's people, or the site's for a shift that names
@@ -112,21 +155,33 @@ export async function runShiftAutofillSweep(
     ]);
     const invited = new Set(already.map((n) => n.recipientUserId));
     const handled = new Set(rows.filter((r) => r.sendCount > 0 || r.declinedAt).map((r) => r.associateId));
-    const message = inviteMessage(shift);
     const asked: string[] = [];
     let sentForShift = 0;
     for (const c of candidates) {
       if (invited.has(c.id) || (c.associateId && handled.has(c.associateId))) continue;
       if (sentForShift >= MAX_INVITES_PER_SHIFT_PER_SWEEP) break;
-      await notifyUser(c.id, { ...message, category: CATEGORY, linkUrl });
+      offers.set(c.id, [...(offers.get(c.id) ?? []), shift]);
       if (c.associateId) asked.push(c.associateId);
       sentForShift += 1;
       invitesSent += 1;
     }
-    await recordInvites(prisma, shift.id, asked, now);
+    askedByShift.push({ shiftId: shift.id, associateIds: asked });
   }
-  return { shiftsScanned: shifts.length, invitesSent };
+
+  // One message per person, then the invite rows per shift.
+  const emailedToday = await invitedByEmailToday(prisma, [...offers.keys()], now);
+  for (const [userId, theirs] of offers) {
+    await notifyUser(userId, {
+      ...batchedInviteMessage(theirs),
+      category: CATEGORY,
+      ...(emailedToday.has(userId) ? { skipEmail: true } : {}),
+    });
+  }
+  for (const a of askedByShift) await recordInvites(prisma, a.shiftId, a.associateIds, now);
+  return { shiftsScanned: shifts.length, invitesSent, messagesSent: offers.size };
 }
+
+export { invitedByEmailToday };
 
 let timer: NodeJS.Timeout | null = null;
 

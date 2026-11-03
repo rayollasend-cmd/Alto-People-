@@ -131,7 +131,10 @@ describe('List-Unsubscribe headers', () => {
     expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
   });
 
-  it('transactional email carries NO unsubscribe headers', async () => {
+  // Since 2026-11-02 (calm notifications) a notice of a kind the person can
+  // mute says how to stop just that kind, in one click; an urgent or
+  // required notice never offers a way out of the next one.
+  it('a notice that can be muted carries one-click unsubscribe for its kind; a required one carries none', async () => {
     const mock = mockResendFetch();
     enableRealSendMode();
     const { user } = await createUser({ role: 'ASSOCIATE' });
@@ -141,9 +144,17 @@ describe('List-Unsubscribe headers', () => {
       category: 'documents',
     });
     await flushPendingNotifications();
+    const headers = lastFetchPayload(mock).headers as Record<string, string>;
+    expect(headers['List-Unsubscribe']).toContain('/communications/unsubscribe/');
+    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
 
-    const payload = lastFetchPayload(mock);
-    expect(payload.headers).toBeUndefined();
+    await notifyUser(user.id, {
+      subject: 'New sign-in',
+      body: 'From a new device.',
+      category: 'security',
+    });
+    await flushPendingNotifications();
+    expect(lastFetchPayload(mock).headers).toBeUndefined();
   });
 
   it('direct send() without includeUnsubscribe carries no headers; with it, it does', async () => {

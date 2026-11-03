@@ -1,9 +1,10 @@
+import type { DeliveryModeKey } from '@alto-people/shared';
 import { apiFetch } from './api';
 
 /**
  * Access pack — the person's own sign-in and delivery settings: the
  * devices two-step has remembered, and when outside channels reach them
- * (quiet hours; real time or a digest, per channel).
+ * (quiet hours; per channel, how often).
  */
 
 export interface TrustedDeviceRow {
@@ -18,19 +19,35 @@ export interface TrustedDeviceRow {
 export const listMyDevices = () => apiFetch<{ enabled: boolean; days: number; devices: TrustedDeviceRow[] }>('/auth/me/devices');
 export const forgetMyDevice = (id: string) => apiFetch<void>(`/auth/me/devices/${id}`, { method: 'DELETE' });
 
-export type DeliveryMode = 'REALTIME' | 'DIGEST';
+/**
+ * REALTIME each as it comes · DIGEST once an hour together · IMPORTANT only
+ * what needs the person (email) · DAILY one summary each morning (email) ·
+ * OFF only urgent and required notices (owner, 2026-11-02).
+ */
+export type DeliveryMode = DeliveryModeKey;
 
-export interface DeliveryPrefs {
+/** The settings themselves — what a person can change. */
+export interface DeliverySettings {
+  /** Minutes after midnight in their zone; both null = quiet hours off. */
   quietHoursStart: number | null;
   quietHoursEnd: number | null;
   deliveryEmail: DeliveryMode;
   deliveryPush: DeliveryMode;
   deliverySms: DeliveryMode;
+}
+
+/** The EFFECTIVE settings (their role's defaults until they choose), and those defaults. */
+export interface DeliveryPrefs extends DeliverySettings {
   timezone: string | null;
+  /** True while the person has never chosen: the values are their role's defaults. */
+  isDefault: boolean;
+  /** What their role gets by default — the "Recommended for you" mark. */
+  defaults: DeliverySettings;
 }
 
 export const getDeliveryPrefs = () => apiFetch<DeliveryPrefs>('/auth/me/notification-delivery');
-export const patchDeliveryPrefs = (input: Partial<Omit<DeliveryPrefs, 'timezone'>>) =>
+/** Quiet hours go both or neither (null + null turns them off). */
+export const patchDeliveryPrefs = (input: Partial<DeliverySettings>) =>
   apiFetch<DeliveryPrefs>('/auth/me/notification-delivery', { method: 'PATCH', body: input });
 
 /** "22:00" ↔ 1320. */

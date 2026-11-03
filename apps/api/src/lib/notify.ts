@@ -43,15 +43,17 @@ import { loadTenantProfile } from './tenantProfile.js';
 import {
   NOTIFICATION_CATEGORIES,
   bucketForCategory,
+  notificationTier,
   roleWantsCategory,
   rolesWithCapability,
   type NotificationCategory,
+  type NotificationTier,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { activeDelegationsFrom } from './delegations.js';
 import { EmailSuppressedError, anyPushConfigured, send, type SendAttachment } from './notifications.js';
 import { isPushMuted, sendPushToUser } from './webPush.js';
-import { holdIfDeferred } from './notificationDelivery.js';
+import { routeOutside, type OutsideNotice } from './notificationDelivery.js';
 import { emitLiveEvent } from './liveEvents.js';
 import { sendWhatsAppForUser } from './whatsapp.js';
 import type { WaLang, WaTemplateKey } from './whatsappContent.js';
@@ -155,10 +157,69 @@ async function withBellUnmuted<T extends { id: string }>(
  * checks the switch again (it is the funnel every push passes); asking
  * first here keeps a muted push out of the held queue.
  */
-async function pushFor(userId: string, opts: NotifyOpts, title: string): Promise<'muted' | 'held' | 'sent'> {
+async function pushFor(userId: string, opts: NotifyOpts, title: string, bellId: string | null = null): Promise<'muted' | 'held' | 'sent' | 'never'> {
   if (await isPushMuted(userId, opts.category)) return 'muted';
-  if (await holdIfDeferred(userId, 'PUSH', opts)) return 'held';
-  return sendPushToUser(userId, { title, body: opts.body, url: opts.linkUrl, category: opts.category });
+  const route = await routeOutside(userId, 'PUSH', noticeOf(opts), { bellId });
+  if (route !== 'now') return route;
+  return sendPushToUser(userId, {
+    title,
+    body: opts.body,
+    url: opts.linkUrl,
+    category: opts.category,
+    renotify: notificationTier(opts.category, opts) === 'critical',
+  });
+}
+
+/** What the delivery rules need to know about a notice (lib/notificationDelivery). */
+function noticeOf(opts: NotifyOpts): OutsideNotice {
+  return { subject: opts.subject, body: opts.body, linkUrl: opts.linkUrl, category: opts.category, urgent: opts.urgent, tier: opts.tier };
+}
+
+/**
+ * The outside channels for one person — push, email, WhatsApp — each behind
+ * its own switch for the category and the person's delivery rules: now,
+ * held, or not at all (lib/notificationDelivery routeOutside). `bellId` is
+ * the bell copy, so a held email can be dropped once that has been seen.
+ * `push: false` keeps someone the email list narrowed away bell-only.
+ *
+ * Calm notifications (owner, 2026-11-02): this used to be three channels
+ * at once for every notice, around the clock, and the staff fan-outs
+ * skipped quiet hours altogether. One path now, for everyone.
+ */
+function deliverOutside(userId: string, email: string | null, opts: NotifyOpts, bellId: string | null, channels: { push?: boolean } = {}): void {
+  if (channels.push !== false) {
+    void track(
+      pushFor(userId, opts, opts.subject ?? getBrandingSync().orgName, bellId).catch((err: unknown) => {
+        console.warn('[notify] push failed:', err instanceof Error ? err.message : err);
+      }),
+    );
+  }
+  void track(
+    (async () => {
+      // WhatsApp rides the email switch for the category, as it always has.
+      if (await isEmailMutedForCategory(userId, opts.category)) return;
+      await Promise.all([
+        (async () => {
+          if (!email || opts.skipEmail) return;
+          // A packet that belongs with the message can't be folded into a
+          // summary later: it goes now, or not at all.
+          if (opts.attachments?.length) {
+            await sendEmailNotification(userId, email, opts);
+            return;
+          }
+          const branded = brandedEmail(opts);
+          if ((await routeOutside(userId, 'EMAIL', { ...noticeOf(opts), html: branded.html, text: branded.text }, { bellId })) === 'now') {
+            await sendEmailNotification(userId, email, opts);
+          }
+        })(),
+        (async () => {
+          if ((await routeOutside(userId, 'WHATSAPP', noticeOf(opts), { bellId })) === 'now') await sendWhatsAppForUser(userId, opts);
+        })(),
+      ]);
+    })().catch((err: unknown) => {
+      console.warn('[notify] email/whatsapp failed:', err instanceof Error ? err.message : err);
+    }),
+  );
 }
 
 const inFlight: Set<Promise<unknown>> = new Set();
@@ -232,6 +293,19 @@ export interface NotifyOpts {
    */
   urgent?: boolean;
   /**
+   * How urgent this notice is, when its category alone doesn't say
+   * (@alto-people/shared notificationTier): 'info' for a receipt like
+   * "Hours approved" in a category that also carries rejections. `urgent`
+   * still wins.
+   */
+  tier?: NotificationTier;
+  /**
+   * Bell and push only, no email this time: a sender that already emailed
+   * the person about the same kind of thing today (open-shift invites:
+   * at most one email a day).
+   */
+  skipEmail?: boolean;
+  /**
    * WhatsApp (Brief 1C-4): the registered template this notice goes out
    * as, with its positional parameters rendered per language. Without it
    * the subject and body ride the generic template.
@@ -251,6 +325,23 @@ export const ADMIN_EMAIL_HIRING = ['HR_ADMINISTRATOR', 'INTERNAL_RECRUITER'] as 
 export const ADMIN_EMAIL_HR_ONLY = ['HR_ADMINISTRATOR'] as const;
 
 /**
+ * Every email leaves in the branded layout. Callers that built a full
+ * template pass html; everyone else (the generic notify* fan-outs) used to
+ * go out as bare unstyled text with no logo, company block, or disclaimer —
+ * indistinguishable from phishing, which is exactly what the standard
+ * footer exists to prevent.
+ */
+function brandedEmail(opts: NotifyOpts): { html: string; text: string } {
+  if (opts.html) return { html: opts.html, text: opts.text ?? opts.body };
+  const tpl = genericNotificationTemplate({
+    subject: opts.subject ?? `Notification from ${getBrandingSync().orgName}`,
+    body: opts.body,
+    linkUrl: opts.linkUrl ?? null,
+  });
+  return { html: tpl.html, text: tpl.text };
+}
+
+/**
  * Send a transactional email to one user and record the result as an
  * EMAIL Notification row (status SENT or FAILED). Tracked so tests can
  * await it via flushPendingNotifications.
@@ -266,21 +357,7 @@ function sendEmailNotification(
       let providerMessageId: string | null = null;
       let failureReason: string | null = null;
       let suppressed = false;
-      // Every email leaves in the branded layout. Callers that built a
-      // full template pass html; everyone else (the generic notify*
-      // fan-outs) used to go out as bare unstyled text with no logo,
-      // company block, or disclaimer — indistinguishable from phishing,
-      // which is exactly what the standard footer exists to prevent.
-      const branded = opts.html
-        ? { html: opts.html, text: opts.text ?? opts.body }
-        : (() => {
-            const tpl = genericNotificationTemplate({
-              subject: opts.subject ?? `Notification from ${getBrandingSync().orgName}`,
-              body: opts.body,
-              linkUrl: opts.linkUrl ?? null,
-            });
-            return { html: tpl.html, text: tpl.text };
-          })();
+      const branded = brandedEmail(opts);
       try {
         const r = await send({
           channel: 'EMAIL',
@@ -290,10 +367,15 @@ function sendEmailNotification(
           subject: opts.subject,
           body: branded.text,
           html: branded.html,
-          // Only the broadcast/announcement bucket carries the one-click
-          // unsubscribe headers. Everything else routed through here is
-          // transactional and must NOT advertise an unsubscribe.
+          // Announcements keep their one-click unsubscribe; since 2026-11-02
+          // every other notice that can be muted says how to stop just its
+          // kind (lib/notifications drops a mandatory bucket on its own). An
+          // urgent notice never offers a way out of the next one.
           includeUnsubscribe: bucketForRawCategory(opts.category) === 'broadcast',
+          ...(() => {
+            const bucket = bucketForRawCategory(opts.category);
+            return bucket && notificationTier(opts.category, opts) !== 'critical' ? { unsubscribe: { bucket } } : {};
+          })(),
           attachments: opts.attachments,
         });
         externalRef = r.externalRef;
@@ -358,10 +440,11 @@ export function notifyUserOn(
         for (const c of want) out[c] = 'failed';
         return out;
       }
+      let bellId: string | null = null;
       if (want.has('IN_APP')) {
         if (await isInAppMutedForCategory(userId, opts.category)) out.IN_APP = 'muted';
         else {
-          await prisma.notification.create({
+          const bell = await prisma.notification.create({
             data: {
               channel: 'IN_APP',
               status: 'SENT',
@@ -373,7 +456,9 @@ export function notifyUserOn(
               byAgentId: opts.byAgentId ?? null,
               sentAt: new Date(),
             },
+            select: { id: true },
           });
+          bellId = bell.id;
           emitLiveEvent(userId, 'notification');
           out.IN_APP = 'sent';
         }
@@ -382,15 +467,22 @@ export function notifyUserOn(
       if (want.has('EMAIL')) {
         if (await isEmailMutedForCategory(userId, opts.category)) out.EMAIL = 'muted';
         else if (!u.email) out.EMAIL = 'failed';
-        else if (await holdIfDeferred(userId, 'EMAIL', opts)) out.EMAIL = 'held';
         else {
-          const status = await sendEmailNotification(userId, u.email, opts);
-          out.EMAIL = status === 'SENT' ? 'sent' : status === 'SUPPRESSED' ? 'suppressed' : 'failed';
+          const branded = brandedEmail(opts);
+          const route = await routeOutside(userId, 'EMAIL', { ...noticeOf(opts), html: branded.html, text: branded.text }, { bellId });
+          if (route === 'held') out.EMAIL = 'held';
+          // Their delivery choice leaves email out for this one (only urgent
+          // notices, or bell-only information on "only what needs me").
+          else if (route === 'never') out.EMAIL = 'skipped';
+          else {
+            const status = await sendEmailNotification(userId, u.email, opts);
+            out.EMAIL = status === 'SENT' ? 'sent' : status === 'SUPPRESSED' ? 'suppressed' : 'failed';
+          }
         }
       }
       if (want.has('PUSH')) {
         out.PUSH = anyPushConfigured()
-          ? await pushFor(userId, opts, opts.subject ?? getBrandingSync().orgName)
+          ? await pushFor(userId, opts, opts.subject ?? getBrandingSync().orgName, bellId).then((r) => (r === 'never' ? 'skipped' : r))
           : (await isPushMuted(userId, opts.category))
             ? 'muted'
             : 'not_configured';
@@ -406,39 +498,23 @@ export function notifyUserOn(
 }
 
 /**
- * Email-only companion for callers that already wrote their own IN_APP row
- * (notifyShift in scheduling). Honors the same per-category mute prefs as
- * notifyUser; fire-and-forget and tracked for flushPendingNotifications.
+ * The outside channels for callers that already wrote their own IN_APP row
+ * (notifyShift in scheduling, the schedule digests): push, email and
+ * WhatsApp under the same switches and delivery rules as notifyUser. Pass
+ * the bell row's id so a held email is dropped once that has been seen.
+ * Fire-and-forget and tracked for flushPendingNotifications.
  */
 export function emailUserForCategory(
   userId: string,
   email: string,
   opts: NotifyOpts,
+  bellId: string | null = null,
 ): Promise<void> {
   return track(
     (async () => {
-      // Email and push each answer to their own switch for the category
-      // (WhatsApp still rides the email one); then each outside channel
-      // answers to the person's quiet hours / digest choice.
-      const emailMuted = await isEmailMutedForCategory(userId, opts.category);
-      await Promise.all([
-        (async () => {
-          if (emailMuted) return;
-          if (await holdIfDeferred(userId, 'EMAIL', opts)) return;
-          await sendEmailNotification(userId, email, opts);
-        })(),
-        pushFor(userId, opts, opts.subject ?? 'Alto People').catch((err: unknown) => {
-          console.warn('[notify] push failed:', err instanceof Error ? err.message : err);
-        }),
-        // WhatsApp, when they opted in — the email mute applies.
-        (async () => {
-          if (emailMuted) return;
-          if (await holdIfDeferred(userId, 'WHATSAPP', opts)) return;
-          await sendWhatsAppForUser(userId, opts);
-        })().catch((err: unknown) => {
-          console.warn('[notify] whatsapp failed:', err instanceof Error ? err.message : err);
-        }),
-      ]);
+      // Push, email and WhatsApp, each behind its own switch and the
+      // person's delivery rules — the same path as notifyUser.
+      deliverOutside(userId, email, opts, bellId);
     })().catch((err: unknown) => {
       console.warn(
         '[notify] emailUserForCategory failed:',
@@ -464,8 +540,9 @@ export function notifyUser(
       // Notifications); each one silences only its own channel. Turning the
       // bell off used to drop the email and push too, so a Push column left
       // on would have promised pushes that never came.
+      let bellId: string | null = null;
       if (!(await isInAppMutedForCategory(userId, opts.category))) {
-        await client.notification.create({
+        const bell = await client.notification.create({
           data: {
             channel: 'IN_APP',
             status: 'SENT',
@@ -477,56 +554,44 @@ export function notifyUser(
             byAgentId: opts.byAgentId ?? null,
             sentAt: new Date(),
           },
+          select: { id: true },
         });
+        bellId = bell.id;
         // Live nudge: any open tab refetches the bell (and badge) instantly.
         emitLiveEvent(userId, 'notification');
       }
-      // Email and push are best-effort and fired in parallel via their own
-      // track(), each behind its own switch for this category bucket.
       // quiet = the bell row above is the whole delivery.
       if (opts.quiet) return;
       const u = await prisma.user.findUnique({
         where: { id: userId },
         select: { email: true, status: true },
       });
-      if (u && u.email && u.status === 'ACTIVE') {
-        // Push has its own switch for the category (pushFor asks it), so a
-        // muted email no longer silences the lock screen, nor the reverse.
-        void track(
-          pushFor(userId, opts, opts.subject ?? 'Alto People').catch((err: unknown) => {
-            console.warn('[notify] push failed:', err instanceof Error ? err.message : err);
-          }),
-        );
-        const muted = await isEmailMutedForCategory(userId, opts.category);
-        if (!muted) {
-          // Access pack: each outside channel answers to the person's quiet
-          // hours and digest choice; what must not wait (security, safety,
-          // pay, mandatory notices) never does.
-          const email = u.email;
-          void track(
-            (async () => {
-              if (await holdIfDeferred(userId, 'EMAIL', opts)) return;
-              await sendEmailNotification(userId, email, opts);
-            })().catch((err: unknown) => {
-              // A fire-and-forget must never reject unhandled: a database blip
-              // here would otherwise take the API process down.
-              console.warn('[notify] email failed:', err instanceof Error ? err.message : err);
-            }),
-          );
-          void track(
-            (async () => {
-              if (await holdIfDeferred(userId, 'WHATSAPP', opts)) return;
-              await sendWhatsAppForUser(userId, opts);
-            })().catch((err: unknown) => {
-              console.warn('[notify] whatsapp failed:', err instanceof Error ? err.message : err);
-            }),
-          );
-        }
-      }
+      if (u && u.email && u.status === 'ACTIVE') deliverOutside(userId, u.email, opts, bellId);
     })().catch((err: unknown) => {
       console.warn('[notify] notifyUser failed:', err instanceof Error ? err.message : err);
     }),
   );
+}
+
+/** One bell row each, in one insert; answers recipient → bell row id. */
+async function bellRowsFor(recipients: ReadonlyArray<{ id: string }>, opts: NotifyOpts): Promise<Map<string, string>> {
+  const now = new Date();
+  const rows = await prisma.notification.createManyAndReturn({
+    data: recipients.map((u) => ({
+      channel: 'IN_APP' as const,
+      status: 'SENT' as const,
+      recipientUserId: u.id,
+      subject: opts.subject,
+      body: opts.body,
+      category: opts.category ?? null,
+      linkUrl: opts.linkUrl ?? null,
+      byAgentId: opts.byAgentId ?? null,
+      sentAt: now,
+    })),
+    select: { id: true, recipientUserId: true },
+  });
+  for (const u of recipients) emitLiveEvent(u.id, 'notification');
+  return new Map(rows.flatMap((r) => (r.recipientUserId ? [[r.recipientUserId, r.id] as const] : [])));
 }
 
 /**
@@ -571,28 +636,15 @@ export function notifyAllAdmins(
       // ...and then whoever asked not to be told.
       const recipients = await withBellUnmuted(routed, opts.category);
       if (recipients.length === 0) return;
-      const now = new Date();
-      await prisma.notification.createMany({
-        data: recipients.map((u) => ({
-          channel: 'IN_APP' as const,
-          status: 'SENT' as const,
-          recipientUserId: u.id,
-          subject: opts.subject,
-          body: opts.body,
-          category: opts.category ?? null,
-          linkUrl: opts.linkUrl ?? null,
-          sentAt: now,
-        })),
-      });
-      for (const u of recipients) emitLiveEvent(u.id, 'notification');
-      // Honour each recipient's per-category mute. Looked up serially
-      // before the (still-parallel) sends fire — N+1 against a small N
-      // (admin role count, typically ≤10) and indexed on (userId, category).
+      const bells = await bellRowsFor(recipients, opts);
+      // Each recipient's own switches and delivery rules (lib/notificationDelivery):
+      // this fan-out used to email every admin at once, quiet hours or not.
+      // Someone `emailRoles` narrows away stays bell-only, as before.
+      // A bell-only notice (`quiet`) is bell-only here too; it used to email anyway.
+      if (opts.quiet) return;
       for (const u of recipients) {
-        if (!u.email) continue;
-        if (opts.emailRoles && !opts.emailRoles.includes(u.role)) continue;
-        const muted = await isEmailMutedForCategory(u.id, opts.category);
-        if (!muted) void sendEmailNotification(u.id, u.email, opts);
+        const emailed = !opts.emailRoles || opts.emailRoles.includes(u.role);
+        deliverOutside(u.id, emailed ? u.email : null, opts, bells.get(u.id) ?? null, { push: emailed });
       }
     })().catch((err: unknown) => {
       console.warn('[notify] notifyAllAdmins failed:', err instanceof Error ? err.message : err);
@@ -607,6 +659,10 @@ export function notifyAllAdmins(
  * events (shift claims, swaps, possible no-shows). Call this ALONGSIDE
  * the existing notifyManager/notifyAllAdmins fan-outs, not instead.
  *
+ * Answers who the alert was addressed to (the roster, muted or not) — empty
+ * when the client has no supervisor for it, so a caller routing to the
+ * floor first knows to go straight to the office (lib/alertEscalation).
+ *
  * `at` places the event on a shift (its store and start): it goes to the
  * supervisors who lead that shift window, or to every supervisor at the
  * client when nobody leads it (lib/shiftWindows). Without `at` (time off,
@@ -620,10 +676,10 @@ export function notifyClientSupervisors(
     /** About this associate — a floor supervisor's own lead hears first. */
     aboutAssociateId?: string | null;
   },
-): Promise<void> {
+): Promise<string[]> {
   return track(
-    (async () => {
-      if (!clientId) return;
+    (async (): Promise<string[]> => {
+      if (!clientId) return [];
       const roster = await supervisorRecipients(prisma, clientId, opts.at, {
         excludeUserId: opts.excludeUserId,
         aboutAssociateId: opts.aboutAssociateId,
@@ -631,31 +687,16 @@ export function notifyClientSupervisors(
       // No role filter here: this roster is already the people on that
       // floor, for that client. Only the mute applies.
       const recipients = await withBellUnmuted(roster, opts.category);
-      if (recipients.length === 0) return;
-      const now = new Date();
-      await prisma.notification.createMany({
-        data: recipients.map((u) => ({
-          channel: 'IN_APP' as const,
-          status: 'SENT' as const,
-          recipientUserId: u.id,
-          subject: opts.subject,
-          body: opts.body,
-          category: opts.category ?? null,
-          linkUrl: opts.linkUrl ?? null,
-          sentAt: now,
-        })),
-      });
-      for (const u of recipients) emitLiveEvent(u.id, 'notification');
-      for (const u of recipients) {
-        if (!u.email) continue;
-        const muted = await isEmailMutedForCategory(u.id, opts.category);
-        if (!muted) void sendEmailNotification(u.id, u.email, opts);
-      }
-    })().catch((err: unknown) => {
+      if (recipients.length === 0) return roster.map((u) => u.id);
+      const bells = await bellRowsFor(recipients, opts);
+      if (!opts.quiet) for (const u of recipients) deliverOutside(u.id, u.email, opts, bells.get(u.id) ?? null);
+      return roster.map((u) => u.id);
+    })().catch((err: unknown): string[] => {
       console.warn(
         '[notify] notifyClientSupervisors failed:',
         err instanceof Error ? err.message : err,
       );
+      return [];
     }),
   );
 }

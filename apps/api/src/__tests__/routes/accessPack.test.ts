@@ -323,7 +323,8 @@ describe('quiet hours and digests', () => {
     const { user } = await createUser({ role: 'MANAGER' });
     const a = await loginAs(agent(), user.email);
     // Quiet for the whole day in UTC, so "now" is always inside.
-    const set = await a.patch('/auth/me/notification-delivery').send({ quietHoursStart: 0, quietHoursEnd: 1439, deliveryPush: 'DIGEST' });
+    // "Every update, as it happens" — a manager's default is the morning summary.
+    const set = await a.patch('/auth/me/notification-delivery').send({ quietHoursStart: 0, quietHoursEnd: 1439, deliveryEmail: 'REALTIME', deliveryPush: 'DIGEST' });
     expect(set.status).toBe(200);
     expect(set.body.deliveryPush).toBe('DIGEST');
     await prisma.user.update({ where: { id: user.id }, data: { timezone: 'UTC' } });

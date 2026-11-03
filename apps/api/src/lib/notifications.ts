@@ -1,9 +1,9 @@
-import type { NotificationChannel, NotificationStatus } from '@alto-people/shared';
+import { NOTIFICATION_CATEGORIES, type NotificationChannel, type NotificationStatus } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { getBrandingSync } from './branding.js';
-import { mintUnsubscribeToken } from './emailUnsubscribe.js';
-import { publicBaseUrl } from './emailLayout.js';
+import { mintBucketUnsubscribeToken, mintUnsubscribeToken, unsubscribeUrl } from './emailUnsubscribe.js';
+import { withNotificationLinks } from './emailLayout.js';
 import { SmsNotConfiguredError, SmsOptedOutError, sendSms } from './sms.js';
 import { pushConfigured, sendPushToUser } from './webPush.js';
 import { apnsConfigured, fcmConfigured } from './nativePush.js';
@@ -280,6 +280,15 @@ export interface SendInput {
    */
   includeUnsubscribe?: boolean;
   /**
+   * EMAIL-only. The settings bucket this notice belongs to (owner,
+   * 2026-11-02): the email goes out with one-click unsubscribe headers and a
+   * "Stop emails like this" footer link that mute THIS bucket only, for the
+   * recipient's address. notify.ts passes it for every notice that is
+   * neither mandatory nor critical; a mandatory or unknown bucket is
+   * ignored (no headers, no link). Wins over includeUnsubscribe.
+   */
+  unsubscribe?: { bucket: string };
+  /**
    * Which flow this message belongs to ("password_reset", "tax_form",
    * "offer"). Written onto the failure row so an outage can be read back
    * as a list of affected flows rather than a pile of anonymous rows.
@@ -427,6 +436,19 @@ function suppressionReason(email: string): Promise<string | null> {
   return suppressionBatch.result.then((found) => found.get(key) ?? null);
 }
 
+/**
+ * The one-click address for this email, or null when it may not carry one:
+ * a per-bucket token when the caller named a bucket that can be muted, the
+ * announcement token for includeUnsubscribe, nothing for transactional mail.
+ */
+function unsubscribeLinkFor(input: SendInput, to: string): string | null {
+  if (input.unsubscribe) {
+    const meta = NOTIFICATION_CATEGORIES.find((c) => c.key === input.unsubscribe!.bucket);
+    if (meta && !meta.mandatory) return unsubscribeUrl(mintBucketUnsubscribeToken(to, meta.key));
+  }
+  return input.includeUnsubscribe ? unsubscribeUrl(mintUnsubscribeToken(to)) : null;
+}
+
 async function sendEmail(input: SendInput): Promise<SendResult> {
   const to = input.recipient.email;
   if (!to) {
@@ -486,14 +508,18 @@ async function sendEmail(input: SendInput): Promise<SendResult> {
   // Real Resend call.
   try {
     const from = effectiveFrom();
+    const oneClickUrl = unsubscribeLinkFor(input, to);
+    // Every email says where to change what arrives; one that can be muted
+    // also says how to stop just this kind (lib/emailLayout).
+    const mail = withNotificationLinks({ html: input.html, text: input.body }, oneClickUrl);
     const payload: Record<string, unknown> = {
       from,
       to: [to],
       subject: input.subject ?? '(no subject)',
-      text: input.body,
+      text: mail.text,
     };
-    if (input.html) {
-      payload.html = input.html;
+    if (mail.html) {
+      payload.html = mail.html;
     }
     if (env.RESEND_REPLY_TO) {
       payload.reply_to = env.RESEND_REPLY_TO;
@@ -505,21 +531,20 @@ async function sendEmail(input: SendInput): Promise<SendResult> {
         content_type: a.contentType,
       }));
     }
-    if (input.includeUnsubscribe) {
-      // RFC 8058 one-click unsubscribe for broadcast/announcement mail.
+    if (oneClickUrl) {
+      // RFC 8058 one-click unsubscribe — announcements, and since 2026-11-02
+      // every notice whose bucket can be muted (the token names the bucket).
       // The https URL is what Gmail/Yahoo POST on "unsubscribe" (no body
       // parsing needed — the HMAC token binds the recipient); the mailto
-      // is the fallback for older clients. Transactional mail must not
-      // set includeUnsubscribe, so it never carries these headers.
-      const token = mintUnsubscribeToken(to);
-      const unsubscribeUrl = `${publicBaseUrl()}/api/communications/unsubscribe/${token}`;
+      // is the fallback for older clients. Transactional mail sets neither
+      // includeUnsubscribe nor unsubscribe, so it never carries these headers.
       const mailtoAddr =
         env.RESEND_REPLY_TO ??
         (from ? (from.match(/<([^>]+)>/)?.[1] ?? from) : null);
       payload.headers = {
         'List-Unsubscribe': mailtoAddr
-          ? `<${unsubscribeUrl}>, <mailto:${mailtoAddr}?subject=unsubscribe>`
-          : `<${unsubscribeUrl}>`,
+          ? `<${oneClickUrl}>, <mailto:${mailtoAddr}?subject=unsubscribe>`
+          : `<${oneClickUrl}>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
       };
     }

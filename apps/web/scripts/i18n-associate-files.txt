@@ -158,6 +158,8 @@ src/components/OutOfOfficeCard.tsx
 src/components/settings/DeliveryCard.tsx
 src/components/settings/DevicesCard.tsx
 src/components/settings/SettingsSwitch.tsx
+# the phone app's ask before the system's push prompt
+src/components/native/PushPermissionSheet.tsx
 # pages and their associate branches
 src/pages/Dashboard.tsx
 src/pages/communications/CommunicationsHome.tsx

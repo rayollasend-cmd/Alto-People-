@@ -5,23 +5,29 @@ import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowLeftRight,
+  BarChart3,
   Bell,
   BellRing,
   Building2,
+  Bus,
   CalendarDays,
   CheckCheck,
   ChevronRight,
   ClipboardCheck,
   FileText,
   Inbox,
+  Landmark,
+  ListChecks,
   Lock,
   Megaphone,
   MessageSquare,
   Plane,
   ShieldAlert,
+  Siren,
   Sparkles,
   Sunrise,
   TrendingUp,
+  UserPlus,
   Wallet,
   type LucideIcon,
 } from '@/components/ui/icons';
@@ -96,6 +102,13 @@ const BUCKET_ICON: Record<NotificationCategory, LucideIcon> = {
   store_alerts: AlertTriangle,
   store_requests: Inbox,
   store_reports: FileText,
+  // Every kind of notice has a bucket now (owner, 2026-11-02).
+  transport: Bus,
+  finance: Landmark,
+  recruiting: UserPlus,
+  approvals_tasks: ListChecks,
+  reports_digests: BarChart3,
+  emergency: Siren,
 };
 
 const BUCKET_LABEL: Record<string, string> = Object.fromEntries(
@@ -108,7 +121,9 @@ function categoryMeta(raw: string | null): {
   bucket: NotificationCategory | null;
   urgent: boolean;
 } {
-  const bucket = bucketForCategory(raw);
+  // strict: a kind nobody has named gets a neutral row (its email still
+  // mutes under 'workplace'; the bell just doesn't pretend it is HR news).
+  const bucket = bucketForCategory(raw, { strict: true });
   return {
     Icon: bucket ? BUCKET_ICON[bucket] : Bell,
     label: bucket ? (BUCKET_LABEL[bucket] ?? null) : null,
@@ -142,7 +157,7 @@ export function needsMe(n: Notification): boolean {
   if (n.readAt) return false;
   if (isUrgentCategory(n.category)) return true;
   if (!n.linkUrl) return false;
-  const bucket = bucketForCategory(n.category);
+  const bucket = bucketForCategory(n.category, { strict: true });
   if (bucket && FYI_BUCKETS.has(bucket)) return false;
   return !FYI_CATEGORY.test(n.category ?? '');
 }
@@ -180,8 +195,8 @@ export function bellBadge(list: readonly Notification[]): { count: number; text:
 export function groupNotifications(list: readonly Notification[], min = 3): BellRow[] {
   // One pile per named bucket ("Workplace & HR updates" holds the portal
   // digests AND the compliance reminders — two piles under one title read as
-  // a mistake); kinds with no bucket (relay escalations) pile by kind.
-  const keyOf = (n: Notification) => bucketForCategory(n.category) ?? notificationKind(n.category);
+  // a mistake); kinds no bucket names pile by kind.
+  const keyOf = (n: Notification) => bucketForCategory(n.category, { strict: true }) ?? notificationKind(n.category);
   const counts = new Map<string, number>();
   for (const n of list) counts.set(keyOf(n), (counts.get(keyOf(n)) ?? 0) + 1);
   const groups = new Map<string, Notification[]>();

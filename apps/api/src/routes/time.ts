@@ -153,6 +153,8 @@ function notifyEntryDecision(
     // Rejections below still email: they need action.
     void notifyAssociate(entry.associateId, {
       subject: 'Hours approved',
+      // A receipt, not a request: the bell is enough (calm notifications, 2026-11-02).
+      tier: 'info',
       body: `Your ${day} time entry (${range}) was approved — ${(decision.minutes / 60).toFixed(1)} hours.`,
       category: 'time_entry',
       linkUrl: `/time-attendance?entry=${entry.id}`,
@@ -2296,6 +2298,8 @@ export async function approveCompletedEntries(
   for (const [associateId, agg] of byAssociate) {
     void notifyAssociate(associateId, {
       subject: 'Hours approved',
+      // A receipt, not a request: the bell is enough (calm notifications, 2026-11-02).
+      tier: 'info',
       body: `${agg.count} time ${agg.count === 1 ? 'entry' : 'entries'} approved — ${(agg.minutes / 60).toFixed(1)}h total.`,
       category: 'time_entry',
       linkUrl: '/time-attendance',
@@ -2343,6 +2347,8 @@ timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
     for (const [associateId, agg] of approvedByAssociate) {
       void notifyAssociate(associateId, {
         subject: 'Hours approved',
+        // A receipt, not a request: the bell is enough (calm notifications, 2026-11-02).
+        tier: 'info',
         body: `${agg.count} time ${agg.count === 1 ? 'entry' : 'entries'} approved — ${(agg.minutes / 60).toFixed(1)}h total.`,
         category: 'time_entry',
         linkUrl: '/time-attendance',

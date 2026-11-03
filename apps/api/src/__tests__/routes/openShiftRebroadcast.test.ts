@@ -121,6 +121,22 @@ describe('POST /open-shifts/:id/rebroadcast', () => {
     expect(waiting.every((w) => w.reason === 'QUIET_HOURS' && w.dueAt.getTime() > Date.now())).toBe(true);
   });
 
+  it('someone who already had an invitation email today hears about this one on the bell, not by email', async () => {
+    const { shift, person } = await setup();
+    const busy = await person('Busy');
+    await prisma.notification.create({
+      data: { channel: 'EMAIL', status: 'SENT', recipientUserId: busy.user.id, subject: 'Open shift', body: 'Earlier today.', category: 'shift_autofill', sentAt: new Date() },
+    });
+    const { user: ops } = await createUser({ role: 'OPERATIONS_MANAGER' });
+    const a = await loginAs(agent(), ops.email);
+    const res = await a.post(`/open-shifts/${shift.id}/rebroadcast`).send({});
+    expect(res.body.sent).toBe(1);
+    await flushPendingNotifications();
+    expect(await prisma.notification.count({ where: { recipientUserId: busy.user.id, channel: 'IN_APP', category: 'shift_autofill' } })).toBe(1);
+    // At most one invitation email a day (owner, 2026-11-02): still just the morning's.
+    expect(await prisma.notification.count({ where: { recipientUserId: busy.user.id, channel: 'EMAIL' } })).toBe(1);
+  });
+
   it('refuses a shift outside the caller’s reach, and one that is no longer open', async () => {
     const { client, shift } = await setup();
     const other = await prisma.site.create({ data: { name: 'Other Store', clientId: client.id, timezone: TZ } });

@@ -309,6 +309,8 @@ const TABLES = [
   'TrustDocument',
   'TrustDownloadRequest',
   'ProductEventDaily',
+  // Floor alerts waiting on their supervisor before the office hears (2026-11-02): ids, no keys.
+  'AlertEscalation',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

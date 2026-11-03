@@ -44,6 +44,12 @@ export const enBell = {
   'bell.cat.store_alerts': 'Short-staffing alerts',
   'bell.cat.store_requests': 'Request updates',
   'bell.cat.store_reports': 'Reports and statements',
+  'bell.cat.transport': 'Rides and transport',
+  'bell.cat.finance': 'Finance and billing',
+  'bell.cat.recruiting': 'Recruiting',
+  'bell.cat.approvals_tasks': 'Approvals and handoffs',
+  'bell.cat.reports_digests': 'Reports and digests',
+  'bell.cat.emergency': 'Emergency alerts',
 } as const;
 
 registerEnglish(enBell);
